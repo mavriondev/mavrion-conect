@@ -1,0 +1,189 @@
+Você está trabalhando no projeto Mavrion Conect.
+
+TAREFA: Implementar agendamento real dos Connectors usando `node-cron`. O campo `schedule` (formato cron: "0 */6 * * *") já existe na tabela `connectors` em `shared/schema.ts`. O endpoint de execução em `server/routes/system.ts` atualmente só atualiza `lastRunAt` sem fazer nada.
+
+PASSOS:
+
+**1. Instalar dependência:**
+npm install node-cron
+npm install --save-dev @types/node-cron
+
+**2. Criar o arquivo `server/scheduler.ts`:**
+```typescript
+import cron from "node-cron";
+import { db } from "./db";
+import { connectors } from "@shared/schema";
+import { eq } from "drizzle-orm";
+import type { IStorage } from "./storage";
+
+// Mapa para rastrear os jobs ativos: connectorId → cron task
+const activeJobs = new Map<number, cron.ScheduledTask>();
+
+// Funções executoras por tipo de connector
+async function runConnectorJob(connector: { id: number; type: string; configJson: any; name: string }) {
+  console.log(`[Scheduler] Executando connector ${connector.id} (${connector.name}) - tipo: ${connector.type}`);
+  
+  try {
+    // Executores por tipo
+    switch (connector.type) {
+      case "anm_scraper": {
+        // Busca processos ANM baseado na config
+        const config = connector.configJson as { uf?: string; substancia?: string };
+        const uf = config.uf || "MG";
+        const resp = await fetch(`http://localhost:5000/api/anm/processos?uf=${uf}${config.substancia ? `&substancia=${config.substancia}` : ""}`, {
+          headers: { "Cookie": "connect.sid=internal" } // internal call — ajustar conforme autenticação interna
+        });
+        if (!resp.ok) throw new Error(`ANM fetch falhou: ${resp.status}`);
+        console.log(`[Scheduler] ANM connector ${connector.id} executado com sucesso.`);
+        break;
+      }
+      case "receita_ws": {
+        // Connector da Receita — apenas registra execução por enquanto
+        console.log(`[Scheduler] Receita WS connector ${connector.id} — implementar lógica específica de sincronização aqui.`);
+        break;
+      }
+      default: {
+        console.log(`[Scheduler] Tipo de connector desconhecido: ${connector.type}`);
+      }
+    }
+
+    // Atualizar lastRunAt no banco
+    await db.update(connectors)
+      .set({ lastRunAt: new Date() })
+      .where(eq(connectors.id, connector.id));
+
+  } catch (err) {
+    console.error(`[Scheduler] Erro no connector ${connector.id}:`, err);
+  }
+}
+
+// Carrega todos os connectors ativos e agenda seus jobs
+export async function initScheduler() {
+  console.log("[Scheduler] Iniciando agendador de connectors...");
+  
+  const allConnectors = await db.select().from(connectors);
+  
+  for (const connector of allConnectors) {
+    if (connector.status === "active" && connector.schedule) {
+      scheduleConnector(connector);
+    }
+  }
+  
+  console.log(`[Scheduler] ${activeJobs.size} job(s) agendado(s).`);
+}
+
+// Agenda (ou reagenda) um connector específico
+export function scheduleConnector(connector: { id: number; schedule: string | null; status: string; type: string; configJson: any; name: string }) {
+  // Cancela job anterior se existir
+  if (activeJobs.has(connector.id)) {
+    activeJobs.get(connector.id)!.stop();
+    activeJobs.delete(connector.id);
+  }
+
+  if (connector.status !== "active" || !connector.schedule) return;
+  
+  // Valida expressão cron
+  if (!cron.validate(connector.schedule)) {
+    console.warn(`[Scheduler] Expressão cron inválida para connector ${connector.id}: "${connector.schedule}"`);
+    return;
+  }
+
+  const task = cron.schedule(connector.schedule, () => {
+    runConnectorJob(connector);
+  }, { timezone: "America/Sao_Paulo" });
+
+  activeJobs.set(connector.id, task);
+  console.log(`[Scheduler] Connector ${connector.id} (${connector.name}) agendado: ${connector.schedule}`);
+}
+
+// Remove o job de um connector
+export function unscheduleConnector(connectorId: number) {
+  if (activeJobs.has(connectorId)) {
+    activeJobs.get(connectorId)!.stop();
+    activeJobs.delete(connectorId);
+    console.log(`[Scheduler] Connector ${connectorId} desagendado.`);
+  }
+}
+
+export function getSchedulerStatus() {
+  return {
+    activeJobs: activeJobs.size,
+    jobIds: Array.from(activeJobs.keys()),
+  };
+}
+```
+
+**3. Inicializar o scheduler em `server/index.ts`:**
+
+No arquivo `server/index.ts`, após a configuração do Express e antes do `app.listen`, adicionar:
+```typescript
+import { initScheduler } from "./scheduler";
+
+// Dentro da função principal, após setupRoutes/registerRoutes:
+await initScheduler();
+```
+
+**4. Atualizar `server/routes/system.ts` — o endpoint de run manual deve agora executar de verdade:**
+
+Substituir o handler do `POST /api/connectors/:id/run`:
+```typescript
+import { scheduleConnector, unscheduleConnector } from "../scheduler";
+
+app.post(api.connectors.run.path, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const connector = await storage.getConnector(id); // adicionar getConnector ao storage
+    if (!connector) return res.status(404).json({ message: "Connector não encontrado" });
+    
+    // Executar imediatamente em background (não bloqueia a resposta)
+    runConnectorJob(connector).catch(err => console.error("Erro na execução manual:", err));
+    
+    res.json({ success: true, message: "Connector iniciado em background" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to trigger connector" });
+  }
+});
+```
+
+**5. Reagendar automaticamente quando um connector é atualizado em `server/routes/system.ts`:**
+
+Após o `app.put(api.connectors.update.path, ...)`:
+```typescript
+// Após salvar no banco, reagendar:
+const updated = await storage.updateConnector(...);
+scheduleConnector(updated); // reagenda com a nova expressão cron
+```
+
+Quando deletado, chamar `unscheduleConnector(id)`.
+
+**6. Adicionar endpoint de status do scheduler:**
+```typescript
+app.get("/api/scheduler/status", async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+  const status = getSchedulerStatus();
+  res.json(status);
+});
+```
+
+**7. Atualizar frontend `client/src/pages/connectors.tsx`:**
+
+- No formulário de criação/edição de connector, adicionar campo "Agendamento (Cron)" com input text e um helper mostrando exemplos:
+  - `0 */6 * * *` → A cada 6 horas
+  - `0 8 * * 1-5` → Toda manhã às 8h (dias úteis)
+  - `0 0 * * *` → Todo dia à meia-noite
+- Exibir status "Agendado" ou "Sem agendamento" em cada connector da lista.
+- Adicionar validação: ao digitar a expressão cron, mostrar preview do que ela significa em português.
+
+**8. Adicionar `getConnector` ao `IStorage` em `server/storage.ts`:**
+```typescript
+// Na interface IStorage:
+getConnector(id: number): Promise<Connector | undefined>;
+
+// Na classe DatabaseStorage:
+async getConnector(id: number): Promise<Connector | undefined> {
+  const [row] = await db.select().from(connectors).where(eq(connectors.id, id));
+  return row;
+}
+```
+
+Usar `node-cron` v3.x. Não instalar `bull` ou `redis` — o node-cron não requer infraestrutura externa e é suficiente para um time de 2-5 pessoas.

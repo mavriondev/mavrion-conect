@@ -1,0 +1,173 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: 'Inter', sans-serif;
+  --font-display: 'Outfit', sans-serif;
+
+  /* Mavrion Conect — Modern Emerald Green Theme */
+  --background: 150 18% 97%;
+  --foreground: 155 40% 10%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 155 40% 10%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 155 40% 10%;
+
+  --primary: 142 72% 38%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 145 20% 94%;
+  --secondary-foreground: 155 40% 14%;
+
+  --muted: 148 16% 93%;
+  --muted-foreground: 155 12% 48%;
+
+  --accent: 145 20% 93%;
+  --accent-foreground: 155 40% 14%;
+
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 148 14% 88%;
+  --input: 148 14% 88%;
+  --ring: 142 72% 38%;
+
+  --radius: 0.75rem;
+
+  /* Sidebar — Dark Forest Green */
+  --sidebar-background: 155 55% 8%;
+  --sidebar-foreground: 145 30% 94%;
+  --sidebar-primary: 142 68% 44%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 155 45% 13%;
+  --sidebar-accent-foreground: 145 30% 94%;
+  --sidebar-border: 155 45% 13%;
+  --sidebar-ring: 142 68% 44%;
+
+  /* Charts */
+  --chart-1: 142 72% 38%;
+  --chart-2: 162 68% 38%;
+  --chart-3: 198 72% 42%;
+  --chart-4: 48 92% 50%;
+  --chart-5: 0 72% 50%;
+}
+
+.dark {
+  --background: 155 40% 4%;
+  --foreground: 145 30% 95%;
+
+  --card: 155 40% 6%;
+  --card-foreground: 145 30% 95%;
+
+  --popover: 155 40% 6%;
+  --popover-foreground: 145 30% 95%;
+
+  --primary: 142 68% 48%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 155 30% 14%;
+  --secondary-foreground: 145 30% 95%;
+
+  --muted: 155 30% 14%;
+  --muted-foreground: 150 16% 58%;
+
+  --accent: 155 30% 14%;
+  --accent-foreground: 145 30% 95%;
+
+  --destructive: 0 63% 31%;
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 155 28% 15%;
+  --input: 155 28% 15%;
+  --ring: 142 68% 48%;
+
+  --sidebar-background: 155 55% 5%;
+  --sidebar-foreground: 145 30% 92%;
+  --sidebar-primary: 142 68% 50%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 155 45% 10%;
+  --sidebar-accent-foreground: 145 30% 92%;
+  --sidebar-border: 155 45% 10%;
+  --sidebar-ring: 142 68% 50%;
+
+  --chart-1: 142 68% 48%;
+  --chart-2: 162 62% 44%;
+  --chart-3: 198 70% 48%;
+  --chart-4: 48 90% 55%;
+  --chart-5: 0 70% 56%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+    @apply tracking-tight;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-card/80 backdrop-blur-md border border-border shadow-sm;
+  }
+
+  .sidebar-link {
+    @apply flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors
+      hover:bg-sidebar-accent hover:text-sidebar-accent-foreground
+      text-sidebar-foreground/70 hover:text-sidebar-foreground;
+  }
+
+  .sidebar-link.active {
+    @apply bg-sidebar-accent text-sidebar-primary-foreground shadow-sm
+      bg-gradient-to-r from-sidebar-primary to-sidebar-primary/90;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-muted-foreground/20 rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/30;
+}
+
+/* Tiptap editor */
+.ProseMirror {
+  outline: none;
+}
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: hsl(var(--muted-foreground));
+  pointer-events: none;
+  height: 0;
+}
+.ProseMirror ul, .ProseMirror ol {
+  padding-left: 1.25rem;
+}
+.ProseMirror ul { list-style-type: disc; }
+.ProseMirror ol { list-style-type: decimal; }
+.ProseMirror strong { font-weight: 600; }
+.ProseMirror em { font-style: italic; }
+.ProseMirror s { text-decoration: line-through; }

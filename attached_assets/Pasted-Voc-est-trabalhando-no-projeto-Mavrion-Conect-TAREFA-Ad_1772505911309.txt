@@ -1,0 +1,154 @@
+Você está trabalhando no projeto Mavrion Conect.
+
+TAREFA: Adicionar exportação de dados em CSV e Excel (XLSX) nas páginas de Empresas, Deals (CRM), Leads (SDR) e Ativos. Usar a biblioteca `xlsx` (SheetJS Community Edition — gratuita) no backend.
+
+**1. Instalar dependência:**
+npm install xlsx
+
+**2. Criar utilitário de export em `server/export.ts`:**
+```typescript
+import * as XLSX from "xlsx";
+
+interface ExportColumn {
+  header: string;
+  key: string;
+  format?: (val: any) => string;
+}
+
+export function generateXLSX(data: Record<string, any>[], columns: ExportColumn[]): Buffer {
+  const rows = data.map(item =>
+    Object.fromEntries(columns.map(col => [
+      col.header,
+      col.format ? col.format(item[col.key]) : (item[col.key] ?? "")
+    ]))
+  );
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(rows);
+  
+  // Auto-width das colunas
+  const maxWidths = columns.map(col => ({
+    wch: Math.max(col.header.length, ...data.map(d => String(d[col.key] ?? "").length)) + 2
+  }));
+  ws["!cols"] = maxWidths;
+  
+  XLSX.utils.book_append_sheet(wb, ws, "Dados");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+}
+
+export function generateCSV(data: Record<string, any>[], columns: ExportColumn[]): string {
+  const headers = columns.map(c => `"${c.header}"`).join(";");
+  const rows = data.map(item =>
+    columns.map(col => {
+      const val = col.format ? col.format(item[col.key]) : (item[col.key] ?? "");
+      return `"${String(val).replace(/"/g, '""')}"`;
+    }).join(";")
+  );
+  return "\uFEFF" + [headers, ...rows].join("\n"); // BOM para Excel BR abrir corretamente
+}
+```
+
+**3. Adicionar endpoints de export em `server/routes.ts` (ou nos arquivos de route correspondentes):**
+```typescript
+import { generateXLSX, generateCSV } from "./export";
+
+// EXPORT DEALS
+app.get("/api/export/deals", async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+  const user = req.user as any;
+  const format = req.query.format as string || "xlsx"; // "xlsx" ou "csv"
+  const pipelineType = req.query.pipelineType as string;
+  
+  const deals = await storage.getDeals(pipelineType);
+  
+  const columns = [
+    { header: "Título", key: "title" },
+    { header: "Empresa", key: "company", format: (v: any) => v?.legalName || "" },
+    { header: "Pipeline", key: "pipelineType" },
+    { header: "Estágio", key: "stageId", format: (v: any) => String(v) }, // resolver nome depois
+    { header: "Valor Estimado (R$)", key: "amountEstimate", format: (v: any) => v ? v.toFixed(2) : "" },
+    { header: "Probabilidade (%)", key: "probability", format: (v: any) => v ? String(v) : "" },
+    { header: "Prioridade", key: "priority" },
+    { header: "Labels", key: "labels", format: (v: any) => Array.isArray(v) ? v.join(", ") : "" },
+    { header: "Prazo", key: "dueDate", format: (v: any) => v ? new Date(v).toLocaleDateString("pt-BR") : "" },
+    { header: "Criado em", key: "createdAt", format: (v: any) => new Date(v).toLocaleDateString("pt-BR") },
+  ];
+
+  if (format === "csv") {
+    const csv = generateCSV(deals as any[], columns);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="deals_${Date.now()}.csv"`);
+    return res.send(csv);
+  }
+  
+  const buffer = generateXLSX(deals as any[], columns);
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="deals_${Date.now()}.xlsx"`);
+  res.send(buffer);
+});
+
+// EXPORT EMPRESAS
+app.get("/api/export/companies", async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+  const format = req.query.format as string || "xlsx";
+  const companies = await storage.getCompanies();
+  
+  const columns = [
+    { header: "Razão Social", key: "legalName" },
+    { header: "Nome Fantasia", key: "tradeName" },
+    { header: "CNPJ", key: "cnpj" },
+    { header: "CNAE Principal", key: "cnaePrincipal" },
+    { header: "Porte", key: "porte" },
+    { header: "UF", key: "address", format: (v: any) => v?.state || "" },
+    { header: "Município", key: "address", format: (v: any) => v?.city || "" },
+    { header: "Website", key: "website" },
+    { header: "Importado em", key: "createdAt", format: (v: any) => new Date(v).toLocaleDateString("pt-BR") },
+  ];
+
+  // ... mesmo padrão de resposta acima
+});
+
+// EXPORT LEADS (SDR)
+app.get("/api/export/leads", async (req, res) => {
+  // ... colunas: empresa, CNPJ, status, score, fonte, criado em
+});
+
+// EXPORT ATIVOS
+app.get("/api/export/assets", async (req, res) => {
+  // ... colunas: título, tipo, localização, município, estado, área (ha), preço, status docs
+});
+```
+
+**4. Adicionar botão de export no frontend:**
+
+Em cada página listada (`client/src/pages/empresas.tsx`, `client/src/pages/crm/index.tsx`, `client/src/pages/sdr.tsx`, `client/src/pages/ativos.tsx`), adicionar um `DropdownMenu` com shadcn/ui no canto superior direito:
+```tsx
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
+import { Download } from "lucide-react";
+
+function handleExport(format: "xlsx" | "csv") {
+  const url = `/api/export/deals?format=${format}&pipelineType=${pipelineType}`;
+  window.open(url, "_blank");
+}
+
+// No JSX:
+<DropdownMenu>
+  <DropdownMenuTrigger asChild>
+    <Button variant="outline" size="sm">
+      <Download className="w-4 h-4 mr-2" />
+      Exportar
+    </Button>
+  </DropdownMenuTrigger>
+  <DropdownMenuContent>
+    <DropdownMenuItem onClick={() => handleExport("xlsx")}>
+      Excel (.xlsx)
+    </DropdownMenuItem>
+    <DropdownMenuItem onClick={() => handleExport("csv")}>
+      CSV (.csv)
+    </DropdownMenuItem>
+  </DropdownMenuContent>
+</DropdownMenu>
+```
+
+O botão deve respeitar os filtros ativos da tela. Por exemplo, na página de Empresas com filtro de UF aplicado, o export deve exportar apenas as empresas filtradas. Para isso, passar os filtros como query params no endpoint.

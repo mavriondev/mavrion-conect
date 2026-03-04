@@ -1,0 +1,465 @@
+import type { Express } from "express";
+import type { IStorage } from "../storage";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { sendNotification, notifId } from "../notifications";
+import { insertPortalListingSchema, insertAssetLandingPageSchema, companies, leads, deals, pipelineStages, portalInquiries } from "@shared/schema";
+import { eq, and, asc } from "drizzle-orm";
+import { getOrgId } from "../lib/tenant";
+
+function computeIntent(data: { phone?: string; message?: string; assetId?: number | null }) {
+  let score = 20;
+  const signals: string[] = [];
+
+  if (data.phone) { score += 25; signals.push("Telefone informado"); }
+  if (data.message && data.message.length >= 30) { score += 10; signals.push("Mensagem detalhada"); }
+  if (data.message) {
+    const urgentTerms = ["proposta", "visita", "reunião", "ligar", "agora", "urgente", "contato", "investir"];
+    const msgLower = data.message.toLowerCase();
+    if (urgentTerms.some(t => msgLower.includes(t))) {
+      score += 25;
+      signals.push("Palavras-chave de intenção forte");
+    }
+  }
+  if (data.assetId) { score += 20; signals.push("Interesse em ativo específico"); }
+
+  return { score: Math.min(Math.max(score, 0), 100), signals };
+}
+
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + 60000 });
+    return true;
+  }
+  if (entry.count >= 5) return false;
+  entry.count++;
+  return true;
+}
+
+export function registerPortalRoutes(app: Express, storage: IStorage, db: NodePgDatabase<any>) {
+  app.get("/api/portal/listings", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const data = await storage.getPortalListings(getOrgId());
+    res.json(data);
+  });
+
+  app.post("/api/portal/listings", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const { orgId: _strip, ...body } = req.body;
+    const parsed = insertPortalListingSchema.safeParse({ ...body, orgId: getOrgId() });
+    if (!parsed.success) return res.status(400).json({ message: "Dados inválidos", errors: parsed.error.flatten() });
+    const listing = await storage.createPortalListing(parsed.data);
+    res.status(201).json(listing);
+  });
+
+  app.patch("/api/portal/listings/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const id = Number(req.params.id);
+    const data = req.body;
+    if (data.status === "published" && !data.publishedAt) {
+      data.publishedAt = new Date();
+    }
+    const partial = insertPortalListingSchema.partial().safeParse(data);
+    if (!partial.success) return res.status(400).json({ message: "Dados inválidos", errors: partial.error.flatten() });
+    const updated = await storage.updatePortalListing(id, partial.data);
+    res.json(updated);
+  });
+
+  app.delete("/api/portal/listings/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    await storage.deletePortalListing(Number(req.params.id));
+    res.json({ ok: true });
+  });
+
+  app.get("/api/portal/inquiries", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const data = await storage.getPortalInquiries(getOrgId());
+    res.json(data);
+  });
+
+  app.patch("/api/portal/inquiries/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const updated = await storage.updatePortalInquiry(Number(req.params.id), req.body);
+    res.json(updated);
+  });
+
+  app.get("/api/public/listings", async (_req, res) => {
+    const listings = await storage.getPublishedListings();
+    const safe = listings.map(l => ({
+      id: l.id,
+      title: l.title,
+      subtitle: l.subtitle,
+      description: l.description,
+      featuredImage: l.featuredImage,
+      galleryImages: l.galleryImages || [],
+      visibilityLevel: l.visibilityLevel,
+      contactEmail: l.contactEmail,
+      contactPhone: l.contactPhone,
+      accentColor: l.accentColor,
+      highlights: l.highlights || [],
+      publishedAt: l.publishedAt,
+      createdAt: l.createdAt,
+      asset: l.asset ? {
+        id: l.asset.id,
+        type: l.asset.type,
+        title: l.asset.title,
+        description: l.asset.description,
+        municipio: l.asset.municipio,
+        estado: l.asset.estado,
+        priceAsking: l.visibilityLevel === "full" ? l.asset.priceAsking : null,
+        areaHa: l.asset.areaHa,
+        areaUtil: l.asset.areaUtil,
+        tags: l.asset.tags,
+        docsStatus: l.asset.docsStatus,
+      } : null,
+    }));
+    res.json(safe);
+  });
+
+  app.get("/api/public/listings/:id", async (req, res) => {
+    const listing = await storage.getPortalListing(Number(req.params.id));
+    if (!listing || listing.status !== "published") return res.status(404).json({ message: "Não encontrado" });
+    try {
+      await storage.updatePortalListing(listing.id, { viewCount: (listing.viewCount || 0) + 1 });
+    } catch {}
+    const safe = {
+      id: listing.id,
+      title: listing.title,
+      subtitle: listing.subtitle,
+      description: listing.description,
+      featuredImage: listing.featuredImage,
+      galleryImages: listing.galleryImages || [],
+      visibilityLevel: listing.visibilityLevel,
+      contactEmail: listing.contactEmail,
+      contactPhone: listing.contactPhone,
+      accentColor: listing.accentColor,
+      sectionsConfig: listing.sectionsConfig || [],
+      highlights: listing.highlights || [],
+      publishedAt: listing.publishedAt,
+      createdAt: listing.createdAt,
+      viewCount: (listing.viewCount || 0) + 1,
+      asset: listing.asset ? {
+        id: listing.asset.id,
+        type: listing.asset.type,
+        title: listing.asset.title,
+        description: listing.asset.description,
+        municipio: listing.asset.municipio,
+        estado: listing.asset.estado,
+        location: listing.asset.location,
+        priceAsking: listing.visibilityLevel === "full" ? listing.asset.priceAsking : null,
+        areaHa: listing.asset.areaHa,
+        areaUtil: listing.asset.areaUtil,
+        tags: listing.asset.tags,
+        docsStatus: listing.asset.docsStatus,
+        observacoes: listing.asset.observacoes,
+      } : null,
+    };
+    res.json(safe);
+  });
+
+  app.post("/api/public/inquiries", async (req, res) => {
+    try {
+      const clientIp = req.ip || req.socket.remoteAddress || "unknown";
+      if (!checkRateLimit(clientIp)) {
+        return res.status(429).json({ message: "Muitas solicitações. Tente novamente em breve." });
+      }
+
+      const { listingId, landingPageId, name, email, phone, company, message } = req.body;
+      if (!name || !email) return res.status(400).json({ message: "Nome e email são obrigatórios" });
+      if (!listingId && !landingPageId) return res.status(400).json({ message: "listingId ou landingPageId é obrigatório" });
+
+      const orgId = getOrgId();
+      let assetId: number | null = null;
+      let contextTitle = "";
+
+      if (listingId) {
+        const listing = await storage.getPortalListing(listingId);
+        if (listing) {
+          assetId = listing.assetId || null;
+          contextTitle = listing.title || "Listing";
+        }
+      } else if (landingPageId) {
+        const lp = await storage.getAssetLandingPage(landingPageId);
+        if (lp) {
+          assetId = lp.assetId || null;
+          contextTitle = lp.title;
+        }
+      }
+
+      const { score: intentScore, signals: intentSignals } = computeIntent({ phone, message, assetId });
+
+      const inquiry = await storage.createPortalInquiry({
+        orgId,
+        listingId: listingId || null,
+        landingPageId: landingPageId || null,
+        assetId,
+        name, email, phone, company, message,
+        intentScore,
+        intentSignalsJson: intentSignals,
+      });
+
+      try {
+        const emailLower = email.toLowerCase().trim();
+        const allCompanies = await db.select().from(companies).where(eq(companies.orgId, orgId));
+        let existingCompany = allCompanies.find((c: any) => {
+          const emails = (c.emails as string[]) || [];
+          return emails.some((e: string) => e.toLowerCase() === emailLower);
+        });
+
+        let companyId: number;
+        if (existingCompany) {
+          companyId = existingCompany.id;
+        } else {
+          const [newCompany] = await db.insert(companies).values({
+            orgId,
+            legalName: company || name,
+            tradeName: company || null,
+            emails: [email],
+            phones: phone ? [phone] : [],
+            source: "portal",
+          } as any).returning();
+          companyId = newCompany.id;
+        }
+
+        const [lead] = await db.insert(leads).values({
+          orgId,
+          companyId,
+          status: "new",
+          score: intentScore,
+          source: "PORTAL",
+          scoreBreakdownJson: { signals: intentSignals, origin: "portal", contextTitle },
+        } as any).returning();
+
+        await db.update(portalInquiries).set({ leadId: lead.id } as any).where(eq(portalInquiries.id, inquiry.id));
+
+        let dealCreated = false;
+        let dealId: number | null = null;
+        if (intentScore >= 70) {
+          const stages = await db.select().from(pipelineStages)
+            .where(eq(pipelineStages.pipelineType, "INVESTOR"))
+            .orderBy(asc(pipelineStages.order))
+            .limit(1);
+          if (stages.length > 0) {
+            const [deal] = await db.insert(deals).values({
+              orgId,
+              pipelineType: "INVESTOR",
+              stageId: stages[0].id,
+              title: `Portal: ${company || name} — ${contextTitle || "Interesse"}`,
+              description: `Interesse via portal.\nNome: ${name}\nEmail: ${email}\nTelefone: ${phone || "N/A"}\nMensagem: ${message || "N/A"}\nIntent Score: ${intentScore}%`,
+              companyId,
+              assetId,
+              labels: ["Portal", `Intent ${intentScore}%`],
+              source: "PORTAL",
+            } as any).returning();
+            dealId = deal.id;
+            dealCreated = true;
+            await db.update(portalInquiries).set({ dealId: deal.id } as any).where(eq(portalInquiries.id, inquiry.id));
+          }
+        }
+
+        const notifType = dealCreated ? "new_deal_portal" : "new_lead_portal";
+        const notifTitle = dealCreated
+          ? `Novo Deal via Portal (Intent ${intentScore}%)`
+          : `Novo Lead via Portal`;
+        const notifMsg = `${name} (${company || email}) demonstrou interesse em "${contextTitle || "portal"}"`;
+
+        sendNotification({
+          id: notifId(),
+          type: notifType,
+          orgId,
+          title: notifTitle,
+          message: notifMsg,
+          link: dealCreated ? "/crm" : "/portal-admin",
+          createdAt: new Date().toISOString(),
+        });
+      } catch (crmErr) {
+        console.error("Portal→CRM integration error (inquiry saved):", crmErr);
+      }
+
+      res.status(201).json({ success: true, message: "Recebido" });
+    } catch (err) {
+      console.error("Portal inquiry error:", err);
+      res.status(500).json({ message: "Erro ao enviar interesse" });
+    }
+  });
+
+  app.post("/api/portal/inquiries/:id/create-deal", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const orgId = getOrgId();
+      const inqId = Number(req.params.id);
+      const inq = await storage.getPortalInquiry(inqId);
+      if (!inq || inq.orgId !== orgId) return res.status(404).json({ message: "Inquiry não encontrada" });
+
+      if (inq.dealId) {
+        return res.json({ success: true, dealId: inq.dealId, message: "Deal já existe" });
+      }
+
+      let companyId: number | null = null;
+      let leadId = inq.leadId;
+
+      if (!leadId) {
+        const emailLower = (inq.email || "").toLowerCase().trim();
+        const allComps = await db.select().from(companies).where(eq(companies.orgId, orgId));
+        const existing = allComps.find((c: any) => {
+          const emails = (c.emails as string[]) || [];
+          return emails.some((e: string) => e.toLowerCase() === emailLower);
+        });
+
+        if (existing) {
+          companyId = existing.id;
+        } else {
+          const [newComp] = await db.insert(companies).values({
+            orgId,
+            legalName: inq.company || inq.name,
+            tradeName: inq.company || null,
+            emails: inq.email ? [inq.email] : [],
+            phones: inq.phone ? [inq.phone] : [],
+            source: "portal",
+          } as any).returning();
+          companyId = newComp.id;
+        }
+
+        const [lead] = await db.insert(leads).values({
+          orgId,
+          companyId,
+          status: "new",
+          score: inq.intentScore || 50,
+          source: "PORTAL",
+          scoreBreakdownJson: { origin: "portal_manual_promote" },
+        } as any).returning();
+        leadId = lead.id;
+        await db.update(portalInquiries).set({ leadId: lead.id } as any).where(eq(portalInquiries.id, inqId));
+      } else {
+        const [existingLead] = await db.select().from(leads).where(eq(leads.id, leadId));
+        if (existingLead) companyId = existingLead.companyId;
+      }
+
+      const stages = await db.select().from(pipelineStages)
+        .where(eq(pipelineStages.pipelineType, "INVESTOR"))
+        .orderBy(asc(pipelineStages.order))
+        .limit(1);
+      if (stages.length === 0) return res.status(400).json({ message: "Nenhum estágio INVESTOR configurado" });
+
+      let contextTitle = "Interesse";
+      if (inq.listingId) {
+        const listing = await storage.getPortalListing(inq.listingId);
+        if (listing) contextTitle = listing.title || "Listing";
+      } else if (inq.landingPageId) {
+        const lp = await storage.getAssetLandingPage(inq.landingPageId);
+        if (lp) contextTitle = lp.title;
+      }
+
+      const [deal] = await db.insert(deals).values({
+        orgId,
+        pipelineType: "INVESTOR",
+        stageId: stages[0].id,
+        title: `Portal: ${inq.company || inq.name} — ${contextTitle}`,
+        description: `Promovido manualmente do portal.\nNome: ${inq.name}\nEmail: ${inq.email}\nTelefone: ${inq.phone || "N/A"}\nMensagem: ${inq.message || "N/A"}`,
+        companyId,
+        assetId: inq.assetId,
+        labels: ["Portal", "Manual"],
+        source: "PORTAL",
+      } as any).returning();
+
+      await db.update(portalInquiries).set({ dealId: deal.id } as any).where(eq(portalInquiries.id, inqId));
+
+      res.json({ success: true, dealId: deal.id });
+    } catch (err) {
+      console.error("Create deal from inquiry error:", err);
+      res.status(500).json({ message: "Erro ao criar deal" });
+    }
+  });
+
+  app.get("/api/landing-pages", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const data = await storage.getAssetLandingPages(getOrgId());
+    res.json(data);
+  });
+
+  app.post("/api/landing-pages", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const { orgId: _s, ...lpBody } = req.body;
+    const parsed = insertAssetLandingPageSchema.safeParse({ ...lpBody, orgId: getOrgId() });
+    if (!parsed.success) return res.status(400).json({ message: "Dados inválidos", errors: parsed.error.flatten() });
+    try {
+      const page = await storage.createAssetLandingPage(parsed.data);
+      res.status(201).json(page);
+    } catch (err: any) {
+      if (err.message?.includes("unique") || err.code === "23505") {
+        return res.status(409).json({ message: "Slug já existe. Escolha outro." });
+      }
+      res.status(500).json({ message: "Erro ao criar landing page" });
+    }
+  });
+
+  app.patch("/api/landing-pages/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const id = Number(req.params.id);
+    const data = req.body;
+    if (data.status === "published" && !data.publishedAt) {
+      data.publishedAt = new Date();
+    }
+    const partial = insertAssetLandingPageSchema.partial().safeParse(data);
+    if (!partial.success) return res.status(400).json({ message: "Dados inválidos", errors: partial.error.flatten() });
+    try {
+      const updated = await storage.updateAssetLandingPage(id, partial.data);
+      res.json(updated);
+    } catch (err: any) {
+      if (err.message?.includes("unique") || err.code === "23505") {
+        return res.status(409).json({ message: "Slug já existe. Escolha outro." });
+      }
+      res.status(500).json({ message: "Erro ao atualizar landing page" });
+    }
+  });
+
+  app.delete("/api/landing-pages/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    await storage.deleteAssetLandingPage(Number(req.params.id));
+    res.json({ ok: true });
+  });
+
+  app.get("/api/public/lp/:slug", async (req, res) => {
+    const page = await storage.getAssetLandingPageBySlug(req.params.slug);
+    if (!page || page.status !== "published") return res.status(404).json({ message: "Página não encontrada" });
+    try {
+      await storage.updateAssetLandingPage(page.id, { viewCount: (page.viewCount || 0) + 1 });
+    } catch {}
+    const safe = {
+      id: page.id,
+      slug: page.slug,
+      title: page.title,
+      subtitle: page.subtitle,
+      description: page.description,
+      featuredImage: page.featuredImage,
+      galleryImages: page.galleryImages || [],
+      accentColor: page.accentColor,
+      sectionsConfig: page.sectionsConfig || [],
+      highlights: page.highlights || [],
+      contactEmail: page.contactEmail,
+      contactPhone: page.contactPhone,
+      viewCount: (page.viewCount || 0) + 1,
+      publishedAt: page.publishedAt,
+      createdAt: page.createdAt,
+      asset: page.asset ? {
+        id: page.asset.id,
+        type: page.asset.type,
+        title: page.asset.title,
+        description: page.asset.description,
+        municipio: page.asset.municipio,
+        estado: page.asset.estado,
+        location: page.asset.location,
+        priceAsking: page.asset.priceAsking,
+        areaHa: page.asset.areaHa,
+        areaUtil: page.asset.areaUtil,
+        tags: page.asset.tags,
+        docsStatus: page.asset.docsStatus,
+        observacoes: page.asset.observacoes,
+      } : null,
+    };
+    res.json(safe);
+  });
+}

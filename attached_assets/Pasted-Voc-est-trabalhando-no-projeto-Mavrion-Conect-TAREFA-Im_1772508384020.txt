@@ -1,0 +1,247 @@
+Você está trabalhando no projeto Mavrion Conect.
+
+TAREFA: Implementar um sistema de notificações em tempo real usando Server-Sent Events (SSE) — sem WebSocket, sem Redis, sem custo adicional. As notificações devem aparecer como toasts e como sino (bell icon) no topbar.
+
+**1. Criar `server/notifications.ts`:**
+```typescript
+import type { Response } from "express";
+
+interface Notification {
+  id: string;
+  type: "deal_due" | "new_inquiry" | "new_match" | "lead_stale" | "connector_error";
+  title: string;
+  message: string;
+  link?: string;
+  orgId: number;
+  createdAt: string;
+}
+
+// Mapa: orgId → array de Response (conexões SSE ativas)
+const sseClients = new Map<number, Response[]>();
+
+// Registrar cliente SSE
+export function addSSEClient(orgId: number, res: Response) {
+  if (!sseClients.has(orgId)) sseClients.set(orgId, []);
+  sseClients.get(orgId)!.push(res);
+  
+  // Remover quando conexão fechar
+  res.on("close", () => {
+    const clients = sseClients.get(orgId) || [];
+    const idx = clients.indexOf(res);
+    if (idx > -1) clients.splice(idx, 1);
+  });
+}
+
+// Enviar notificação para todos os clientes de uma org
+export function sendNotification(notification: Notification) {
+  const clients = sseClients.get(notification.orgId) || [];
+  const data = JSON.stringify(notification);
+  
+  for (const client of clients) {
+    try {
+      client.write(`data: ${data}\n\n`);
+    } catch {
+      // Cliente desconectado — ignorar
+    }
+  }
+}
+
+// Gerar ID único para notificação
+export function notifId() {
+  return `${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+}
+```
+
+**2. Adicionar endpoint SSE em `server/routes/system.ts`:**
+```typescript
+import { addSSEClient, sendNotification, notifId } from "../notifications";
+
+app.get("/api/notifications/stream", (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).end();
+  const user = req.user as any;
+
+  // Headers SSE
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no"); // para Nginx
+  res.flushHeaders();
+
+  // Heartbeat a cada 30s para manter a conexão viva
+  const heartbeat = setInterval(() => {
+    res.write(": heartbeat\n\n");
+  }, 30000);
+
+  res.on("close", () => clearInterval(heartbeat));
+  
+  addSSEClient(user.orgId, res);
+
+  // Enviar notificação de boas-vindas (confirma que SSE está funcionando)
+  res.write(`data: ${JSON.stringify({ type: "connected", orgId: user.orgId })}\n\n`);
+});
+```
+
+**3. Disparar notificações automaticamente nos eventos do sistema:**
+
+Em `server/routes/crm.ts`, após criar um deal ou mover para nova etapa:
+```typescript
+import { sendNotification, notifId } from "../notifications";
+
+// Quando deal é movido para "Fechamento":
+if (novaEtapa.name === "Fechamento") {
+  sendNotification({
+    id: notifId(),
+    type: "deal_due",
+    orgId: user.orgId,
+    title: "🎯 Deal chegou ao Fechamento",
+    message: `"${deal.title}" entrou na etapa de Fechamento!`,
+    link: `/crm`,
+    createdAt: new Date().toISOString(),
+  });
+}
+```
+
+Em `server/routes/portal.ts`, ao receber novo inquiry (POST /api/public/inquiries):
+```typescript
+sendNotification({
+  id: notifId(),
+  type: "new_inquiry",
+  orgId: listing.orgId,
+  title: "📬 Novo interesse no Portal",
+  message: `${inquiry.name} (${inquiry.company || inquiry.email}) demonstrou interesse em "${listing.title}"`,
+  link: `/portal-admin`,
+  createdAt: new Date().toISOString(),
+});
+```
+
+Em `server/routes/matching.ts`, após o run de matching criar novos matches:
+```typescript
+if (matchesFound > 0) {
+  sendNotification({
+    id: notifId(),
+    type: "new_match",
+    orgId: orgId,
+    title: "🔗 Novos matches encontrados",
+    message: `${matchesFound} nova(s) sugestão(ões) de match disponível(is)`,
+    link: `/matching`,
+    createdAt: new Date().toISOString(),
+  });
+}
+```
+
+**4. Criar hook no frontend `client/src/hooks/use-notifications.ts`:**
+```typescript
+import { useEffect, useState, useCallback } from "react";
+import { useToast } from "@/hooks/use-toast";
+
+export interface AppNotification {
+  id: string;
+  type: string;
+  title: string;
+  message: string;
+  link?: string;
+  createdAt: string;
+  read: boolean;
+}
+
+export function useNotifications() {
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    const source = new EventSource("/api/notifications/stream");
+    
+    source.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "connected") return; // heartbeat inicial
+        
+        const notification: AppNotification = { ...data, read: false };
+        
+        setNotifications(prev => [notification, ...prev].slice(0, 50)); // max 50
+        setUnreadCount(prev => prev + 1);
+        
+        // Toast automático
+        toast({
+          title: notification.title,
+          description: notification.message,
+          duration: 5000,
+        });
+      } catch {
+        // ignore parse errors
+      }
+    };
+
+    source.onerror = () => {
+      // SSE reconecta automaticamente — não fazer nada
+    };
+
+    return () => source.close();
+  }, []);
+
+  const markAllRead = useCallback(() => {
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    setUnreadCount(0);
+  }, []);
+
+  return { notifications, unreadCount, markAllRead };
+}
+```
+
+**5. Adicionar bell icon no TopBar (`client/src/components/top-bar.tsx`):**
+```tsx
+import { useNotifications } from "@/hooks/use-notifications";
+import { Bell } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useNavigate } from "wouter";
+
+function NotificationBell() {
+  const { notifications, unreadCount, markAllRead } = useNotifications();
+  const navigate = useNavigate();
+
+  return (
+    <Popover onOpenChange={(open) => open && markAllRead()}>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="sm" className="relative">
+          <Bell className="w-5 h-5" />
+          {unreadCount > 0 && (
+            <Badge className="absolute -top-1 -right-1 w-5 h-5 p-0 flex items-center justify-center text-xs bg-red-500">
+              {unreadCount > 9 ? "9+" : unreadCount}
+            </Badge>
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 p-0" align="end">
+        <div className="p-3 border-b font-semibold text-sm">Notificações</div>
+        <ScrollArea className="h-80">
+          {notifications.length === 0 ? (
+            <p className="text-center text-muted-foreground text-sm p-6">Nenhuma notificação</p>
+          ) : (
+            notifications.map(n => (
+              <div
+                key={n.id}
+                className={`p-3 border-b cursor-pointer hover:bg-muted/50 ${!n.read ? "bg-blue-50 dark:bg-blue-950/20" : ""}`}
+                onClick={() => n.link && navigate(n.link)}
+              >
+                <p className="font-medium text-sm">{n.title}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{n.message}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {new Date(n.createdAt).toLocaleString("pt-BR")}
+                </p>
+              </div>
+            ))
+          )}
+        </ScrollArea>
+      </PopoverContent>
+    </Popover>
+  );
+}
+```
+
+Incluir `<NotificationBell />` no `top-bar.tsx` ao lado dos outros ícones.
+
+**IMPORTANTE:** SSE (Server-Sent Events) é suportado nativamente por todos os browsers modernos e pelo Node.js Express sem nenhum pacote adicional. As notificações só existem em memória (se o servidor reiniciar, elas somem — o que é aceitável para um time de 2-5 pessoas). Se quiser persistência, salvar na tabela `audit_logs` ou criar uma tabela `notifications` separada futuramente.

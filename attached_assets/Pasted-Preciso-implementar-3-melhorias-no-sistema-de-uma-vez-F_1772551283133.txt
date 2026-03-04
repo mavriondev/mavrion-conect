@@ -1,0 +1,186 @@
+Preciso implementar 3 melhorias no sistema de uma vez. Faça tudo automaticamente.
+
+---
+
+## MELHORIA 1 — Botão "Norion" na Fila SDR
+
+No arquivo `client/src/pages/sdr.tsx`, dentro do grid de cards de leads, localize onde ficam os botões de ação de cada card (qualificar, rejeitar, promover a deal).
+
+Adicione um botão "Norion" em cada card que:
+- Só aparece quando a empresa do lead tem `norionProfile === "alto"` ou `norionProfile === "medio"`
+- Tem ícone `DollarSign` do lucide-react
+- Cor âmbar para perfil "alto", cinza para perfil "médio"
+- Ao clicar, abre um Dialog de confirmação: "Enviar esta empresa para o pipeline Norion Capital?"
+- Botões: Cancelar e Confirmar
+- Ao confirmar, faz `POST /api/norion/operations` com `{ companyId: lead.companyId }`
+- Após sucesso, exibe toast "Empresa enviada para Norion Capital" e invalida as queries `/api/norion/operations` e `/api/norion/dashboard`
+
+Adicione `DollarSign` no import do lucide-react se ainda não existir.
+
+---
+
+## MELHORIA 2 — APIs CVM e ANBIMA
+
+### Crie o arquivo `server/enrichment/fundos.ts`:
+
+```typescript
+export interface FundoInfo {
+  cnpj: string;
+  nome: string;
+  tipo: string;
+  patrimonio?: number;
+  situacao?: string;
+  administrador?: string;
+  gestor?: string;
+  dataConstituicao?: string;
+  source: "cvm" | "anbima";
+}
+
+export async function consultarFundoCVM(cnpj: string): Promise<FundoInfo | null> {
+  try {
+    const cnpjClean = cnpj.replace(/\D/g, "");
+    const response = await fetch(
+      `https://dados.cvm.gov.br/api/fundo/v1/${cnpjClean}`,
+      { signal: AbortSignal.timeout(10_000) }
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (!data || !data.length) return null;
+    const f = data[0];
+    return {
+      cnpj: cnpjClean,
+      nome: f.DENOM_SOCIAL || f.NOME_FUNDO || "",
+      tipo: f.TP_FUNDO || f.CLASSE || "",
+      situacao: f.SIT || f.SITUACAO || "",
+      administrador: f.ADMIN || "",
+      gestor: f.GESTOR || "",
+      dataConstituicao: f.DT_CONST || "",
+      source: "cvm",
+    };
+  } catch { return null; }
+}
+
+export async function listarFundosEstruturadosANBIMA(tipo?: string): Promise<FundoInfo[]> {
+  try {
+    const url = tipo
+      ? `https://api.anbima.com.br/feed/fundos/v1/fundos-estruturados?tipofundo=${tipo}&quantidade=300`
+      : `https://api.anbima.com.br/feed/fundos/v1/fundos-estruturados?quantidade=300`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) return [];
+    const data = await response.json();
+    const lista = data?.fundos || data?.data || data || [];
+    return lista.map((f: any) => ({
+      cnpj: f.cnpj || f.CNPJ || "",
+      nome: f.nome || f.NOME || f.denominacaoSocial || "",
+      tipo: f.tipo || f.TIPO || f.classe || "",
+      patrimonio: f.patrimonioLiquido || f.PATRIMONIO_LIQ || undefined,
+      situacao: f.situacao || f.SITUACAO || "",
+      administrador: f.administrador || f.ADMINISTRADOR || "",
+      gestor: f.gestor || f.GESTOR || "",
+      source: "anbima" as const,
+    }));
+  } catch { return []; }
+}
+```
+
+### No arquivo `server/routes/norion.ts`:
+
+Adicione no topo:
+```typescript
+import { consultarFundoCVM, listarFundosEstruturadosANBIMA } from "../enrichment/fundos";
+```
+
+Adicione estes dois endpoints dentro de `registerNorionRoutes` antes do fechamento:
+
+```typescript
+  app.get("/api/norion/fundo/:cnpj", async (req, res) => {
+    try {
+      const fundo = await consultarFundoCVM(req.params.cnpj);
+      if (!fundo) return res.status(404).json({ message: "Fundo não encontrado na CVM" });
+      res.json(fundo);
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+
+  app.get("/api/norion/fundos-estruturados", async (req, res) => {
+    try {
+      const tipo = req.query.tipo as string | undefined;
+      const fundos = await listarFundosEstruturadosANBIMA(tipo);
+      res.json({ total: fundos.length, fundos });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+```
+
+### No arquivo `client/src/pages/norion-capital.tsx`:
+
+Adicione uma aba "Fundos" após a aba de Perfis das Empresas com:
+- Select para filtrar por tipo: Todos, FIDC, FII, FIP
+- Botão "Buscar Fundos" que chama `GET /api/norion/fundos-estruturados?tipo=X`
+- Campo de busca para filtrar por nome na lista retornada
+- Tabela com colunas: Nome, Tipo, CNPJ, Administrador, Gestor, Situação
+- Spinner de loading durante a busca
+- Mensagem "Nenhum fundo encontrado" se lista vazia
+
+---
+
+## MELHORIA 3 — Relatório de Comissões
+
+### No arquivo `server/routes/norion.ts`, adicione este endpoint:
+
+```typescript
+  app.get("/api/norion/relatorio-comissoes", async (req, res) => {
+    try {
+      const orgId = getOrgId();
+      const { de, ate } = req.query;
+      const ops = await db.select().from(norionOperations).where(eq(norionOperations.orgId, orgId));
+      const comEmpresas = await Promise.all(ops.map(async (op) => {
+        const [company] = op.companyId
+          ? await db.select().from(companies).where(eq(companies.id, op.companyId))
+          : [null];
+        return { ...op, company };
+      }));
+      const filtradas = comEmpresas.filter(op => {
+        if (!de && !ate) return true;
+        const data = op.createdAt ? new Date(op.createdAt) : null;
+        if (!data) return false;
+        if (de && data < new Date(de as string)) return false;
+        if (ate && data > new Date(ate as string)) return false;
+        return true;
+      });
+      const aprovadas = filtradas.filter(o => ["aprovado","comissao_gerada"].includes(o.stage));
+      const recebidas = filtradas.filter(o => o.comissaoRecebida);
+      const linhas = aprovadas.map(op => ({
+        empresa: op.company?.legalName || op.company?.tradeName || "—",
+        cnpj: op.company?.cnpj || "—",
+        valorAprovado: op.valorAprovado || 0,
+        percentualComissao: op.percentualComissao || 0,
+        valorComissao: op.valorComissao || 0,
+        comissaoRecebida: op.comissaoRecebida,
+        dataOperacao: op.createdAt,
+        dataRecebimento: op.comissaoRecebidaEm,
+        stage: op.stage,
+      }));
+      res.json({
+        periodo: { de: de || null, ate: ate || null },
+        totalOperacoes: aprovadas.length,
+        volumeAprovado: aprovadas.reduce((s, o) => s + (o.valorAprovado || 0), 0),
+        comissaoTotal: aprovadas.reduce((s, o) => s + (o.valorComissao || 0), 0),
+        comissaoRecebida: recebidas.reduce((s, o) => s + (o.valorComissao || 0), 0),
+        comissaoAPagar: aprovadas.filter(o => !o.comissaoRecebida).reduce((s, o) => s + (o.valorComissao || 0), 0),
+        linhas,
+      });
+    } catch (err: any) { res.status(500).json({ message: err.message }); }
+  });
+```
+
+### No arquivo `client/src/pages/norion-capital.tsx`:
+
+Adicione uma aba "Relatório" após a aba Fundos com:
+- Dois campos de data: "De" e "Até"
+- Botão "Gerar Relatório" que chama `GET /api/norion/relatorio-comissoes?de=X&ate=Y`
+- Cards de resumo: Total de Operações, Volume Aprovado, Comissão Total, Comissão Recebida, Comissão a Receber
+- Tabela com colunas: Empresa, CNPJ, Valor Aprovado, % Comissão, Valor Comissão, Status (Recebida / Pendente), Data da Operação, Data do Recebimento
+- Botão "Exportar CSV" que baixa os dados da tabela como arquivo .csv
+
+---
+
+Após implementar tudo, confirme que o projeto compila sem erros. Não altere nenhum outro arquivo além dos mencionados acima.

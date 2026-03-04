@@ -1,0 +1,15 @@
+[project]
+name = "repl-nix-workspace"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.11"
+dependencies = [
+    "beautifulsoup4>=4.14.3",
+    "ddgs>=9.10.0",
+    "duckduckgo-search>=8.1.1",
+    "extruct>=0.18.0",
+    "httpx>=0.28.1",
+    "lxml>=6.0.2",
+    "phonenumbers>=9.0.24",
+    "requests>=2.32.5",
+]
