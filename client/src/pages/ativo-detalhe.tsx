@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
@@ -15,7 +15,7 @@ import {
   Pencil, Trash2, Loader2, CheckCircle2, AlertCircle, Clock,
   TreePine, Pickaxe, Briefcase, Home, Wheat, Factory, Link2,
   Tag, MessageSquare, Zap, Search, Leaf, Thermometer, Droplets,
-  FlaskConical, RefreshCw,
+  FlaskConical, RefreshCw, Upload, ExternalLink, Paperclip, X as XIcon,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
@@ -49,13 +49,173 @@ function InfoRow({ label, value, className }: { label: string; value?: string | 
   );
 }
 
-function ChecklistSection({ title, items, savedChecks, ativoId, checkKey, camposEspecificos }: {
+function ChecklistItemRow({ item, checked, onToggle, ativoId, ativoType, ativoTitle }: {
+  item: string;
+  checked: boolean;
+  onToggle: () => void;
+  ativoId: number;
+  ativoType: string;
+  ativoTitle: string;
+}) {
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  const filesQuery = useQuery({
+    queryKey: ["/api/documents/ativo", ativoId, "checklist", item],
+    queryFn: async () => {
+      const params = new URLSearchParams({ tipo: ativoType, titulo: `${ativoTitle} — ${item}` });
+      const res = await apiRequest("GET", `/api/documents/ativo/${ativoId}?${params.toString()}`);
+      if (!res.ok) return { arquivos: [] };
+      return res.json();
+    },
+    enabled: expanded,
+  });
+
+  const arquivos = (filesQuery.data?.arquivos || []) as Array<{ id: string; name: string; webViewLink: string; mimeType: string; createdTime: string }>;
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("arquivo", file);
+      formData.append("tipo", ativoType);
+      formData.append("titulo", `${ativoTitle} — ${item}`);
+      const res = await fetch(`/api/documents/ativo/${ativoId}`, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as any;
+        throw new Error(err.message || "Erro no upload");
+      }
+      toast({ title: "Documento enviado" });
+      filesQuery.refetch();
+      if (!checked) onToggle();
+    } catch (err: any) {
+      toast({ title: err.message || "Erro ao enviar documento", variant: "destructive" });
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleDelete = async (fileId: string) => {
+    try {
+      await apiRequest("DELETE", `/api/documents/${fileId}`);
+      toast({ title: "Documento removido" });
+      filesQuery.refetch();
+    } catch {
+      toast({ title: "Erro ao remover documento", variant: "destructive" });
+    }
+  };
+
+  return (
+    <div
+      className="rounded-lg border hover:border-primary/30 transition-colors"
+      data-testid={`checklist-item-${item.slice(0, 20).replace(/\s/g, '-')}`}
+    >
+      <div className="flex items-center gap-3 p-2.5 cursor-pointer" onClick={onToggle}>
+        <div className={cn(
+          "w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors",
+          checked ? "bg-green-500 border-green-500" : "border-muted-foreground/40"
+        )}>
+          {checked && <CheckCircle2 className="w-3 h-3 text-white" />}
+        </div>
+        <span className={cn("text-sm flex-1", checked ? "line-through text-muted-foreground" : "")}>
+          {item}
+        </span>
+        <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.txt"
+            onChange={handleUpload}
+          />
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-xs gap-1 text-muted-foreground hover:text-primary"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            data-testid={`button-upload-doc-${item.slice(0, 15).replace(/\s/g, '-')}`}
+          >
+            {uploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+            Enviar
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className={cn("h-7 px-2 text-xs gap-1", expanded ? "text-primary" : "text-muted-foreground")}
+            onClick={() => setExpanded(!expanded)}
+            data-testid={`button-toggle-docs-${item.slice(0, 15).replace(/\s/g, '-')}`}
+          >
+            <Paperclip className="w-3 h-3" />
+            {expanded ? "Ocultar" : "Docs"}
+          </Button>
+        </div>
+      </div>
+      {expanded && (
+        <div className="px-2.5 pb-2.5 pt-0">
+          {filesQuery.isLoading ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+              <Loader2 className="w-3 h-3 animate-spin" /> Carregando...
+            </div>
+          ) : arquivos.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-1 pl-7">Nenhum documento enviado</p>
+          ) : (
+            <div className="space-y-1 pl-7">
+              {arquivos.map((arq) => (
+                <div key={arq.id} className="flex items-center gap-2 group/file" data-testid={`doc-file-${arq.id}`}>
+                  <FileText className="w-3 h-3 text-muted-foreground shrink-0" />
+                  <a
+                    href={arq.webViewLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-primary hover:underline truncate flex-1"
+                    data-testid={`link-doc-${arq.id}`}
+                  >
+                    {arq.name.replace(/^\d{8}_\d{6}_/, "")}
+                  </a>
+                  <a
+                    href={arq.webViewLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-muted-foreground hover:text-primary"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                  <button
+                    onClick={() => handleDelete(arq.id)}
+                    className="text-muted-foreground hover:text-destructive opacity-0 group-hover/file:opacity-100 transition-opacity"
+                    data-testid={`button-delete-doc-${arq.id}`}
+                  >
+                    <XIcon className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChecklistSection({ title, items, savedChecks, ativoId, checkKey, camposEspecificos, ativoType, ativoTitle }: {
   title: string;
   items: Array<{ item: string; obrigatorio: boolean }>;
   savedChecks: Record<string, boolean>;
   ativoId: number;
   checkKey: string;
   camposEspecificos: any;
+  ativoType: string;
+  ativoTitle: string;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -82,27 +242,15 @@ function ChecklistSection({ title, items, savedChecks, ativoId, checkKey, campos
     <div className="space-y-2">
       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{title}</p>
       {items.map(({ item }) => (
-        <div
+        <ChecklistItemRow
           key={item}
-          className="flex items-center gap-3 p-2.5 rounded-lg border hover:border-primary/30 cursor-pointer transition-colors"
-          onClick={() => toggleItem(item)}
-          data-testid={`checklist-item-${item.slice(0, 20).replace(/\s/g, '-')}`}
-        >
-          <div className={cn(
-            "w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors",
-            localChecks[item]
-              ? "bg-green-500 border-green-500"
-              : "border-muted-foreground/40"
-          )}>
-            {localChecks[item] && <CheckCircle2 className="w-3 h-3 text-white" />}
-          </div>
-          <span className={cn(
-            "text-sm flex-1",
-            localChecks[item] ? "line-through text-muted-foreground" : ""
-          )}>
-            {item}
-          </span>
-        </div>
+          item={item}
+          checked={!!localChecks[item]}
+          onToggle={() => toggleItem(item)}
+          ativoId={ativoId}
+          ativoType={ativoType}
+          ativoTitle={ativoTitle}
+        />
       ))}
     </div>
   );
@@ -545,6 +693,8 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                     ativoId={ativo.id}
                     checkKey={checkKey}
                     camposEspecificos={camposEsp}
+                    ativoType={ativo.type}
+                    ativoTitle={ativo.title}
                   />
                   {opcionais.length > 0 && (
                     <ChecklistSection
@@ -554,6 +704,8 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                       ativoId={ativo.id}
                       checkKey={checkKey}
                       camposEspecificos={camposEsp}
+                      ativoType={ativo.type}
+                      ativoTitle={ativo.title}
                     />
                   )}
                 </CardContent>

@@ -3,8 +3,7 @@ import {
   assets, investorProfiles, matchSuggestions, pipelineStages, leadRules, organizations,
   dealComments, proposalTemplates, proposals, orgSettings,
   portalListings, portalInquiries, contractTemplates, contracts,
-  errorReports, auditLogs, assetLandingPages, norionDocuments,
-  norionFundosParceiros, norionEnviosFundos
+  errorReports, auditLogs, assetLandingPages
 } from "@shared/schema";
 import type { 
   User, InsertUser, Connector, InsertConnector, Company, InsertCompany,
@@ -16,10 +15,7 @@ import type {
   PortalListing, InsertPortalListing, PortalInquiry, InsertPortalInquiry,
   ContractTemplate, InsertContractTemplate, Contract, InsertContract,
   ErrorReport, InsertErrorReport, AuditLog,
-  AssetLandingPage, InsertAssetLandingPage,
-  NorionDocument, InsertNorionDocument,
-  NorionFundoParceiro, InsertNorionFundoParceiro,
-  NorionEnvioFundo, InsertNorionEnvioFundo
+  AssetLandingPage, InsertAssetLandingPage
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, count, and, desc, gte, lt } from "drizzle-orm";
@@ -135,23 +131,6 @@ export interface IStorage {
   deleteAssetLandingPage(id: number): Promise<void>;
 
   getAuditLogs(orgId: number, filters?: { entity?: string; entityId?: number; limit?: number }): Promise<AuditLog[]>;
-
-  getNorionDocuments(operationId: number, orgId: number): Promise<NorionDocument[]>;
-  createNorionDocument(doc: InsertNorionDocument): Promise<NorionDocument>;
-  updateNorionDocument(id: number, orgId: number, data: Partial<NorionDocument>): Promise<NorionDocument>;
-  deleteNorionDocument(id: number, orgId: number): Promise<void>;
-
-  getNorionFundosParceiros(orgId: number): Promise<NorionFundoParceiro[]>;
-  getNorionFundoParceiro(id: number, orgId: number): Promise<NorionFundoParceiro | undefined>;
-  createNorionFundoParceiro(data: InsertNorionFundoParceiro): Promise<NorionFundoParceiro>;
-  updateNorionFundoParceiro(id: number, orgId: number, data: Partial<NorionFundoParceiro>): Promise<NorionFundoParceiro>;
-  deleteNorionFundoParceiro(id: number, orgId: number): Promise<void>;
-
-  getNorionEnviosFundos(operationId: number, orgId: number): Promise<NorionEnvioFundo[]>;
-  getNorionEnviosByFundo(fundoId: number, orgId: number): Promise<NorionEnvioFundo[]>;
-  createNorionEnvioFundo(data: InsertNorionEnvioFundo): Promise<NorionEnvioFundo>;
-  updateNorionEnvioFundo(id: number, orgId: number, data: Partial<NorionEnvioFundo>): Promise<NorionEnvioFundo>;
-  deleteNorionEnviosByOperation(operationId: number, orgId: number): Promise<void>;
 
   sessionStore: session.Store;
 }
@@ -707,87 +686,6 @@ export class DatabaseStorage implements IStorage {
       .limit(filters?.limit || 100);
   }
 
-  async getNorionDocuments(operationId: number, orgId: number) {
-    return db.select().from(norionDocuments)
-      .where(and(eq(norionDocuments.operationId, operationId), eq(norionDocuments.orgId, orgId)))
-      .orderBy(norionDocuments.id);
-  }
-
-  async createNorionDocument(doc: InsertNorionDocument) {
-    const [created] = await db.insert(norionDocuments).values(doc).returning();
-    return created;
-  }
-
-  async updateNorionDocument(id: number, orgId: number, data: Partial<NorionDocument>) {
-    const [updated] = await db.update(norionDocuments)
-      .set({ ...data, updatedAt: new Date() } as any)
-      .where(and(eq(norionDocuments.id, id), eq(norionDocuments.orgId, orgId)))
-      .returning();
-    return updated;
-  }
-
-  async deleteNorionDocument(id: number, orgId: number) {
-    await db.delete(norionDocuments).where(and(eq(norionDocuments.id, id), eq(norionDocuments.orgId, orgId)));
-  }
-
-  async getNorionFundosParceiros(orgId: number) {
-    return db.select().from(norionFundosParceiros)
-      .where(eq(norionFundosParceiros.orgId, orgId))
-      .orderBy(desc(norionFundosParceiros.createdAt));
-  }
-
-  async getNorionFundoParceiro(id: number, orgId: number) {
-    const [fp] = await db.select().from(norionFundosParceiros)
-      .where(and(eq(norionFundosParceiros.id, id), eq(norionFundosParceiros.orgId, orgId)));
-    return fp;
-  }
-
-  async createNorionFundoParceiro(data: InsertNorionFundoParceiro) {
-    const [created] = await db.insert(norionFundosParceiros).values(data).returning();
-    return created;
-  }
-
-  async updateNorionFundoParceiro(id: number, orgId: number, data: Partial<NorionFundoParceiro>) {
-    const [updated] = await db.update(norionFundosParceiros)
-      .set({ ...data, updatedAt: new Date() } as any)
-      .where(and(eq(norionFundosParceiros.id, id), eq(norionFundosParceiros.orgId, orgId)))
-      .returning();
-    return updated;
-  }
-
-  async deleteNorionFundoParceiro(id: number, orgId: number) {
-    await db.delete(norionEnviosFundos).where(and(eq(norionEnviosFundos.fundoParceiroId, id), eq(norionEnviosFundos.orgId, orgId)));
-    await db.delete(norionFundosParceiros).where(and(eq(norionFundosParceiros.id, id), eq(norionFundosParceiros.orgId, orgId)));
-  }
-
-  async getNorionEnviosFundos(operationId: number, orgId: number) {
-    return db.select().from(norionEnviosFundos)
-      .where(and(eq(norionEnviosFundos.operationId, operationId), eq(norionEnviosFundos.orgId, orgId)))
-      .orderBy(desc(norionEnviosFundos.dataEnvio));
-  }
-
-  async getNorionEnviosByFundo(fundoId: number, orgId: number) {
-    return db.select().from(norionEnviosFundos)
-      .where(and(eq(norionEnviosFundos.fundoParceiroId, fundoId), eq(norionEnviosFundos.orgId, orgId)))
-      .orderBy(desc(norionEnviosFundos.dataEnvio));
-  }
-
-  async createNorionEnvioFundo(data: InsertNorionEnvioFundo) {
-    const [created] = await db.insert(norionEnviosFundos).values(data).returning();
-    return created;
-  }
-
-  async updateNorionEnvioFundo(id: number, orgId: number, data: Partial<NorionEnvioFundo>) {
-    const [updated] = await db.update(norionEnviosFundos)
-      .set({ ...data, updatedAt: new Date() } as any)
-      .where(and(eq(norionEnviosFundos.id, id), eq(norionEnviosFundos.orgId, orgId)))
-      .returning();
-    return updated;
-  }
-
-  async deleteNorionEnviosByOperation(operationId: number, orgId: number) {
-    await db.delete(norionEnviosFundos).where(and(eq(norionEnviosFundos.operationId, operationId), eq(norionEnviosFundos.orgId, orgId)));
-  }
 }
 
 export const storage = new DatabaseStorage();
