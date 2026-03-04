@@ -344,8 +344,9 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
 
       const response = await fetch(`https://api.cnpja.com/office/${cleanCnpj}`, { headers: cnpjaHeaders() });
       if (!response.ok) {
-        if (response.status === 404) return res.status(404).json({ message: "CNPJ não encontrado" });
-        return res.status(response.status).json({ message: "Erro na consulta" });
+        if (response.status === 404) return res.status(404).json({ message: "CNPJ não encontrado na Receita Federal" });
+        if (response.status === 401) return res.status(502).json({ message: "Chave CNPJA expirada ou inválida. Atualize CNPJA_API_KEY." });
+        return res.status(response.status).json({ message: `Erro na consulta CNPJA (HTTP ${response.status})` });
       }
       const data = await response.json() as any;
       const result = mapCnpjaOffice(data, cleanCnpj);
@@ -366,10 +367,22 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
       let data = await getCached<any>("cnpja", cleanCnpj);
       if (!data) {
         const response = await fetch(`https://api.cnpja.com/office/${cleanCnpj}`, { headers: cnpjaHeaders() });
-        if (!response.ok) return res.status(404).json({ message: "CNPJ não encontrado" });
+        if (!response.ok) {
+          if (response.status === 401) return res.status(502).json({ message: "Chave CNPJA expirada ou inválida. Atualize CNPJA_API_KEY." });
+          if (response.status === 404) return res.status(404).json({ message: "CNPJ não encontrado na Receita Federal" });
+          return res.status(response.status).json({ message: `Erro ao consultar CNPJA (HTTP ${response.status})` });
+        }
         data = await response.json() as any;
         await setCached("cnpja", cleanCnpj, data);
       }
+
+      const legalName = data.company?.name || data.razao_social || data.legalName || "Empresa sem nome";
+      const tradeName = data.alias || data.tradeName || null;
+      const cnaePrincipal = data.mainActivity?.text || data.cnaePrincipal || null;
+      const cnaeSecundarios = (data.sideActivities || []).map((a: any) => a.text);
+      const porte = data.company?.size?.text || data.porte || null;
+      const phones = data.phones ? (data.phones || []).map((p: any) => typeof p === 'string' ? p : `(${p.area}) ${p.number}`) : [];
+      const emails = data.emails ? (data.emails || []).map((e: any) => typeof e === 'string' ? e : e.address) : [];
 
       const existing = await db.select().from(companies).where(eq(companies.cnpj, cleanCnpj));
       let company;
@@ -379,17 +392,22 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
       } else {
         [company] = await db.insert(companies).values({
           orgId: getOrgId(),
-          legalName: data.company?.name || "Empresa sem nome",
-          tradeName: data.alias || null,
+          legalName,
+          tradeName,
           cnpj: cleanCnpj,
-          cnaePrincipal: data.mainActivity?.text || null,
-          cnaeSecundarios: (data.sideActivities || []).map((a: any) => a.text),
-          porte: data.company?.size?.text || null,
-          phones: (data.phones || []).map((p: any) => `(${p.area}) ${p.number}`),
-          emails: (data.emails || []).map((e: any) => e.address),
+          cnaePrincipal,
+          cnaeSecundarios,
+          porte,
+          phones,
+          emails,
           address: data.address || {},
           notes: `Situação: ${data.status?.text || "?"} | ${data.company?.nature?.text || ""}`,
         } as any).returning();
+      }
+
+      const existingLead = await db.select().from(leads).where(eq(leads.companyId, company.id)).limit(1);
+      if (existingLead.length > 0) {
+        return res.status(200).json({ company, lead: existingLead[0], alreadyImported: true });
       }
 
       const [lead] = await db.insert(leads).values({
@@ -398,7 +416,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
         status: "new",
         score: 50,
         source: "cnpja.com",
-        scoreBreakdownJson: { source: "cnpja_import", cnae: data.mainActivity?.text },
+        scoreBreakdownJson: { source: "cnpja_import", cnae: cnaePrincipal },
       } as any).returning();
 
       res.status(201).json({ company, lead });

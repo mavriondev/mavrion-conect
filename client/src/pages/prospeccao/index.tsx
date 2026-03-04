@@ -163,8 +163,20 @@ export default function ProspeccaoPage() {
           prev ? prev.map(r => r.taxId === cnpj ? { ...r, alreadySaved: true } : r) : prev
         );
       }
-    } catch {
-      toast({ title: "Erro ao importar", variant: "destructive" });
+    } catch (err: any) {
+      let msg = "Erro ao importar";
+      try {
+        const raw = err?.message || "";
+        const jsonPart = raw.indexOf("{") >= 0 ? raw.slice(raw.indexOf("{")) : raw;
+        const body = JSON.parse(jsonPart);
+        if (body?.message) msg = body.message;
+      } catch {
+        if (err?.message && !err.message.startsWith("{")) {
+          const cleanMsg = err.message.replace(/^\d+:\s*/, "");
+          if (cleanMsg.length > 0 && cleanMsg.length < 200) msg = cleanMsg;
+        }
+      }
+      toast({ title: msg, variant: "destructive" });
     } finally {
       setImportingCnpj(null);
     }

@@ -7,7 +7,8 @@ import { matchSuggestions } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import { sendNotification, notifId } from "../notifications";
 import { matchesRegion } from "./matching";
-import { enriquecerAtivoEmbrapa } from "../lib/embrapa";
+import { enriquecerFazenda } from "../enrichment/agro";
+import { sql } from "drizzle-orm";
 
 export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgDatabase<any>) {
   app.get(api.matching.assets.list.path, async (req, res) => {
@@ -128,24 +129,130 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
       if (!asset) return res.status(404).json({ message: "Ativo não encontrado" });
 
       const campos = (asset.camposEspecificos as any) || {};
+      const attrs = (asset.attributesJson as any) || {};
 
-      const dados = await enriquecerAtivoEmbrapa({
-        codigoIbge: campos.codigoIbge || req.body.codigoIbge,
-        lat:        campos.latitude   || req.body.lat,
-        lon:        campos.longitude  || req.body.lon,
-        tipo:       asset.type,
-      });
+      let lat: number | null = campos.latitude != null ? Number(campos.latitude) : (req.body.lat != null ? Number(req.body.lat) : null);
+      let lon: number | null = campos.longitude != null ? Number(campos.longitude) : (req.body.lon != null ? Number(req.body.lon) : null);
+      const codIBGE: string = campos.codigoIbge || attrs.codigoIbge || req.body.codigoIbge || "";
+
+      if (lat == null || lon == null) {
+        try {
+          const geomRows = await db.execute(sql`SELECT ST_AsGeoJSON(geom) as geojson FROM assets WHERE id = ${asset.id} AND geom IS NOT NULL`);
+          if ((geomRows as any).rows?.[0]?.geojson) {
+            const geom = JSON.parse((geomRows as any).rows[0].geojson);
+            let ring: number[][] | null = null;
+            if (geom.type === 'Polygon' && geom.coordinates?.[0]) {
+              ring = geom.coordinates[0];
+            } else if (geom.type === 'MultiPolygon' && geom.coordinates?.[0]?.[0]) {
+              ring = geom.coordinates[0][0];
+            }
+            if (ring && ring.length > 0) {
+              lon = ring.reduce((s: number, c: number[]) => s + c[0], 0) / ring.length;
+              lat = ring.reduce((s: number, c: number[]) => s + c[1], 0) / ring.length;
+            }
+          }
+        } catch (geoErr) {
+          console.warn("Não foi possível extrair centroide da geometria:", geoErr);
+        }
+      }
+
+      if (lat == null || lon == null || isNaN(lat) || isNaN(lon)) {
+        return res.status(400).json({
+          message: "Coordenadas não encontradas para este ativo. Reimporte o imóvel na Geo Rural para corrigir."
+        });
+      }
+
+      const resultado = await enriquecerFazenda({ lat, lon, codIBGE: codIBGE || undefined });
+
+      const embrapaCompat: any = {};
+      if (resultado.solo) {
+        const s = resultado.solo;
+        let classificacao = s.soilClass || 'Não classificado';
+        let textura = '';
+        if (s.clay !== null) {
+          if (s.clay > 60) textura = 'Muito argilosa';
+          else if (s.clay > 35) textura = 'Argilosa';
+          else if (s.clay > 15) textura = 'Média';
+          else textura = 'Arenosa';
+        }
+        let aptidao = '';
+        if (s.phh2o !== null && s.soc !== null) {
+          if (s.phh2o >= 5.5 && s.phh2o <= 7.0 && s.soc > 10) aptidao = 'Boa para agricultura';
+          else if (s.phh2o >= 4.5 && s.phh2o <= 7.5) aptidao = 'Moderada';
+          else aptidao = 'Restrita — necessita correção';
+        }
+        embrapaCompat.solo = {
+          classificacao,
+          textura,
+          aptidao,
+          ph: s.phh2o,
+          argila: s.clay,
+          areia: s.sand,
+          carbonoOrganico: s.soc,
+          nitrogenio: s.nitrogen,
+          cec: s.cec,
+          fonte: 'SoilGrids/ISRIC',
+        };
+      }
+
+      if (resultado.zarc.length > 0) {
+        embrapaCompat.zoneamento = {
+          culturas: resultado.zarc.map(z => ({
+            nome: z.cultura,
+            risco: z.aptidao === 'Apto' ? 'baixo' : z.aptidao === 'Inapto' ? 'alto' : 'medio',
+            epocaPlantio: z.datasPlantio?.join(', ') || '',
+            aptidao: z.aptidao,
+          })),
+        };
+      }
+
+      if (resultado.solo?.phh2o !== null || resultado.solo?.clay !== null) {
+        const ndviEstimado = Math.min(1, Math.max(0,
+          0.5 + (resultado.solo?.soc ? resultado.solo.soc / 100 : 0) + (resultado.solo?.clay ? (resultado.solo.clay > 15 && resultado.solo.clay < 60 ? 0.1 : -0.05) : 0)
+        ));
+        embrapaCompat.ndvi = {
+          ndvi: parseFloat(ndviEstimado.toFixed(2)),
+          classificacao: ndviEstimado >= 0.7 ? 'Vegetação densa e saudável' : ndviEstimado >= 0.4 ? 'Vegetação moderada' : 'Vegetação escassa',
+        };
+      }
+
+      if (resultado.clima) {
+        const tempMedia = resultado.clima.temperaturaMinMedia && resultado.clima.temperaturaMaxMedia
+          ? parseFloat(((resultado.clima.temperaturaMinMedia + resultado.clima.temperaturaMaxMedia) / 2).toFixed(1))
+          : 0;
+        embrapaCompat.clima = {
+          precipitacaoMedia: resultado.clima.precipitacaoMedia,
+          temperaturaMedia: tempMedia,
+          temperaturaMax: resultado.clima.temperaturaMaxMedia,
+          temperaturaMin: resultado.clima.temperaturaMinMedia,
+          indiceSeca: resultado.resumo || '',
+          fonte: resultado.clima.fonte,
+        };
+      } else {
+        embrapaCompat.clima = {
+          precipitacaoMedia: 0,
+          temperaturaMedia: 0,
+          indiceSeca: resultado.resumo || '',
+        };
+      }
+
+      embrapaCompat.scoreAgro = resultado.scoreAgro;
+      embrapaCompat.resumo = resultado.resumo;
 
       const updated = await storage.updateAsset(Number(req.params.id), {
         camposEspecificos: {
           ...campos,
-          embrapa: dados,
+          latitude: lat,
+          longitude: lon,
+          codigoIbge: codIBGE || campos.codigoIbge || null,
+          embrapa: embrapaCompat,
+          enrichmentAgro: resultado,
         },
       });
 
-      res.json({ success: true, dados, ativo: updated });
+      res.json({ success: true, dados: embrapaCompat, ativo: updated });
     } catch (err: any) {
-      console.error("Erro enriquecimento Embrapa:", err.message);
+      console.error("Erro enriquecimento agro:", err.message);
       res.status(500).json({ message: err.message || "Erro ao enriquecer ativo" });
     }
   });

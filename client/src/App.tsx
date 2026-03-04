@@ -7,7 +7,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/use-auth";
 
 import NotFound from "@/pages/not-found";
-import HomePage from "@/pages/home";
 import Dashboard from "@/pages/dashboard";
 import LoginPage from "@/pages/login";
 import SdrQueue from "@/pages/sdr";
@@ -47,7 +46,7 @@ function PrivateRoute({ component: Component, ...rest }: any) {
 
   useEffect(() => {
     if (!isLoading && !user) {
-      setLocation("/home");
+      setLocation("/login");
     }
   }, [user, isLoading, setLocation]);
 
@@ -83,10 +82,16 @@ function ErrorCaptureWrapper() {
   return null;
 }
 
+function RedirectToLogin() {
+  const [, setLoc] = useLocation();
+  useEffect(() => { setLoc("/login"); }, [setLoc]);
+  return null;
+}
+
 function Router() {
   return (
     <Switch>
-      <Route path="/home" component={HomePage} />
+      <Route path="/home" component={RedirectToLogin} />
       <Route path="/login" component={LoginPage} />
 
       <Route path="/">

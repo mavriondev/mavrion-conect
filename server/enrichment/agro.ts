@@ -72,17 +72,18 @@ let embrapaToken: string | null = null;
 let embrapaTokenExpiry = 0;
 
 async function getEmbrapaToken(): Promise<string | null> {
-  const clientId = process.env.EMBRAPA_CLIENT_ID;
-  const clientSecret = process.env.EMBRAPA_CLIENT_SECRET;
+  const clientId = process.env.EMBRAPA_CONSUMER_KEY || process.env.EMBRAPA_CLIENT_ID;
+  const clientSecret = process.env.EMBRAPA_CONSUMER_SECRET || process.env.EMBRAPA_CLIENT_SECRET;
   if (!clientId || !clientSecret) return null;
 
   if (embrapaToken && Date.now() < embrapaTokenExpiry) return embrapaToken;
 
   try {
+    const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
     const res = await axios.post(
       'https://api.cnptia.embrapa.br/token',
-      `grant_type=client_credentials&client_id=${clientId}&client_secret=${clientSecret}`,
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 }
+      'grant_type=client_credentials',
+      { headers: { 'Authorization': `Basic ${credentials}`, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 }
     );
     embrapaToken = res.data.access_token;
     embrapaTokenExpiry = Date.now() + (res.data.expires_in - 60) * 1000;
@@ -129,8 +130,13 @@ export async function consultarZARC(codIBGE: string, cultura: string): Promise<Z
       riscoCli: data.riscoCli || null,
       datasPlantio: data.datasPlantio || [],
     };
-  } catch (err) {
-    console.error(`[Embrapa ZARC] Erro para ${cultura} em ${codIBGE}:`, err);
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 404) {
+      console.warn(`[Embrapa ZARC] API não subscrita (404) — ${cultura}/${codIBGE}`);
+    } else {
+      console.warn(`[Embrapa ZARC] ${status || 'erro'} para ${cultura}/${codIBGE}`);
+    }
     return null;
   }
 }
@@ -148,8 +154,9 @@ export async function consultarCultivares(codIBGE: string, cultura: string): Pro
       cultura,
       cultivares: res.data?.cultivares || [],
     };
-  } catch (err) {
-    console.error(`[Embrapa Cultivares] Erro para ${cultura}:`, err);
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status !== 404) console.warn(`[Embrapa Cultivares] ${status || 'erro'} para ${cultura}`);
     return null;
   }
 }
@@ -168,8 +175,9 @@ export async function consultarProdutividade(codIBGE: string, cultura: string): 
       estimativa: res.data?.produtividadeMedia || null,
       unidade: res.data?.unidade || 'sc/ha',
     };
-  } catch (err) {
-    console.error(`[Embrapa Produtividade] Erro para ${cultura}:`, err);
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status !== 404) console.warn(`[Embrapa Produtividade] ${status || 'erro'} para ${cultura}`);
     return null;
   }
 }
@@ -265,8 +273,44 @@ export async function consultarDetalhesParcela(codigoParcela: string): Promise<S
   }
 }
 
+export interface ClimaResult {
+  precipitacaoMedia: number;
+  temperaturaMaxMedia: number;
+  temperaturaMinMedia: number;
+  fonte: string;
+}
+
+export async function consultarClimaEmbrapa(lat: number, lon: number): Promise<ClimaResult | null> {
+  const token = await getEmbrapaToken();
+  if (!token) return null;
+
+  try {
+    const ontem = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+    const [precRes, tmaxRes, tminRes] = await Promise.allSettled([
+      axios.get(`https://api.cnptia.embrapa.br/climapi/v1/ncep-gfs/apcpsfc/${ontem}/${lon}/${lat}`, { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }),
+      axios.get(`https://api.cnptia.embrapa.br/climapi/v1/ncep-gfs/tmax2m/${ontem}/${lon}/${lat}`, { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }),
+      axios.get(`https://api.cnptia.embrapa.br/climapi/v1/ncep-gfs/tmin2m/${ontem}/${lon}/${lat}`, { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }),
+    ]);
+
+    const avg = (arr: any[]) => {
+      const vals = arr.filter((v: any) => v.valor != null).map((v: any) => v.valor);
+      return vals.length > 0 ? parseFloat((vals.reduce((a: number, b: number) => a + b, 0) / vals.length).toFixed(1)) : 0;
+    };
+
+    const precip = precRes.status === 'fulfilled' ? avg(precRes.value.data || []) : 0;
+    const tmax = tmaxRes.status === 'fulfilled' ? avg(tmaxRes.value.data || []) : 0;
+    const tmin = tminRes.status === 'fulfilled' ? avg(tminRes.value.data || []) : 0;
+
+    return { precipitacaoMedia: precip, temperaturaMaxMedia: tmax, temperaturaMinMedia: tmin, fonte: 'Embrapa ClimAPI/NCEP-GFS' };
+  } catch (err) {
+    console.error('[Embrapa ClimAPI] Erro:', err);
+    return null;
+  }
+}
+
 export interface EnriquecimentoAgroCompleto {
   solo: SoilGridsResult | null;
+  clima: ClimaResult | null;
   zarc: ZarcResult[];
   cultivares: CultivaresResult[];
   produtividade: ProdutividadeResult[];
@@ -284,8 +328,9 @@ export async function enriquecerFazenda(params: {
 }): Promise<EnriquecimentoAgroCompleto> {
   const { lat, lon, codIBGE, cnpj, culturaPrincipal } = params;
 
-  const [soloResult, parcelasSigef] = await Promise.all([
+  const [soloResult, climaResult, parcelasSigef] = await Promise.all([
     consultarSoloSoilGrids(lat, lon),
+    consultarClimaEmbrapa(lat, lon),
     cnpj ? consultarParcelasSIGEF(cnpj) : Promise.resolve([]),
   ]);
 
@@ -294,7 +339,7 @@ export async function enriquecerFazenda(params: {
   let cultivares: CultivaresResult[] = [];
   let produtividade: ProdutividadeResult[] = [];
 
-  if (codIBGE && (process.env.EMBRAPA_CLIENT_ID)) {
+  if (codIBGE && (process.env.EMBRAPA_CONSUMER_KEY || process.env.EMBRAPA_CLIENT_ID)) {
     const embrapaResults = await Promise.allSettled([
       ...culturas.map(c => consultarZARC(codIBGE, c)),
       ...culturas.map(c => consultarCultivares(codIBGE, c)),
@@ -308,9 +353,9 @@ export async function enriquecerFazenda(params: {
   }
 
   const scoreAgro = calcularScoreAgro(soloResult, zarc);
-  const resumo = gerarResumoAgro(soloResult, zarc, produtividade, parcelasSigef);
+  const resumo = gerarResumoAgro(soloResult, zarc, produtividade, parcelasSigef, climaResult);
 
-  return { solo: soloResult, zarc, cultivares, produtividade, parcelasSigef, scoreAgro, resumo };
+  return { solo: soloResult, clima: climaResult, zarc, cultivares, produtividade, parcelasSigef, scoreAgro, resumo };
 }
 
 function calcularScoreAgro(solo: SoilGridsResult | null, zarc: ZarcResult[]): number {
@@ -350,7 +395,8 @@ function gerarResumoAgro(
   solo: SoilGridsResult | null,
   zarc: ZarcResult[],
   produtividade: ProdutividadeResult[],
-  parcelas: SigefParcela[]
+  parcelas: SigefParcela[],
+  clima?: ClimaResult | null
 ): string {
   const partes: string[] = [];
 
@@ -374,6 +420,16 @@ function gerarResumoAgro(
   const prodPrincipal = produtividade[0];
   if (prodPrincipal?.estimativa) {
     partes.push(`Produtividade estimada de ${prodPrincipal.cultura}: ${prodPrincipal.estimativa} ${prodPrincipal.unidade}`);
+  }
+
+  if (clima && (clima.precipitacaoMedia > 0 || clima.temperaturaMaxMedia > 0)) {
+    const tempMedia = clima.temperaturaMinMedia && clima.temperaturaMaxMedia
+      ? ((clima.temperaturaMinMedia + clima.temperaturaMaxMedia) / 2).toFixed(1)
+      : null;
+    const parts = [];
+    if (tempMedia) parts.push(`temp. média ${tempMedia}°C`);
+    if (clima.precipitacaoMedia > 0) parts.push(`precip. ${clima.precipitacaoMedia} mm`);
+    if (parts.length > 0) partes.push(`Clima: ${parts.join(', ')} (previsão NCEP-GFS)`);
   }
 
   if (parcelas.length > 0) {
