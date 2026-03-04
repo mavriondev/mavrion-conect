@@ -15,8 +15,13 @@ import {
   Building2, MapPin, Briefcase, Phone, Mail, Users, Loader2, UserPlus,
   ExternalLink, FileText, Globe, Calendar, ArrowLeft, Hash, AlertCircle,
   Network, Download, Eye, Sparkles, Search, Code, Tag, Share2, CheckCircle2,
-  Clock, Plus, Trash2, Save, BookOpen, TriangleAlert,
+  Clock, Plus, Trash2, Save, BookOpen, TriangleAlert, Target, Layers,
 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { Link } from "wouter";
 
 import RelationshipGraph from "./relationships-graph";
@@ -62,6 +67,24 @@ export default function EmpresaDetailPage() {
     verifiedAt?: string; verifiedBy?: string;
   }>({});
   const [savingVerified, setSavingVerified] = useState(false);
+  const [perfilComprador, setPerfilComprador] = useState<{
+    buyerType: string;
+    cnaeInteresse: string;
+    regioesInteresse: string;
+    prazoDecisao: string;
+    capacidadeAquisicao: string;
+    dealsAnteriores: boolean;
+    observacoes: string;
+  }>({
+    buyerType: "nao_definido",
+    cnaeInteresse: "",
+    regioesInteresse: "",
+    prazoDecisao: "",
+    capacidadeAquisicao: "",
+    dealsAnteriores: false,
+    observacoes: "",
+  });
+  const [savingPerfil, setSavingPerfil] = useState(false);
 
   const { data, isLoading, error } = useQuery<RelationshipData>({
     queryKey: [`/api/companies/${id}/relationships`],
@@ -70,6 +93,15 @@ export default function EmpresaDetailPage() {
 
   const company = data?.company;
   const socios = data?.socios || [];
+
+  const { data: todosAtivos = [] } = useQuery<any[]>({
+    queryKey: ["/api/matching/assets"],
+    queryFn: () => apiRequest("GET", "/api/matching/assets").then(r => r.json()),
+  });
+
+  const ativosVinculados = (todosAtivos as any[]).filter(
+    (a: any) => a.linkedCompanyId === Number(id)
+  );
 
   const sociosWithTaxId = socios.filter(s => s.taxId);
   const creditCost = sociosWithTaxId.length;
@@ -112,6 +144,10 @@ export default function EmpresaDetailPage() {
       } else {
         setVerifiedContacts({});
       }
+      const perfil = (data.company as any).enrichmentData?.perfilComprador;
+      if (perfil && typeof perfil === "object") {
+        setPerfilComprador(prev => ({ ...prev, ...perfil }));
+      }
     }
   }, [data]);
 
@@ -136,6 +172,30 @@ export default function EmpresaDetailPage() {
     },
     onError: () => toast({ title: "Erro ao salvar contatos verificados", variant: "destructive" }),
     onSettled: () => setSavingVerified(false),
+  });
+
+  const savePerfilMutation = useMutation({
+    mutationFn: (perfil: typeof perfilComprador) =>
+      apiRequest("PATCH", `/api/companies/${id}`, {
+        enrichmentData: {
+          ...((company as any)?.enrichmentData || {}),
+          perfilComprador: perfil,
+          buyerType: perfil.buyerType,
+          cnaeInteresse: perfil.cnaeInteresse
+            ? perfil.cnaeInteresse.split(",").map((s: string) => s.trim()).filter(Boolean)
+            : [],
+          regioesInteresse: perfil.regioesInteresse
+            ? perfil.regioesInteresse.split(",").map((s: string) => s.trim()).filter(Boolean)
+            : [],
+        },
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/companies/${id}/relationships`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/companies/with-leads"] });
+      toast({ title: "Perfil de comprador salvo!", description: "Esta empresa agora aparece no matching reverso." });
+    },
+    onError: () => toast({ title: "Erro ao salvar perfil", variant: "destructive" }),
+    onSettled: () => setSavingPerfil(false),
   });
 
   const handleSaveVerified = () => {
@@ -338,6 +398,9 @@ export default function EmpresaDetailPage() {
               <BookOpen className="w-3.5 h-3.5" />
               Pesquisa {hasVerifiedData ? " \u2713" : ""} {researchNotes.length > 0 ? `(${researchNotes.length})` : ""}
             </TabsTrigger>
+            <TabsTrigger value="ativos" data-testid="tab-ativos">
+              Ativos {ativosVinculados.length > 0 ? `(${ativosVinculados.length})` : ""}
+            </TabsTrigger>
           </TabsList>
         </div>
 
@@ -506,6 +569,155 @@ export default function EmpresaDetailPage() {
                 </CardContent>
               </Card>
             )}
+
+            {/* ── PERFIL DE COMPRADOR ESTRATÉGICO ── */}
+            <Card className={perfilComprador.buyerType === "estrategico" || perfilComprador.buyerType === "financeiro"
+              ? "border-primary/30 dark:border-primary/40"
+              : ""}>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Target className="w-4 h-4 text-muted-foreground" />
+                  Perfil de Comprador / Investidor
+                  {(perfilComprador.buyerType === "estrategico" || perfilComprador.buyerType === "financeiro") && (
+                    <Badge variant="outline" className={
+                      perfilComprador.buyerType === "estrategico"
+                        ? "text-xs bg-blue-50 text-blue-700 border-blue-200 ml-auto"
+                        : "text-xs bg-green-50 text-green-700 border-green-200 ml-auto"
+                    } data-testid="badge-buyer-type">
+                      {perfilComprador.buyerType === "estrategico" ? "Comprador estratégico" : "Investidor financeiro"}
+                    </Badge>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-xs text-muted-foreground">
+                  Marque esta empresa como compradora para que ela apareça automaticamente
+                  no matching reverso de ativos compatíveis.
+                </p>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Tipo de comprador</Label>
+                  <Select
+                    value={perfilComprador.buyerType}
+                    onValueChange={v => setPerfilComprador(p => ({ ...p, buyerType: v }))}
+                  >
+                    <SelectTrigger className="h-8 text-sm" data-testid="select-buyer-type">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="nao_definido">Não definido</SelectItem>
+                      <SelectItem value="financeiro">Investidor financeiro (fundo, family office, banco)</SelectItem>
+                      <SelectItem value="estrategico">Comprador estratégico (empresa operacional)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {(perfilComprador.buyerType === "estrategico" || perfilComprador.buyerType === "financeiro") && (
+                  <div className="space-y-4 pt-1">
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      {perfilComprador.buyerType === "estrategico" && (
+                        <div className="space-y-1.5 sm:col-span-2">
+                          <Label className="text-xs">CNAEs de interesse (separar por vírgula)</Label>
+                          <Input
+                            className="h-8 text-sm"
+                            placeholder="ex: 0710-1, 0890-0, 0111-3"
+                            value={perfilComprador.cnaeInteresse}
+                            onChange={e => setPerfilComprador(p => ({ ...p, cnaeInteresse: e.target.value }))}
+                            data-testid="input-cnae-interesse"
+                          />
+                          <p className="text-[10px] text-muted-foreground">
+                            Use os códigos CNAE dos setores que esta empresa quer adquirir.
+                            Ex: 0710 = mineração de ferro, 0111 = cultivo de soja.
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="space-y-1.5 sm:col-span-2">
+                        <Label className="text-xs">Regiões / Estados de interesse (separar por vírgula)</Label>
+                        <Input
+                          className="h-8 text-sm"
+                          placeholder="ex: MT, PA, GO ou deixe vazio para qualquer região"
+                          value={perfilComprador.regioesInteresse}
+                          onChange={e => setPerfilComprador(p => ({ ...p, regioesInteresse: e.target.value }))}
+                          data-testid="input-regioes-interesse"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Prazo de decisão</Label>
+                        <Select
+                          value={perfilComprador.prazoDecisao || ""}
+                          onValueChange={v => setPerfilComprador(p => ({ ...p, prazoDecisao: v }))}
+                        >
+                          <SelectTrigger className="h-8 text-sm" data-testid="select-prazo-decisao">
+                            <SelectValue placeholder="Selecionar..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="imediato">Imediato (até 30 dias)</SelectItem>
+                            <SelectItem value="3_meses">Até 3 meses</SelectItem>
+                            <SelectItem value="6_meses">Até 6 meses</SelectItem>
+                            <SelectItem value="12_meses">Até 12 meses</SelectItem>
+                            <SelectItem value="sem_pressa">Sem prazo definido</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Capacidade de aquisição (R$)</Label>
+                        <Input
+                          className="h-8 text-sm"
+                          type="number"
+                          placeholder="ex: 50000000"
+                          value={perfilComprador.capacidadeAquisicao}
+                          onChange={e => setPerfilComprador(p => ({ ...p, capacidadeAquisicao: e.target.value }))}
+                          data-testid="input-capacidade-aquisicao"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <Switch
+                        checked={perfilComprador.dealsAnteriores}
+                        onCheckedChange={v => setPerfilComprador(p => ({ ...p, dealsAnteriores: v }))}
+                        data-testid="switch-deals-anteriores"
+                      />
+                      <Label className="text-sm cursor-pointer">
+                        Já realizou aquisições anteriores neste setor
+                      </Label>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Observações sobre o interesse</Label>
+                      <Textarea
+                        className="text-sm min-h-[60px]"
+                        placeholder="ex: Busca fazendas acima de 500ha em MT, prefere CAR regularizado..."
+                        value={perfilComprador.observacoes}
+                        onChange={e => setPerfilComprador(p => ({ ...p, observacoes: e.target.value }))}
+                        data-testid="textarea-observacoes-comprador"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-1">
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={savingPerfil || savePerfilMutation.isPending}
+                    onClick={() => {
+                      setSavingPerfil(true);
+                      savePerfilMutation.mutate(perfilComprador);
+                    }}
+                    data-testid="button-salvar-perfil"
+                  >
+                    {(savingPerfil || savePerfilMutation.isPending)
+                      ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Salvando...</>
+                      : <><Save className="w-3.5 h-3.5" /> Salvar perfil</>
+                    }
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           </div>
           </div>
         </TabsContent>
@@ -630,6 +842,69 @@ export default function EmpresaDetailPage() {
             setConfirmDeleteNoteId={setConfirmDeleteNoteId}
             removeNote={removeNote}
           />
+        </TabsContent>
+
+        <TabsContent value="ativos" className="mt-4 space-y-3">
+          {ativosVinculados.length === 0 ? (
+            <Card>
+              <CardContent className="py-12 text-center space-y-2">
+                <Layers className="w-10 h-10 mx-auto text-muted-foreground/30" />
+                <p className="text-sm text-muted-foreground">Nenhum ativo vinculado a esta empresa.</p>
+                <p className="text-xs text-muted-foreground">
+                  Para vincular, edite um ativo no Portfólio e selecione esta empresa como proprietária.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            ativosVinculados.map((ativo: any) => {
+              const TIPO_BADGE: Record<string, string> = {
+                TERRA: "bg-green-100 text-green-800",
+                MINA: "bg-orange-100 text-orange-800",
+                NEGOCIO: "bg-blue-100 text-blue-800",
+                FII_CRI: "bg-purple-100 text-purple-800",
+                DESENVOLVIMENTO: "bg-pink-100 text-pink-800",
+                AGRO: "bg-yellow-100 text-yellow-800",
+              };
+              const TIPO_LABEL: Record<string, string> = {
+                TERRA: "Terra / Fazenda", MINA: "Mineração", NEGOCIO: "Negócio M&A",
+                FII_CRI: "FII / CRI", DESENVOLVIMENTO: "Desenvolvimento", AGRO: "Agronegócio",
+              };
+              return (
+                <Card key={ativo.id} className="hover:border-primary/30 transition-colors cursor-pointer"
+                  onClick={() => navigate(`/ativos/${ativo.id}`)} data-testid={`card-ativo-${ativo.id}`}>
+                  <CardContent className="p-4 flex items-start justify-between gap-3">
+                    <div className="space-y-1.5 flex-1 min-w-0">
+                      <p className="font-medium text-sm truncate">{ativo.title}</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className={`text-xs border-0 font-medium ${TIPO_BADGE[ativo.type] || ""}`}>
+                          {TIPO_LABEL[ativo.type] || ativo.type}
+                        </Badge>
+                        {ativo.estado && (
+                          <span className="text-xs text-muted-foreground flex items-center gap-1">
+                            <MapPin className="w-3 h-3" />{ativo.estado}
+                          </span>
+                        )}
+                        {ativo.areaHa && (
+                          <span className="text-xs text-muted-foreground">
+                            {Number(ativo.areaHa).toLocaleString("pt-BR")} ha
+                          </span>
+                        )}
+                        {ativo.priceAsking && (
+                          <span className="text-xs font-medium text-emerald-700">
+                            R$ {(ativo.priceAsking / 1_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}M
+                          </span>
+                        )}
+                        {ativo.emNegociacao && (
+                          <Badge className="text-xs bg-blue-600 text-white">Em negociação</Badge>
+                        )}
+                      </div>
+                    </div>
+                    <ExternalLink className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+                  </CardContent>
+                </Card>
+              );
+            })
+          )}
         </TabsContent>
       </Tabs>
 

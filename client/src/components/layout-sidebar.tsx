@@ -7,7 +7,7 @@ import {
   XCircle, FileText, FileSignature, Menu, X, Layers, TreePine, Pickaxe,
   Home, Wheat, Factory, Target, Settings2, Plug, Map, BarChart3,
   KanbanSquare, BookOpen, Globe, AlertTriangle, Bug, Handshake,
-  Compass, FolderOpen, Network, Leaf,
+  Compass, FolderOpen, Network, Sprout,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useServiceStatus } from "@/hooks/use-service-status";
@@ -216,19 +216,14 @@ export default function Sidebar() {
         {hasPermission(user, "prospeccao") && (
           <NavLink href="/ma" icon={Handshake} label="M&A — Fusões & Aquisições" />
         )}
-
-        <SectionLabel label="Inteligência Territorial" />
         {hasPermission(user, "ativos") && (
           <NavLink href="/geo-rural" icon={TreePine} label="Prospecção Rural" status={serviceStatus?.sicar} />
         )}
         {hasPermission(user, "ativos") && (
           <NavLink href="/anm" icon={Map} label="Portal ANM" status={serviceStatus?.anm} />
         )}
-        {hasPermission(user, "ativos") && (
-          <NavLink href="/caf" icon={Leaf} label="CAF / Agricultura Familiar" />
-        )}
 
-        <SectionLabel label="CRM & Comercial" />
+        <SectionLabel label="Pipeline Comercial" />
         {hasPermission(user, "sdr") && (
           <NavLink href="/sdr" icon={Magnet} label="Fila SDR" />
         )}
@@ -249,7 +244,7 @@ export default function Sidebar() {
           <NavLink href="/contratos" icon={FileSignature} label="Contratos" />
         )}
 
-        <SectionLabel label="Portfólio" />
+        <SectionLabel label="Portfólio & Matching" />
         {hasPermission(user, "ativos") && (
           <ExpandableNav href="/ativos" icon={Layers} label="Ativos">
             <SubLink href="/ativos" icon={Layers} label="Todos os Ativos" exact />
@@ -264,24 +259,36 @@ export default function Sidebar() {
         {hasPermission(user, "matching") && (
           <NavLink href="/matching" icon={Target} label="Matching" />
         )}
+        {hasPermission(user, "matching") && (
+          <NavLink href="/mapa-conexoes" icon={Network} label="Mapa de Conexões" />
+        )}
+        {hasPermission(user, "ativos") && (
+          <NavLink href="/inteligencia-agro" icon={Sprout} label="Inteligência Agro" />
+        )}
+
+        <SectionLabel label="Relacionamento" />
         {hasPermission(user, "crm") && (
           <NavLink href="/portal-admin" icon={Globe} label="Portal Investidor" />
         )}
 
-        <SectionLabel label="Relatórios & Analytics" />
+        <SectionLabel label="Analytics" />
         <NavLink href="/relatorios" icon={BarChart3} label="Relatórios" />
 
-        <SectionLabel label="Sistema" />
-        {hasPermission(user, "connectors") && (
-          <NavLink href="/connectors" icon={Plug} label="Connectors" />
+        {(user?.role === "admin" || user?.role === "manager") && (
+          <>
+            <SectionLabel label="Sistema" />
+            {hasPermission(user, "connectors") && (
+              <NavLink href="/connectors" icon={Plug} label="Connectors" />
+            )}
+            {hasPermission(user, "users") && (
+              <NavLink href="/users" icon={Users} label="Usuários" />
+            )}
+            <NavLink href="/configuracoes" icon={Settings2} label="Configurações" />
+            <NavLink href="/manual" icon={BookOpen} label="Manual" />
+            <NavLink href="/error-reports" icon={Bug} label="Erros & Relatórios" />
+          </>
         )}
-        {hasPermission(user, "users") && (
-          <NavLink href="/users" icon={Users} label="Usuários" />
-        )}
-        <NavLink href="/error-reports" icon={Bug} label="Erros & Relatórios" />
-        <NavLink href="/arquitetura" icon={Network} label="Arquitetura" />
-        <NavLink href="/configuracoes" icon={Settings2} label="Configurações" />
-        <NavLink href="/manual" icon={BookOpen} label="Manual" />
+
       </div>
 
       <div className="p-4 border-t border-sidebar-border bg-sidebar-accent/30 shrink-0">

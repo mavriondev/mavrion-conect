@@ -89,68 +89,6 @@ function formatCnpj(value: string) {
     .replace(/(\d{4})(\d)/, "$1-$2");
 }
 
-function SendToNorionButton({ lead }: { lead: any }) {
-  const [open, setOpen] = useState(false);
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-  const [isSending, setIsSending] = useState(false);
-  const profile = (lead.company as any)?.norionProfile;
-  const isEligible = profile === "alto" || profile === "medio";
-
-  if (!isEligible) return null;
-
-  const handleConfirm = async () => {
-    setIsSending(true);
-    try {
-      await apiRequest("POST", "/api/norion/operations", { companyId: lead.companyId });
-      toast({ title: "Empresa enviada para Norion Capital" });
-      queryClient.invalidateQueries({ queryKey: ["/api/norion/operations"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/norion/dashboard"] });
-      setOpen(false);
-    } catch (err: any) {
-      toast({ title: "Erro", description: err?.message, variant: "destructive" });
-    } finally {
-      setIsSending(false);
-    }
-  };
-
-  return (
-    <>
-      <Button
-        size="sm"
-        variant="ghost"
-        className={cn(
-          "h-8 px-2",
-          profile === "alto"
-            ? "text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/20"
-            : "text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800"
-        )}
-        onClick={() => setOpen(true)}
-        data-testid={`button-norion-${lead.id}`}
-      >
-        <DollarSign className="w-4 h-4 mr-1" />
-        Norion
-      </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle>Enviar para Norion Capital</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Enviar <strong>{lead.company?.legalName || lead.company?.tradeName}</strong> para o pipeline Norion Capital?
-          </p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)} data-testid="button-norion-cancel">Cancelar</Button>
-            <Button onClick={handleConfirm} disabled={isSending} data-testid="button-norion-confirm">
-              {isSending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Confirmar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
 
 function PromoteToDealDialog({ lead }: { lead: any }) {
   const [open, setOpen] = useState(false);
@@ -875,7 +813,7 @@ export default function SdrQueue() {
                           <XCircle className="w-4 h-4 mr-1" />
                           Rejeitar
                         </Button>
-                        <SendToNorionButton lead={lead} />
+
                       </div>
                       {lead.status !== "converted" && <PromoteToDealDialog lead={lead} />}
                       {lead.status === "converted" && (

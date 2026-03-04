@@ -643,8 +643,22 @@ export default function GeoRuralPage() {
   const [dealAnalysis, setDealAnalysis] = useState<any>(null);
   const [dealDialogOpen, setDealDialogOpen] = useState(false);
 
-  const [serverStatus, setServerStatus] = useState<"idle" | "checking" | "online" | "offline">("idle");
+  const [serverStatus, setServerStatus] = useState<"idle" | "checking" | "online" | "offline">("checking");
   const [serverCheckedAt, setServerCheckedAt] = useState<string | null>(null);
+  const [carManualCode, setCarManualCode] = useState("");
+
+  useEffect(() => {
+    apiRequest("GET", "/api/geo/sicar-status")
+      .then(r => r.json())
+      .then(data => {
+        setServerStatus(data.online ? "online" : "offline");
+        setServerCheckedAt(new Date().toLocaleTimeString("pt-BR"));
+      })
+      .catch(() => {
+        setServerStatus("offline");
+        setServerCheckedAt(new Date().toLocaleTimeString("pt-BR"));
+      });
+  }, []);
 
   const [soloPreview, setSoloPreview] = useState<SoilGridsData | null>(null);
   const [soloLoading, setSoloLoading] = useState(false);
@@ -687,10 +701,17 @@ export default function GeoRuralPage() {
 
   const { data: rawData, isLoading, error, refetch } = useQuery({
     queryKey: ["/api/geo/fazendas", activeSearch, page],
-    queryFn: () => apiRequest("GET", `/api/geo/fazendas?${activeSearch}&count=${PAGE_SIZE}&startIndex=${page * PAGE_SIZE}`).then(r => {
-      if (!r.ok) throw new Error("Erro na busca");
+    queryFn: async () => {
+      const r = await apiRequest("GET", `/api/geo/fazendas?${activeSearch}&count=${PAGE_SIZE}&startIndex=${page * PAGE_SIZE}`);
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        if (body.sicarOffline || r.status === 502) {
+          setServerStatus("offline");
+        }
+        throw new Error(body.message || "Erro na busca");
+      }
       return r.json();
-    }),
+    },
     enabled: searched && !!activeSearch,
     retry: 2,
     retryDelay: 2000,
@@ -881,44 +902,6 @@ export default function GeoRuralPage() {
 
   const [activeTab, setActiveTab] = useState("busca");
 
-  const [agroLat, setAgroLat] = useState("");
-  const [agroLon, setAgroLon] = useState("");
-  const [agroCnpj, setAgroCnpj] = useState("");
-  const [agroCultura, setAgroCultura] = useState("");
-  const [agroResult, setAgroResult] = useState<EnriquecimentoAgro | null>(null);
-  const [agroLoading, setAgroLoading] = useState(false);
-
-  const executarAnaliseAgro = useCallback(async () => {
-    const lat = parseFloat(agroLat);
-    const lon = parseFloat(agroLon);
-    if (isNaN(lat) || isNaN(lon)) {
-      toast({ title: "Informe latitude e longitude válidas", variant: "destructive" });
-      return;
-    }
-    setAgroLoading(true);
-    setAgroResult(null);
-    try {
-      const res = await apiRequest('POST', '/api/geo/enriquecer-agro', {
-        lat,
-        lon,
-        codIBGE: undefined,
-        cnpj: agroCnpj || undefined,
-        culturaPrincipal: agroCultura || undefined,
-      });
-      const data = await res.json();
-      if (data.success) {
-        setAgroResult(data.data);
-        toast({ title: "Análise agro concluída!" });
-      } else {
-        toast({ title: "Erro na análise", description: data.error, variant: "destructive" });
-      }
-    } catch (err) {
-      toast({ title: "Erro ao executar análise agro", variant: "destructive" });
-    } finally {
-      setAgroLoading(false);
-    }
-  }, [agroLat, agroLon, agroCnpj, agroCultura, toast]);
-
   const [rankFilters, setRankFilters] = useState<Record<string, string>>({});
   const [rankPage, setRankPage] = useState(0);
   const [batchRunning, setBatchRunning] = useState(false);
@@ -1040,9 +1023,6 @@ export default function GeoRuralPage() {
           </TabsTrigger>
           <TabsTrigger value="ranking" data-testid="tab-ranking">
             <Trophy className="w-4 h-4 mr-1.5" /> Ranking
-          </TabsTrigger>
-          <TabsTrigger value="agro" data-testid="tab-agro">
-            <Sprout className="w-4 h-4 mr-1.5" /> Análise Agro
           </TabsTrigger>
         </TabsList>
 
@@ -1283,6 +1263,74 @@ export default function GeoRuralPage() {
         })}
       </div>
 
+      {/* SICAR Status Banner */}
+      {serverStatus === "offline" && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 p-4 space-y-3" data-testid="banner-sicar-offline">
+          <div className="flex items-start gap-3">
+            <WifiOff className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-medium text-amber-800 dark:text-amber-300 text-sm">
+                SICAR fora do ar no momento
+              </p>
+              <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+                O servidor do governo (geoserver.car.gov.br) está instável.
+                A busca por município pode não funcionar. Use o código CAR direto ou acesse o portal público.
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2 items-center">
+            <Input
+              className="flex-1 h-8 text-sm bg-white dark:bg-background"
+              placeholder="Cole o código CAR (ex: MT-5107800-ABC123...)"
+              value={carManualCode}
+              onChange={e => setCarManualCode(e.target.value)}
+              data-testid="input-car-manual"
+            />
+            <Button
+              size="sm"
+              className="h-8 gap-1.5 shrink-0"
+              disabled={!carManualCode.trim()}
+              onClick={() => {
+                const code = carManualCode.trim();
+                if (!code) return;
+                window.open(
+                  `https://consultapublica.car.gov.br/publico/imoveis/index?codigoCar=${encodeURIComponent(code)}`,
+                  "_blank"
+                );
+              }}
+              data-testid="button-buscar-car"
+            >
+              <Search className="w-3.5 h-3.5" />
+              Buscar no CAR
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5 shrink-0"
+              onClick={() => window.open("https://consultapublica.car.gov.br/publico/imoveis/index", "_blank")}
+              data-testid="button-portal-car"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              Portal CAR
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {serverStatus === "checking" && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground py-1" data-testid="status-sicar-checking">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          Verificando disponibilidade do SICAR...
+        </div>
+      )}
+
+      {serverStatus === "online" && (
+        <div className="flex items-center gap-1.5 text-xs text-green-600" data-testid="status-sicar-online">
+          <Wifi className="w-3.5 h-3.5" />
+          SICAR disponível
+        </div>
+      )}
+
       {/* Filters */}
       <Card>
         <CardContent className="p-4">
@@ -1349,11 +1397,16 @@ export default function GeoRuralPage() {
       {error && (
         <div className="text-center py-10 text-destructive" data-testid="error-sicar">
           <AlertTriangle className="w-10 h-10 mx-auto mb-3 text-yellow-500" />
-          <p className="font-medium">Erro ao consultar SICAR</p>
-          <p className="text-sm text-muted-foreground mt-1">O servidor do SICAR (geoserver.car.gov.br) pode estar instável ou temporariamente fora do ar.</p>
-          <Button variant="outline" className="mt-4" onClick={() => refetch()} data-testid="button-retry-sicar">
-            <RefreshCcw className="w-4 h-4 mr-2" /> Tentar novamente
-          </Button>
+          <p className="font-medium">SICAR indisponível</p>
+          <p className="text-sm text-muted-foreground mt-1">O servidor do CAR está fora do ar. Use o código CAR direto ou tente novamente em alguns minutos.</p>
+          <div className="flex gap-2 justify-center mt-4">
+            <Button variant="outline" onClick={() => refetch()} data-testid="button-retry-sicar">
+              <RefreshCcw className="w-4 h-4 mr-2" /> Tentar novamente
+            </Button>
+            <Button variant="outline" onClick={() => window.open("https://consultapublica.car.gov.br/publico/imoveis/index", "_blank")} data-testid="button-portal-car-error">
+              <ExternalLink className="w-4 h-4 mr-2" /> Portal CAR
+            </Button>
+          </div>
         </div>
       )}
 
@@ -1559,255 +1612,9 @@ export default function GeoRuralPage() {
 
         </TabsContent>
 
-        <TabsContent value="agro" className="space-y-4 mt-4">
-          <Card>
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <Sprout className="w-5 h-5 text-green-600" />
-                <h3 className="font-semibold text-lg">Análise Agro Direta</h3>
-                <span className="text-xs text-muted-foreground ml-2">Funciona independente do SICAR</span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Latitude *</Label>
-                  <Input
-                    placeholder="-15.7942"
-                    value={agroLat}
-                    onChange={(e) => setAgroLat(e.target.value)}
-                    data-testid="input-agro-lat"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Longitude *</Label>
-                  <Input
-                    placeholder="-47.8825"
-                    value={agroLon}
-                    onChange={(e) => setAgroLon(e.target.value)}
-                    data-testid="input-agro-lon"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Cultura Principal</Label>
-                  <Select value={agroCultura} onValueChange={setAgroCultura}>
-                    <SelectTrigger data-testid="select-agro-cultura">
-                      <SelectValue placeholder="Selecionar..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="soja">Soja</SelectItem>
-                      <SelectItem value="milho">Milho</SelectItem>
-                      <SelectItem value="arroz">Arroz</SelectItem>
-                      <SelectItem value="feijao">Feijão</SelectItem>
-                      <SelectItem value="trigo">Trigo</SelectItem>
-                      <SelectItem value="cafe">Café</SelectItem>
-                      <SelectItem value="cana">Cana-de-açúcar</SelectItem>
-                      <SelectItem value="algodao">Algodão</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">CNPJ (opcional — para SIGEF)</Label>
-                  <Input
-                    placeholder="00.000.000/0001-00"
-                    value={agroCnpj}
-                    onChange={(e) => setAgroCnpj(e.target.value)}
-                    data-testid="input-agro-cnpj"
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-2 mt-4">
-                <Button
-                  onClick={executarAnaliseAgro}
-                  disabled={agroLoading || !agroLat || !agroLon}
-                  data-testid="button-executar-agro"
-                >
-                  {agroLoading ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Sprout className="w-4 h-4 mr-1.5" />}
-                  Analisar
-                </Button>
-                {agroResult && (
-                  <Button variant="outline" onClick={() => setAgroResult(null)} data-testid="button-limpar-agro">
-                    <X className="w-4 h-4 mr-1.5" /> Limpar
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          {agroLoading && (
-            <Card>
-              <CardContent className="p-8 flex items-center justify-center gap-3">
-                <Loader2 className="w-6 h-6 animate-spin text-green-600" />
-                <span className="text-muted-foreground">Consultando SoilGrids + Embrapa + SIGEF...</span>
-              </CardContent>
-            </Card>
-          )}
-
-          {agroResult && (
-            <Card className="border-green-200 dark:border-green-800">
-              <CardContent className="p-5 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-semibold flex items-center gap-2">
-                    <Sprout className="w-5 h-5 text-green-600" /> Resultado da Análise
-                  </h4>
-                  <span className={cn("text-sm font-bold px-3 py-1 rounded-full",
-                    agroResult.scoreAgro >= 70 ? 'bg-green-100 text-green-700' :
-                    agroResult.scoreAgro >= 40 ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-red-100 text-red-700'
-                  )} data-testid="badge-agro-score-standalone">
-                    Score Agro: {agroResult.scoreAgro}/100
-                  </span>
-                </div>
-
-                <p className="text-sm text-muted-foreground italic bg-green-50 dark:bg-green-950/30 p-3 rounded-lg" data-testid="text-agro-resumo-standalone">
-                  {agroResult.resumo}
-                </p>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {agroResult.solo && (
-                    <Card>
-                      <CardContent className="p-4">
-                        <p className="font-medium text-sm mb-2 flex items-center gap-1.5">
-                          <Mountain className="w-4 h-4 text-amber-600" /> Solo (SoilGrids)
-                        </p>
-                        <div className="space-y-1.5 text-sm">
-                          {agroResult.solo.phh2o !== null && (
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">pH</span>
-                              <span className="font-medium" data-testid="agro-solo-ph">{agroResult.solo.phh2o}</span>
-                            </div>
-                          )}
-                          {agroResult.solo.clay !== null && (
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Argila</span>
-                              <span className="font-medium" data-testid="agro-solo-argila">{agroResult.solo.clay}%</span>
-                            </div>
-                          )}
-                          {agroResult.solo.sand !== null && (
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Areia</span>
-                              <span className="font-medium">{agroResult.solo.sand}%</span>
-                            </div>
-                          )}
-                          {agroResult.solo.soc !== null && (
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">C. Orgânico</span>
-                              <span className="font-medium">{agroResult.solo.soc} g/kg</span>
-                            </div>
-                          )}
-                          {agroResult.solo.nitrogen !== null && (
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Nitrogênio</span>
-                              <span className="font-medium">{agroResult.solo.nitrogen} g/kg</span>
-                            </div>
-                          )}
-                          {agroResult.solo.cec !== null && (
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">CTC</span>
-                              <span className="font-medium">{agroResult.solo.cec}</span>
-                            </div>
-                          )}
-                          {agroResult.solo.wv0033 !== null && agroResult.solo.wv1500 !== null && (
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Água Disponível</span>
-                              <span className="font-medium">{(agroResult.solo.wv0033 - agroResult.solo.wv1500).toFixed(1)}%</span>
-                            </div>
-                          )}
-                          {agroResult.solo.soilClass && (
-                            <div className="pt-1 border-t">
-                              <span className="text-xs text-muted-foreground" data-testid="agro-solo-classe">{agroResult.solo.soilClass}</span>
-                            </div>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  {agroResult.zarc.length > 0 && (
-                    <Card>
-                      <CardContent className="p-4">
-                        <p className="font-medium text-sm mb-2 flex items-center gap-1.5">
-                          <Sprout className="w-4 h-4 text-green-600" /> ZARC — Aptidão
-                        </p>
-                        <div className="space-y-1.5">
-                          {agroResult.zarc.map((z, i) => (
-                            <div key={i} className="flex items-center justify-between text-sm" data-testid={`agro-zarc-${i}`}>
-                              <span className="capitalize">{z.cultura}</span>
-                              <Badge variant="outline" className={cn("text-xs",
-                                z.aptidao === 'Apto' ? 'border-green-300 text-green-700' :
-                                z.aptidao === 'Inapto' ? 'border-red-300 text-red-700' :
-                                'border-yellow-300 text-yellow-700'
-                              )}>
-                                {z.aptidao || 'N/D'}
-                              </Badge>
-                            </div>
-                          ))}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  {agroResult.produtividade.filter(p => p.estimativa).length > 0 && (
-                    <Card>
-                      <CardContent className="p-4">
-                        <p className="font-medium text-sm mb-2 flex items-center gap-1.5">
-                          <BarChart2 className="w-4 h-4 text-blue-600" /> Produtividade
-                        </p>
-                        <div className="space-y-1.5">
-                          {agroResult.produtividade.filter(p => p.estimativa).map((p, i) => (
-                            <div key={i} className="flex items-center justify-between text-sm" data-testid={`agro-prod-${i}`}>
-                              <span className="capitalize">{p.cultura}</span>
-                              <span className="font-medium">{p.estimativa} {p.unidade}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  {agroResult.parcelasSigef.length > 0 && (
-                    <Card className="md:col-span-2 lg:col-span-3">
-                      <CardContent className="p-4">
-                        <p className="font-medium text-sm mb-2 flex items-center gap-1.5">
-                          <MapPin className="w-4 h-4 text-purple-600" /> Parcelas SIGEF/INCRA
-                        </p>
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead className="text-xs">Código</TableHead>
-                              <TableHead className="text-xs">Município/UF</TableHead>
-                              <TableHead className="text-xs text-right">Área (ha)</TableHead>
-                              <TableHead className="text-xs">Situação</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {agroResult.parcelasSigef.map((p, i) => (
-                              <TableRow key={i} data-testid={`agro-sigef-row-${i}`}>
-                                <TableCell className="font-mono text-xs">{p.codigo}</TableCell>
-                                <TableCell className="text-xs">{p.municipio}/{p.uf}</TableCell>
-                                <TableCell className="text-xs text-right">{p.area.toFixed(1)}</TableCell>
-                                <TableCell><Badge variant="secondary" className="text-xs">{p.situacao}</Badge></TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </CardContent>
-                    </Card>
-                  )}
-                </div>
-
-                {!agroResult.solo && agroResult.zarc.length === 0 && agroResult.parcelasSigef.length === 0 && (
-                  <div className="text-center py-6 text-muted-foreground">
-                    <AlertTriangle className="w-8 h-8 mx-auto mb-2 text-amber-500" />
-                    <p className="text-sm">Nenhum dado disponível para estas coordenadas.</p>
-                    <p className="text-xs">Verifique se as coordenadas estão em território brasileiro.</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
+        {/* Análise Agro moved to /analise-agro */}
       </Tabs>
+
 
       {/* Full map sheet */}
       <Sheet open={mapOpen} onOpenChange={setMapOpen}>

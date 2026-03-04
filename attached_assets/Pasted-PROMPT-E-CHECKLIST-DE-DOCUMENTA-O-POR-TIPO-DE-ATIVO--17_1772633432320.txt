@@ -1,0 +1,204 @@
+PROMPT E — CHECKLIST DE DOCUMENTAÇÃO POR TIPO DE ATIVO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+No arquivo client/src/pages/ativo-detalhe.tsx, substitua todo o conteúdo
+de <TabsContent value="docs"> pelo seguinte:
+tsx<TabsContent value="docs" className="mt-4 space-y-4">
+
+  {/* Status geral */}
+  <Card>
+    <CardHeader className="pb-3">
+      <CardTitle className="text-sm flex items-center gap-2">
+        <FileText className="w-4 h-4 text-muted-foreground" /> Status da Documentação
+      </CardTitle>
+    </CardHeader>
+    <CardContent>
+      <div className="flex items-center gap-2">
+        {docsStatus ? (
+          <>
+            <docsStatus.icon className={cn("w-5 h-5", docsStatus.color)} />
+            <span className={cn("font-medium text-sm", docsStatus.color)}>{docsStatus.label}</span>
+          </>
+        ) : (
+          <span className="text-sm text-muted-foreground">Status não informado</span>
+        )}
+      </div>
+    </CardContent>
+  </Card>
+
+  {/* Checklist por tipo */}
+  {(() => {
+    const CHECKLIST: Record<string, Array<{ item: string; obrigatorio: boolean }>> = {
+      TERRA: [
+        { item: "Matrícula atualizada do imóvel (30 dias)", obrigatorio: true },
+        { item: "CAR — Cadastro Ambiental Rural", obrigatorio: true },
+        { item: "CCIR — Certificado de Cadastro de Imóvel Rural", obrigatorio: true },
+        { item: "ITR — Imposto Territorial Rural (últimos 5 anos)", obrigatorio: true },
+        { item: "Georreferenciamento / SIGEF", obrigatorio: false },
+        { item: "Certidão negativa de débitos municipais", obrigatorio: false },
+        { item: "Laudo de avaliação", obrigatorio: false },
+        { item: "Planta do imóvel", obrigatorio: false },
+      ],
+      MINA: [
+        { item: "Processo ANM — Portaria de lavra ou concessão", obrigatorio: true },
+        { item: "Licença Ambiental (LP, LI ou LO)", obrigatorio: true },
+        { item: "Relatório Anual de Lavra (RAL)", obrigatorio: true },
+        { item: "Plano de Aproveitamento Econômico (PAE)", obrigatorio: false },
+        { item: "Laudo de reserva geológica", obrigatorio: false },
+        { item: "Certidão de regularidade ANM", obrigatorio: false },
+        { item: "Matrícula do terreno", obrigatorio: false },
+      ],
+      NEGOCIO: [
+        { item: "Contrato Social e últimas alterações", obrigatorio: true },
+        { item: "Balanços dos últimos 3 anos", obrigatorio: true },
+        { item: "DRE — Demonstrativo de Resultado", obrigatorio: true },
+        { item: "Certidão negativa de débitos federais", obrigatorio: true },
+        { item: "Certidão negativa trabalhista", obrigatorio: true },
+        { item: "Relação de contratos vigentes", obrigatorio: false },
+        { item: "Relação de ativos imobilizados", obrigatorio: false },
+        { item: "NDA / Acordo de Confidencialidade", obrigatorio: false },
+      ],
+      AGRO: [
+        { item: "CAR — Cadastro Ambiental Rural", obrigatorio: true },
+        { item: "CCIR do imóvel", obrigatorio: true },
+        { item: "Contrato de arrendamento (se houver)", obrigatorio: false },
+        { item: "Laudos de solo e produtividade", obrigatorio: false },
+        { item: "Certificações (Orgânico, Rainforest etc.)", obrigatorio: false },
+      ],
+      FII_CRI: [
+        { item: "Regulamento do fundo atualizado", obrigatorio: true },
+        { item: "Registro CVM", obrigatorio: true },
+        { item: "Último relatório gerencial", obrigatorio: true },
+        { item: "Demonstrações financeiras auditadas", obrigatorio: true },
+        { item: "Escritura de emissão (CRI)", obrigatorio: false },
+      ],
+      DESENVOLVIMENTO: [
+        { item: "Matrícula do terreno", obrigatorio: true },
+        { item: "Alvará de construção", obrigatorio: true },
+        { item: "Licença ambiental", obrigatorio: true },
+        { item: "Projeto arquitetônico aprovado", obrigatorio: false },
+        { item: "Memorial de incorporação", obrigatorio: false },
+        { item: "Estudo de viabilidade (VGV)", obrigatorio: false },
+      ],
+    };
+
+    const checklist = CHECKLIST[ativo.type] || [];
+    if (checklist.length === 0) return null;
+
+    const camposEsp = (ativo.camposEspecificos as any) || {};
+    const checkKey = `checklist_${ativo.type}`;
+    const savedChecks: Record<string, boolean> = camposEsp[checkKey] || {};
+
+    const obrigatorios = checklist.filter(c => c.obrigatorio);
+    const opcionais = checklist.filter(c => !c.obrigatorio);
+    const totalObrig = obrigatorios.length;
+    const marcadosObrig = obrigatorios.filter(c => savedChecks[c.item]).length;
+    const pct = totalObrig > 0 ? Math.round((marcadosObrig / totalObrig) * 100) : 0;
+
+    return (
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-muted-foreground" />
+              Checklist de Due Diligence
+            </CardTitle>
+            <span className={cn("text-xs font-bold px-2 py-0.5 rounded-full",
+              pct === 100 ? "bg-green-100 text-green-700" :
+              pct >= 50 ? "bg-amber-100 text-amber-700" :
+              "bg-red-100 text-red-700"
+            )}>
+              {marcadosObrig}/{totalObrig} obrigatórios
+            </span>
+          </div>
+          <div className="h-1.5 bg-muted rounded-full mt-2">
+            <div
+              className={cn("h-full rounded-full transition-all",
+                pct === 100 ? "bg-green-500" : pct >= 50 ? "bg-amber-500" : "bg-red-500"
+              )}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <ChecklistSection
+            title="Documentos obrigatórios"
+            items={obrigatorios}
+            savedChecks={savedChecks}
+            ativoId={ativo.id}
+            checkKey={checkKey}
+            camposEspecificos={camposEsp}
+          />
+          {opcionais.length > 0 && (
+            <ChecklistSection
+              title="Documentos complementares"
+              items={opcionais}
+              savedChecks={savedChecks}
+              ativoId={ativo.id}
+              checkKey={checkKey}
+              camposEspecificos={camposEsp}
+            />
+          )}
+        </CardContent>
+      </Card>
+    );
+  })()}
+</TabsContent>
+Adicione este componente auxiliar no mesmo arquivo, antes do componente principal:
+tsxfunction ChecklistSection({ title, items, savedChecks, ativoId, checkKey, camposEspecificos }: {
+  title: string;
+  items: Array<{ item: string; obrigatorio: boolean }>;
+  savedChecks: Record<string, boolean>;
+  ativoId: number;
+  checkKey: string;
+  camposEspecificos: any;
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [localChecks, setLocalChecks] = useState<Record<string, boolean>>(savedChecks);
+
+  const toggleItem = async (item: string) => {
+    const newChecks = { ...localChecks, [item]: !localChecks[item] };
+    setLocalChecks(newChecks);
+    try {
+      await apiRequest("PATCH", `/api/matching/assets/${ativoId}`, {
+        camposEspecificos: {
+          ...camposEspecificos,
+          [checkKey]: newChecks,
+        },
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", String(ativoId)] });
+    } catch {
+      toast({ title: "Erro ao salvar checklist", variant: "destructive" });
+      setLocalChecks(localChecks);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{title}</p>
+      {items.map(({ item }) => (
+        <div
+          key={item}
+          className="flex items-center gap-3 p-2.5 rounded-lg border hover:border-primary/30 cursor-pointer transition-colors"
+          onClick={() => toggleItem(item)}
+        >
+          <div className={cn(
+            "w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors",
+            localChecks[item]
+              ? "bg-green-500 border-green-500"
+              : "border-muted-foreground/40"
+          )}>
+            {localChecks[item] && <CheckCircle2 className="w-3 h-3 text-white" />}
+          </div>
+          <span className={cn(
+            "text-sm flex-1",
+            localChecks[item] ? "line-through text-muted-foreground" : ""
+          )}>
+            {item}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+Salve o arquivo.

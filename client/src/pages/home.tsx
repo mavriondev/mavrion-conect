@@ -1,6 +1,6 @@
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
-import { Zap, DollarSign, ArrowRight } from "lucide-react";
+import { Zap, ArrowRight } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
@@ -20,18 +20,6 @@ export default function HomePage() {
       bg: "hover:border-emerald-400/50",
       href: user ? "/" : "/login",
       testId: "card-panel-mavrion",
-    },
-    {
-      id: "norion",
-      title: "Norion Capital",
-      subtitle: "Operações Financeiras",
-      description: "Gestão de operações de crédito — Home Equity, fundos parceiros, matching, checklist documental e comissões.",
-      icon: DollarSign,
-      gradient: "from-amber-500 to-amber-700",
-      shadow: "shadow-amber-500/25",
-      bg: "hover:border-amber-400/50",
-      href: user ? "/norion-app" : "/norion-app/login",
-      testId: "card-panel-norion",
     },
   ];
 

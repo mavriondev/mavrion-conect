@@ -1,0 +1,76 @@
+PROMPT 6 — OFERTA RECEBIDA: MATCHING AUTOMÁTICO + DETALHE
+Cole após o Prompt 5 terminar.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Arquivo 1: server/routes/matching.ts
+Na rota POST /api/matching/assets (a rota que cria um novo ativo), certifique-se que o ativo criado é salvo em uma variável. Depois do await storage.createAsset(...), adicione:
+typescriptconst novoAtivo = await storage.createAsset(payload);
+
+// Matching automático para ativos de oferta recebida
+const camposEsp = (novoAtivo.camposEspecificos as any) || {};
+if (camposEsp.origemAtivo === "oferta_recebida" || camposEsp.origemAtivo === "indicacao") {
+  setImmediate(async () => {
+    try {
+      const allInvestors = await storage.getInvestors();
+      let autoMatches = 0;
+      for (const investor of allInvestors) {
+        const tipos = (investor.assetTypes as string[]) || [];
+        const regioes = (investor.regionsOfInterest as string[]) || [];
+        const tipoOk = tipos.length === 0 || tipos.includes(novoAtivo.type);
+        const regiaoOk = matchesRegion(novoAtivo.location || novoAtivo.estado, regioes);
+        if (tipoOk && regiaoOk) {
+          await db.insert(matchSuggestions).values({
+            orgId: novoAtivo.orgId,
+            assetId: novoAtivo.id,
+            investorProfileId: investor.id,
+            score: 60,
+            reasonsJson: { reasons: ["Ativo recebido por oferta — match prioritário"], penalties: [], origem: "oferta_automatica" },
+            status: "new",
+          });
+          autoMatches++;
+        }
+      }
+      if (autoMatches > 0) {
+        sendNotification({
+          id: notifId(),
+          type: "new_match",
+          orgId: novoAtivo.orgId,
+          title: "Novo ativo por oferta",
+          message: `"${novoAtivo.title}" foi cadastrado e ${autoMatches} match(es) gerados automaticamente`,
+          link: `/ativos/${novoAtivo.id}`,
+          createdAt: new Date().toISOString(),
+        });
+      }
+    } catch (err) { console.error("Auto-matching oferta error:", err); }
+  });
+}
+
+return res.status(201).json(novoAtivo);
+Se a rota já tinha um res.status(201).json(...), substitua pelo trecho acima (mantendo o novoAtivo como variável).
+
+Arquivo 2: client/src/pages/ativo-detalhe.tsx
+Na aba info, dentro do <TabsContent value="info">, após o card de "Empresa vinculada", adicione:
+tsx{((ativo.camposEspecificos as any)?.origemAtivo === "oferta_recebida" ||
+  (ativo.camposEspecificos as any)?.origemAtivo === "indicacao") && (
+  <Card className="border-amber-200 dark:border-amber-800">
+    <CardHeader className="pb-3">
+      <CardTitle className="text-sm flex items-center gap-2">
+        <Building2 className="w-4 h-4 text-amber-600" />
+        {(ativo.camposEspecificos as any)?.origemAtivo === "oferta_recebida" ? "Ofertante — proprietário do ativo" : "Indicação"}
+        <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200 ml-auto">
+          Oferta recebida
+        </Badge>
+      </CardTitle>
+    </CardHeader>
+    <CardContent className="space-y-3">
+      <InfoRow label="Nome" value={(ativo.camposEspecificos as any)?.ofertanteNome} />
+      <InfoRow label="Telefone" value={(ativo.camposEspecificos as any)?.ofertanteTelefone} />
+      <InfoRow label="E-mail" value={(ativo.camposEspecificos as any)?.ofertanteEmail} />
+      <InfoRow label="Observações" value={(ativo.camposEspecificos as any)?.ofertanteObservacoes} />
+    </CardContent>
+  </Card>
+)}
+Salve o arquivo.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RESUMO — ORDEM E O QUE CADA PROMPT RESOLVE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#ArquivoO que resolve0layout-sidebar.tsxMenu reorganizado em 2 fluxos, itens técnicos restritos a admin1shared/schema.tsNovos campos no banco (base para tudo)2ativos.tsxCampos por tipo, status, origem, ofertante, badges de urgência3matching.ts + matching.tsxAlgoritmo com comprador estratégico, qualificação de investidor4crm/index.tsxControle de comissão no deal5prospeccao.ts + ativo-detalhe.tsxProspecção reversa: ativo → busca empresas compradoras6matching.ts + ativo-detalhe.tsxMatching automático ao receber oferta + exibe dados do ofertante

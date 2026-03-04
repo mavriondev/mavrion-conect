@@ -1,0 +1,65 @@
+PROMPT 4 — CRM: CONTROLE DE COMISSÃO NO DEAL
+Cole após o Prompt 3 terminar.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Localize o arquivo do CRM onde fica o sheet/drawer lateral de detalhes do deal. Esse arquivo provavelmente está em client/src/pages/crm/ ou similar.
+No componente que exibe os detalhes do deal (o painel lateral que abre ao clicar em um card do Kanban), adicione esta seção após o bloco de "Descrição" ou "Observações":
+tsx{/* ── CONTROLE DE COMISSÃO ── */}
+<div className="space-y-3 pt-4 border-t">
+  <h4 className="text-sm font-semibold flex items-center gap-2">
+    <DollarSign className="w-4 h-4 text-muted-foreground" />
+    Comissão / Fee
+  </h4>
+  <div className="grid grid-cols-2 gap-3">
+    <div className="space-y-1">
+      <label className="text-xs text-muted-foreground">Tipo de fee</label>
+      <Select value={deal.feeType || ""} onValueChange={v => updateDeal({ feeType: v })}>
+        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecionar..." /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="success_fee">Success Fee</SelectItem>
+          <SelectItem value="retainer">Retainer</SelectItem>
+          <SelectItem value="misto">Misto</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+    <div className="space-y-1">
+      <label className="text-xs text-muted-foreground">Percentual (%)</label>
+      <Input
+        className="h-8 text-xs" type="number" step="0.1"
+        placeholder="ex: 1.5" value={deal.feePercent || ""}
+        onChange={e => {
+          const pct = parseFloat(e.target.value) || 0;
+          const base = deal.value || deal.amountEstimate || 0;
+          updateDeal({ feePercent: pct, feeValue: base * pct / 100 });
+        }}
+      />
+    </div>
+  </div>
+  {(deal.feeValue > 0) && (
+    <div className="p-2 rounded bg-muted/50 text-xs flex justify-between items-center">
+      <span className="text-muted-foreground">Fee calculado:</span>
+      <span className="font-semibold text-green-700">
+        R$ {Number(deal.feeValue).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+      </span>
+    </div>
+  )}
+  <div className="space-y-1">
+    <label className="text-xs text-muted-foreground">Status do pagamento</label>
+    <Select value={deal.feeStatus || "a_receber"} onValueChange={v => updateDeal({ feeStatus: v })}>
+      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="a_receber">A receber</SelectItem>
+        <SelectItem value="parcial">Parcialmente recebido</SelectItem>
+        <SelectItem value="recebido">Recebido ✓</SelectItem>
+        <SelectItem value="cancelado">Cancelado</SelectItem>
+      </SelectContent>
+    </Select>
+  </div>
+  <Textarea
+    className="text-xs min-h-[60px]"
+    placeholder="Notas sobre a comissão (ex: pagamento em 2x, NF pendente...)"
+    value={deal.feeNotes || ""}
+    onChange={e => updateDeal({ feeNotes: e.target.value })}
+  />
+</div>
+Certifique-se que DollarSign está importado de lucide-react. Se a função updateDeal ainda não aceitar os campos feeType, feePercent, feeValue, feeStatus e feeNotes, adicione-os como campos opcionais no schema Zod da rota PATCH de deals.
+Salve o arquivo.

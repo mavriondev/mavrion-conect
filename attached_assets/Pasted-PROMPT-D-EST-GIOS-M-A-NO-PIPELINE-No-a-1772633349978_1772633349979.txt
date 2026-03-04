@@ -1,0 +1,62 @@
+PROMPT D — ESTÁGIOS M&A NO PIPELINE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+No arquivo server/routes/crm.ts (ou o arquivo que registra as rotas do CRM),
+localize a função ou rota que cria os estágios padrão quando um pipeline é
+inicializado (normalmente chamada seedDefaultStages ou similar).
+Adicione esta função ao arquivo e chame-a na inicialização:
+typescriptexport async function seedMaStages(storage: IStorage) {
+  const existing = await storage.getStages?.() ?? [];
+  
+  // Verificar se já existem estágios M&A
+  const temMaStages = existing.some((s: any) => 
+    s.name === "NDA Assinado" || s.name === "Due Diligence"
+  );
+  if (temMaStages) return;
+
+  // Estágios para pipeline de ATIVO (M&A real)
+  const maStages = [
+    { name: "Identificado",        order: 1, pipelineType: "ASSET", color: "#94a3b8" },
+    { name: "Contato Inicial",     order: 2, pipelineType: "ASSET", color: "#60a5fa" },
+    { name: "NDA Assinado",        order: 3, pipelineType: "ASSET", color: "#818cf8" },
+    { name: "Due Diligence",       order: 4, pipelineType: "ASSET", color: "#f59e0b" },
+    { name: "LOI / Carta de Intenção", order: 5, pipelineType: "ASSET", color: "#f97316" },
+    { name: "Negociação Final",    order: 6, pipelineType: "ASSET", color: "#ef4444" },
+    { name: "Fechamento",          order: 7, pipelineType: "ASSET", color: "#10b981" },
+  ];
+
+  for (const stage of maStages) {
+    try {
+      await storage.createStage?.(stage);
+    } catch (e) { /* ignora se já existir */ }
+  }
+  
+  console.log("✓ Estágios M&A criados no pipeline de Ativos");
+}
+Após adicionar a função, chame seedMaStages(storage) no momento de
+inicialização do servidor (onde outros seeds são chamados).
+Se não encontrar o arquivo correto, no terminal do Replit rode:
+bashnpx tsx -e "
+import { storage } from './server/storage';
+
+const maStages = [
+  { name: 'Identificado',           order: 1, pipelineType: 'ASSET', color: '#94a3b8' },
+  { name: 'Contato Inicial',        order: 2, pipelineType: 'ASSET', color: '#60a5fa' },
+  { name: 'NDA Assinado',           order: 3, pipelineType: 'ASSET', color: '#818cf8' },
+  { name: 'Due Diligence',          order: 4, pipelineType: 'ASSET', color: '#f59e0b' },
+  { name: 'LOI / Carta de Intenção', order: 5, pipelineType: 'ASSET', color: '#f97316' },
+  { name: 'Negociação Final',       order: 6, pipelineType: 'ASSET', color: '#ef4444' },
+  { name: 'Fechamento',             order: 7, pipelineType: 'ASSET', color: '#10b981' },
+];
+
+async function run() {
+  for (const s of maStages) {
+    try {
+      await storage.createStage(s);
+      console.log('✓ Criado:', s.name);
+    } catch(e: any) { console.log('⚠ Já existe:', s.name); }
+  }
+  process.exit(0);
+}
+run();
+"
+Salve o arquivo.

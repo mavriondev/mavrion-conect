@@ -16,11 +16,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import {
-  Plus, Building2, Trash2,
+  Plus, Building2, Trash2, DollarSign,
   Paperclip, X, Send, ExternalLink, Link2, FileText,
   Mountain, TreePine, CheckCircle2, Layers, ArrowRight,
-  History, PenLine, Shuffle, CirclePlus, CircleMinus
+  History, PenLine, Shuffle, CirclePlus, CircleMinus,
+  MessageSquare, Loader2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -162,6 +164,33 @@ export default function DealDetailPanel({
   const [showAddAttach, setShowAddAttach] = useState(false);
   const [confirmDeleteDeal, setConfirmDeleteDeal] = useState(false);
   const [confirmDeleteCommentId, setConfirmDeleteCommentId] = useState<number | null>(null);
+  const [novaAtividade, setNovaAtividade] = useState("");
+  const [tipoAtividade, setTipoAtividade] = useState("nota");
+  const [salvandoAtividade, setSalvandoAtividade] = useState(false);
+
+  const { data: atividades = [], refetch: refetchAtividades } = useQuery({
+    queryKey: ["/api/crm/deals", deal?.id, "activities"],
+    queryFn: () => apiRequest("GET", `/api/crm/deals/${deal?.id}/activities`).then(r => r.json()),
+    enabled: !!deal?.id,
+  });
+
+  const salvarAtividade = async () => {
+    if (!novaAtividade.trim() || !deal?.id) return;
+    setSalvandoAtividade(true);
+    try {
+      await apiRequest("POST", `/api/crm/deals/${deal.id}/activities`, {
+        type: tipoAtividade,
+        description: novaAtividade.trim(),
+      });
+      setNovaAtividade("");
+      refetchAtividades();
+      toast({ title: "Atividade registrada!" });
+    } catch {
+      toast({ title: "Erro ao salvar atividade", variant: "destructive" });
+    } finally {
+      setSalvandoAtividade(false);
+    }
+  };
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
@@ -469,6 +498,145 @@ export default function DealDetailPanel({
                   content={deal.description || null}
                   onSave={html => updateField("description", html)}
                 />
+              </div>
+
+              <div className="space-y-3 pt-4 border-t">
+                <h4 className="text-sm font-semibold flex items-center gap-2">
+                  <DollarSign className="w-4 h-4 text-muted-foreground" />
+                  Comissão / Fee
+                </h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">Tipo de fee</label>
+                    <Select value={deal.feeType || ""} onValueChange={v => updateField("feeType", v)}>
+                      <SelectTrigger className="h-8 text-xs" data-testid="select-fee-type"><SelectValue placeholder="Selecionar..." /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="success_fee">Success Fee</SelectItem>
+                        <SelectItem value="retainer">Retainer</SelectItem>
+                        <SelectItem value="misto">Misto</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">Percentual (%)</label>
+                    <Input
+                      className="h-8 text-xs" type="number" step="0.1"
+                      placeholder="ex: 1.5" value={deal.feePercent || ""}
+                      data-testid="input-fee-percent"
+                      onChange={async e => {
+                        if (!dealId) return;
+                        const pct = parseFloat(e.target.value) || 0;
+                        const base = deal.amountEstimate || 0;
+                        await apiRequest("PATCH", `/api/crm/deals/${dealId}`, { feePercent: pct, feeValue: base * pct / 100 });
+                        invalidate();
+                      }}
+                    />
+                  </div>
+                </div>
+                {(deal.feeValue > 0) && (
+                  <div className="p-2 rounded bg-muted/50 text-xs flex justify-between items-center" data-testid="text-fee-calculated">
+                    <span className="text-muted-foreground">Fee calculado:</span>
+                    <span className="font-semibold text-green-700 dark:text-green-400">
+                      R$ {Number(deal.feeValue).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Status do pagamento</label>
+                  <Select value={deal.feeStatus || "a_receber"} onValueChange={v => updateField("feeStatus", v)}>
+                    <SelectTrigger className="h-8 text-xs" data-testid="select-fee-status"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="a_receber">A receber</SelectItem>
+                      <SelectItem value="parcial">Parcialmente recebido</SelectItem>
+                      <SelectItem value="recebido">Recebido</SelectItem>
+                      <SelectItem value="cancelado">Cancelado</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Textarea
+                  className="text-xs min-h-[60px]"
+                  placeholder="Notas sobre a comissão (ex: pagamento em 2x, NF pendente...)"
+                  value={deal.feeNotes || ""}
+                  data-testid="textarea-fee-notes"
+                  onChange={e => updateField("feeNotes", e.target.value)}
+                />
+              </div>
+
+              {/* ── HISTÓRICO DE ATIVIDADES ── */}
+              <div className="space-y-3 pt-4 border-t">
+                <h4 className="text-sm font-semibold flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-muted-foreground" />
+                  Histórico de Atividades
+                </h4>
+
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <Select value={tipoAtividade} onValueChange={setTipoAtividade}>
+                      <SelectTrigger className="h-8 text-xs w-32 shrink-0" data-testid="select-tipo-atividade">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="nota">📝 Nota</SelectItem>
+                        <SelectItem value="ligacao">📞 Ligação</SelectItem>
+                        <SelectItem value="reuniao">🤝 Reunião</SelectItem>
+                        <SelectItem value="email">📧 E-mail</SelectItem>
+                        <SelectItem value="whatsapp">💬 WhatsApp</SelectItem>
+                        <SelectItem value="documento">📄 Documento</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Textarea
+                      className="text-xs min-h-[60px] flex-1"
+                      placeholder="Descreva o que aconteceu..."
+                      value={novaAtividade}
+                      onChange={e => setNovaAtividade(e.target.value)}
+                      data-testid="textarea-nova-atividade"
+                    />
+                  </div>
+                  <div className="flex justify-end">
+                    <Button
+                      size="sm" className="h-7 text-xs gap-1"
+                      disabled={!novaAtividade.trim() || salvandoAtividade}
+                      onClick={salvarAtividade}
+                      data-testid="button-registrar-atividade"
+                    >
+                      {salvandoAtividade
+                        ? <><Loader2 className="w-3 h-3 animate-spin" /> Salvando...</>
+                        : "Registrar"
+                      }
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {(atividades as any[]).length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-4">
+                      Nenhuma atividade registrada ainda.
+                    </p>
+                  ) : (
+                    (atividades as any[]).map((at: any) => {
+                      const TIPO_ICON: Record<string, string> = {
+                        nota: "📝", ligacao: "📞", reuniao: "🤝",
+                        email: "📧", whatsapp: "💬", documento: "📄",
+                      };
+                      return (
+                        <div key={at.id} className="flex items-start gap-2.5 p-2.5 rounded-lg bg-muted/30 border" data-testid={`atividade-${at.id}`}>
+                          <span className="text-base shrink-0">{TIPO_ICON[at.type] || "📝"}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs leading-relaxed">{at.description}</p>
+                            <p className="text-[10px] text-muted-foreground mt-1">
+                              {at.created_by || "Sistema"} · {at.created_at
+                                ? new Date(at.created_at).toLocaleString("pt-BR", {
+                                    day: "2-digit", month: "2-digit", year: "numeric",
+                                    hour: "2-digit", minute: "2-digit"
+                                  })
+                                : ""}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               </div>
 
               <div>

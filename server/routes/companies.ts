@@ -2,8 +2,8 @@ import type { Express } from "express";
 import type { IStorage } from "../storage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { api } from "@shared/routes";
-import { companies, leads } from "@shared/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { companies, leads, contacts, deals, proposals, contracts, norionOperations, norionCafRegistros, assets } from "@shared/schema";
+import { eq, and, desc, inArray, or, isNull } from "drizzle-orm";
 import { spawn } from "child_process";
 import path from "path";
 import { getCached, setCached } from "../cache";
@@ -241,6 +241,30 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
         }
       });
 
+  app.patch("/api/companies/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const companyId = Number(req.params.id);
+      const { enrichmentData } = req.body;
+      if (!enrichmentData || typeof enrichmentData !== "object") return res.status(400).json({ message: "enrichmentData inválido" });
+      const [updated] = await db.update(companies)
+        .set({ enrichmentData } as any)
+        .where(and(eq(companies.id, companyId), or(eq(companies.orgId, getOrgId()), isNull(companies.orgId))))
+        .returning();
+      if (!updated) return res.status(404).json({ message: "Empresa não encontrada" });
+      const user = req.user as any;
+      await audit({
+        userId: user.id, userName: user.username,
+        entity: "company", entityId: companyId, entityTitle: updated.legalName,
+        action: "updated",
+        changes: { enrichmentData: { from: null, to: "perfilComprador atualizado" } },
+      });
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ message: "Erro ao atualizar empresa" });
+    }
+  });
+
   app.patch("/api/companies/:id/research-notes", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
@@ -426,6 +450,66 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
     } catch (err) {
       console.error("Disqualify error:", err);
       res.status(500).json({ message: "Falha ao desqualificar" });
+    }
+  });
+
+  app.delete("/api/companies/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const id = Number(req.params.id);
+      if (!id) return res.status(400).json({ message: "ID inválido" });
+
+      const orgId = getOrgId();
+      const [existing] = await db.select({ id: companies.id }).from(companies).where(and(eq(companies.id, id), eq(companies.orgId, orgId)));
+      if (!existing) return res.status(404).json({ message: "Empresa não encontrada" });
+
+      await db.delete(leads).where(eq(leads.companyId, id));
+      await db.delete(contacts).where(eq(contacts.companyId, id));
+      await db.delete(deals).where(eq(deals.companyId, id));
+      await db.delete(proposals).where(eq(proposals.companyId, id));
+      await db.delete(contracts).where(eq(contracts.companyId, id));
+      await db.delete(norionOperations).where(eq(norionOperations.companyId, id));
+      await db.delete(norionCafRegistros).where(eq(norionCafRegistros.companyId, id));
+      await db.update(assets).set({ linkedCompanyId: null } as any).where(eq(assets.linkedCompanyId, id));
+      await db.delete(companies).where(eq(companies.id, id));
+
+      await audit({ action: "deleted", entity: "company", entityId: id, userId: (req as any).user?.id, userName: (req as any).user?.username || "" });
+      res.json({ success: true, id });
+    } catch (err) {
+      console.error("Delete company error:", err);
+      res.status(500).json({ message: "Falha ao excluir empresa" });
+    }
+  });
+
+  app.post("/api/companies/batch-delete", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "IDs inválidos" });
+
+      const numIds = ids.map(Number).filter(Boolean);
+      if (numIds.length === 0) return res.status(400).json({ message: "IDs inválidos" });
+
+      const orgId = getOrgId();
+      const ownedCompanies = await db.select({ id: companies.id }).from(companies).where(and(inArray(companies.id, numIds), eq(companies.orgId, orgId)));
+      const ownedIds = ownedCompanies.map(c => c.id);
+      if (ownedIds.length === 0) return res.status(404).json({ message: "Nenhuma empresa encontrada" });
+
+      await db.delete(leads).where(inArray(leads.companyId, ownedIds));
+      await db.delete(contacts).where(inArray(contacts.companyId, ownedIds));
+      await db.delete(deals).where(inArray(deals.companyId, ownedIds));
+      await db.delete(proposals).where(inArray(proposals.companyId, ownedIds));
+      await db.delete(contracts).where(inArray(contracts.companyId, ownedIds));
+      await db.delete(norionOperations).where(inArray(norionOperations.companyId, ownedIds));
+      await db.delete(norionCafRegistros).where(inArray(norionCafRegistros.companyId, ownedIds));
+      await db.update(assets).set({ linkedCompanyId: null } as any).where(inArray(assets.linkedCompanyId, ownedIds));
+      await db.delete(companies).where(inArray(companies.id, ownedIds));
+
+      await audit({ action: "deleted", entity: "company", entityId: 0, userId: (req as any).user?.id, userName: (req as any).user?.username || "", changes: { batch: { from: numIds.length, to: ownedIds.length } } });
+      res.json({ success: true, deleted: ownedIds.length });
+    } catch (err) {
+      console.error("Batch delete companies error:", err);
+      res.status(500).json({ message: "Falha ao excluir empresas em lote" });
     }
   });
 }

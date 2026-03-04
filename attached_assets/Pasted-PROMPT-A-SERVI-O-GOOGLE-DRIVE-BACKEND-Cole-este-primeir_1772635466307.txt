@@ -1,0 +1,149 @@
+PROMPT A — SERVIÇO GOOGLE DRIVE (BACKEND)
+Cole este primeiro. É a base de tudo.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Crie o arquivo server/lib/google-drive.ts com o seguinte conteúdo:
+typescriptimport { google } from "googleapis";
+
+const ROOT_FOLDER_ID = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID!;
+
+function getAuth() {
+  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  if (!raw) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON não configurado");
+  const credentials = JSON.parse(raw);
+  return new google.auth.GoogleAuth({
+    credentials,
+    scopes: ["https://www.googleapis.com/auth/drive"],
+  });
+}
+
+function getDrive() {
+  return google.drive({ version: "v3", auth: getAuth() });
+}
+
+// Gera prefixo de data/hora para evitar duplicidade
+function gerarPrefixo(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
+// Busca ou cria uma pasta dentro de outra
+async function getOrCreateFolder(nome: string, parentId: string): Promise<string> {
+  const drive = getDrive();
+  const nomeSanitizado = nome.replace(/[/\\?%*:|"<>]/g, "-").slice(0, 100);
+
+  const existing = await drive.files.list({
+    q: `name='${nomeSanitizado}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+    fields: "files(id, name)",
+  });
+
+  if (existing.data.files && existing.data.files.length > 0) {
+    return existing.data.files[0].id!;
+  }
+
+  const created = await drive.files.create({
+    requestBody: {
+      name: nomeSanitizado,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [parentId],
+    },
+    fields: "id",
+  });
+
+  return created.data.id!;
+}
+
+// Estrutura de pastas:
+// Mavrion Conect/
+//   Ativos/{tipo} — {titulo} — ID{id}/
+//   Empresas/{nome} — ID{id}/
+//   Deals/Deal-{id} — {titulo}/
+
+export async function getOrCreateAtivoFolder(ativoId: number, tipo: string, titulo: string): Promise<string> {
+  const ativos = await getOrCreateFolder("Ativos", ROOT_FOLDER_ID);
+  const nomePasta = `${tipo} — ${titulo.slice(0, 60)} — ID${ativoId}`;
+  return getOrCreateFolder(nomePasta, ativos);
+}
+
+export async function getOrCreateEmpresaFolder(empresaId: number, nome: string): Promise<string> {
+  const empresas = await getOrCreateFolder("Empresas", ROOT_FOLDER_ID);
+  const nomePasta = `${nome.slice(0, 80)} — ID${empresaId}`;
+  return getOrCreateFolder(nomePasta, empresas);
+}
+
+export async function getOrCreateDealFolder(dealId: number, titulo: string): Promise<string> {
+  const deals = await getOrCreateFolder("Deals", ROOT_FOLDER_ID);
+  const nomePasta = `Deal-${dealId} — ${titulo.slice(0, 60)}`;
+  return getOrCreateFolder(nomePasta, deals);
+}
+
+// Faz upload de um arquivo para uma pasta do Drive
+export async function uploadArquivo(params: {
+  buffer: Buffer;
+  originalName: string;
+  mimeType: string;
+  folderId: string;
+}): Promise<{ id: string; name: string; webViewLink: string; webContentLink: string }> {
+  const drive = getDrive();
+  const { Readable } = await import("stream");
+
+  const prefixo = gerarPrefixo();
+  const nomeArquivo = `${prefixo}_${params.originalName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+
+  const stream = new Readable();
+  stream.push(params.buffer);
+  stream.push(null);
+
+  const response = await drive.files.create({
+    requestBody: {
+      name: nomeArquivo,
+      parents: [params.folderId],
+    },
+    media: {
+      mimeType: params.mimeType,
+      body: stream,
+    },
+    fields: "id, name, webViewLink, webContentLink",
+  });
+
+  // Tornar o arquivo acessível a qualquer um com o link
+  await drive.permissions.create({
+    fileId: response.data.id!,
+    requestBody: {
+      role: "reader",
+      type: "anyone",
+    },
+  });
+
+  return {
+    id: response.data.id!,
+    name: response.data.name!,
+    webViewLink: response.data.webViewLink!,
+    webContentLink: response.data.webContentLink!,
+  };
+}
+
+// Lista arquivos de uma pasta
+export async function listarArquivos(folderId: string): Promise<Array<{
+  id: string;
+  name: string;
+  mimeType: string;
+  size: string;
+  webViewLink: string;
+  createdTime: string;
+}>> {
+  const drive = getDrive();
+  const response = await drive.files.list({
+    q: `'${folderId}' in parents and trashed=false`,
+    fields: "files(id, name, mimeType, size, webViewLink, createdTime)",
+    orderBy: "createdTime desc",
+  });
+  return (response.data.files || []) as any[];
+}
+
+// Deleta um arquivo do Drive
+export async function deletarArquivo(fileId: string): Promise<void> {
+  const drive = getDrive();
+  await drive.files.delete({ fileId });
+}
+Salve o arquivo.

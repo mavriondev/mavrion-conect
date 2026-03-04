@@ -89,14 +89,14 @@ function AddAssetDialog({ onSuccess }: { onSuccess: () => void }) {
 
 function AddInvestorDialog({ onSuccess }: { onSuccess: () => void }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", types: "TERRA,MINA", ticketMin: "", ticketMax: "", regions: "" });
+  const [form, setForm] = useState({ name: "", types: "TERRA,MINA", ticketMin: "", ticketMax: "", regions: "", buyerType: "financeiro", cnaeInteresse: "", prazoDecisao: "" });
   const { toast } = useToast();
   const mutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", api.matching.investors.create.path, data),
     onSuccess: () => {
       toast({ title: "Perfil de investidor cadastrado" });
       setOpen(false);
-      setForm({ name: "", types: "TERRA,MINA", ticketMin: "", ticketMax: "", regions: "" });
+      setForm({ name: "", types: "TERRA,MINA", ticketMin: "", ticketMax: "", regions: "", buyerType: "financeiro", cnaeInteresse: "", prazoDecisao: "" });
       onSuccess();
     },
   });
@@ -135,6 +135,34 @@ function AddInvestorDialog({ onSuccess }: { onSuccess: () => void }) {
             <Label>Regiões de Interesse (separar por vírgula)</Label>
             <Input data-testid="input-investor-regions" value={form.regions} onChange={e => setForm({ ...form, regions: e.target.value })} placeholder="Mato Grosso, Minas Gerais" />
           </div>
+          <div className="space-y-2">
+            <Label>Tipo de comprador</Label>
+            <Select value={form.buyerType || "financeiro"} onValueChange={v => setForm({ ...form, buyerType: v })}>
+              <SelectTrigger data-testid="select-buyer-type"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="financeiro">Investidor financeiro (fundo, family office)</SelectItem>
+                <SelectItem value="estrategico">Comprador estratégico (empresa operacional)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {form.buyerType === "estrategico" && (
+            <div className="space-y-2">
+              <Label>CNAEs de interesse (separar por vírgula)</Label>
+              <Input data-testid="input-investor-cnae" value={form.cnaeInteresse || ""} onChange={e => setForm({ ...form, cnaeInteresse: e.target.value })} placeholder="ex: 0710-1, 0890-0" />
+            </div>
+          )}
+          <div className="space-y-2">
+            <Label>Prazo de decisão</Label>
+            <Select value={form.prazoDecisao || ""} onValueChange={v => setForm({ ...form, prazoDecisao: v })}>
+              <SelectTrigger data-testid="select-prazo-decisao"><SelectValue placeholder="Selecionar..." /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="imediato">Imediato (até 30 dias)</SelectItem>
+                <SelectItem value="3_meses">Até 3 meses</SelectItem>
+                <SelectItem value="6_meses">Até 6 meses</SelectItem>
+                <SelectItem value="12_meses">Até 12 meses</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <Button
             className="w-full"
             data-testid="button-save-investor"
@@ -145,6 +173,9 @@ function AddInvestorDialog({ onSuccess }: { onSuccess: () => void }) {
               ticketMin: form.ticketMin ? Number(form.ticketMin) : null,
               ticketMax: form.ticketMax ? Number(form.ticketMax) : null,
               regionsOfInterest: form.regions.split(",").map(r => r.trim()).filter(Boolean),
+              buyerType: form.buyerType || "financeiro",
+              cnaeInteresse: form.cnaeInteresse ? form.cnaeInteresse.split(",").map(c => c.trim()).filter(Boolean) : [],
+              prazoDecisao: form.prazoDecisao || null,
             })}
           >
             {mutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}

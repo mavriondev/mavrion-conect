@@ -1,0 +1,201 @@
+PROMPT — GEO RURAL: RESILIÊNCIA QUANDO SICAR ESTÁ FORA DO AR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Objetivo
+Quando o SICAR (geoserver.car.gov.br) está fora do ar, o módulo Geo Rural
+trava sem dar explicação ao usuário. Esta melhoria adiciona:
+1. Detecção de status do SICAR em tempo real
+2. Mensagem clara quando o serviço está fora
+3. Modo de busca manual por código CAR como fallback
+4. Link direto para o portal público do CAR
+
+---
+
+## Arquivo 1: `server/routes/geo-rural.ts`
+
+Logo após a linha `const SICAR_WFS = "https://geoserver.car.gov.br/geoserver/sicar/wfs";`,
+adicione:
+
+```typescript
+const CAR_PUBLIC_URL = "https://consultapublica.car.gov.br/publico/imoveis/index";
+const CAR_DEMONSTRATIVO_URL = "https://www.car.gov.br/publico/imoveis/index";
+```
+
+Adicione esta nova rota ANTES da rota `/api/geo/fazendas`:
+
+```typescript
+// ── STATUS DO SICAR ──
+app.get("/api/geo/sicar-status", async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    
+    const testUrl = `${SICAR_WFS}?service=WFS&version=2.0.0&request=GetCapabilities`;
+    const response = await fetch(testUrl, { 
+      signal: controller.signal,
+      method: "HEAD",
+    }).catch(() => null);
+    
+    clearTimeout(timeout);
+    
+    const online = response?.ok || response?.status === 400;
+    res.json({ 
+      online,
+      checkedAt: new Date().toISOString(),
+      portalUrl: CAR_PUBLIC_URL,
+    });
+  } catch {
+    res.json({ 
+      online: false, 
+      checkedAt: new Date().toISOString(),
+      portalUrl: CAR_PUBLIC_URL,
+    });
+  }
+});
+```
+
+Na rota `/api/geo/fazendas`, substitua o bloco `catch (err: any)` final pelo seguinte:
+
+```typescript
+    } catch (err: any) {
+      console.error("Geo fazendas error:", err.message);
+      res.status(502).json({ 
+        message: "SICAR indisponível",
+        detail: "O servidor do SICAR (geoserver.car.gov.br) está fora do ar no momento. Use a busca manual por código CAR ou acesse o portal público.",
+        portalUrl: CAR_PUBLIC_URL,
+        sicarOffline: true,
+      });
+    }
+```
+
+---
+
+## Arquivo 2: `client/src/pages/geo-rural.tsx`
+
+**Alteração 1** — Adicione este hook logo após os estados existentes no componente principal
+(após as declarações de `useState`):
+
+```typescript
+const [sicarStatus, setSicarStatus] = useState<"checking" | "online" | "offline">("checking");
+const [carManualCode, setCarManualCode] = useState("");
+const [carManualLoading, setCarManualLoading] = useState(false);
+
+useEffect(() => {
+  apiRequest("GET", "/api/geo/sicar-status")
+    .then(r => r.json())
+    .then(data => setSicarStatus(data.online ? "online" : "offline"))
+    .catch(() => setSicarStatus("offline"));
+}, []);
+```
+
+**Alteração 2** — No topo da página, logo ANTES da seção de filtros/busca (antes do primeiro
+`<Card>` ou `<div>` de filtros), adicione este banner de status:
+
+```tsx
+{/* Banner de status do SICAR */}
+{sicarStatus === "offline" && (
+  <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 p-4 space-y-3">
+    <div className="flex items-start gap-3">
+      <WifiOff className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+      <div className="flex-1">
+        <p className="font-medium text-amber-800 dark:text-amber-300 text-sm">
+          SICAR fora do ar no momento
+        </p>
+        <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+          O servidor do governo (geoserver.car.gov.br) está instável. 
+          A busca por município pode não funcionar. Use o código CAR direto ou acesse o portal público.
+        </p>
+      </div>
+    </div>
+    
+    {/* Busca manual por código CAR */}
+    <div className="flex gap-2 items-center">
+      <Input
+        className="flex-1 h-8 text-sm bg-white dark:bg-background"
+        placeholder="Cole o código CAR (ex: MT-5107800-ABC123...)"
+        value={carManualCode}
+        onChange={e => setCarManualCode(e.target.value)}
+      />
+      <Button
+        size="sm"
+        className="h-8 gap-1.5 shrink-0"
+        disabled={!carManualCode.trim() || carManualLoading}
+        onClick={() => {
+          const code = carManualCode.trim();
+          if (!code) return;
+          window.open(
+            `https://consultapublica.car.gov.br/publico/imoveis/index?codigoCar=${encodeURIComponent(code)}`,
+            "_blank"
+          );
+        }}
+      >
+        <Search className="w-3.5 h-3.5" />
+        Buscar no CAR
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-8 gap-1.5 shrink-0"
+        onClick={() => window.open("https://consultapublica.car.gov.br/publico/imoveis/index", "_blank")}
+      >
+        <ExternalLink className="w-3.5 h-3.5" />
+        Portal CAR
+      </Button>
+    </div>
+  </div>
+)}
+
+{sicarStatus === "checking" && (
+  <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+    Verificando disponibilidade do SICAR...
+  </div>
+)}
+
+{sicarStatus === "online" && (
+  <div className="flex items-center gap-1.5 text-xs text-green-600">
+    <Wifi className="w-3.5 h-3.5" />
+    SICAR disponível
+  </div>
+)}
+```
+
+**Alteração 3** — Na função que trata o erro de busca de fazendas (onde aparece o toast ou
+mensagem de erro quando a busca falha), substitua a mensagem genérica por:
+
+```typescript
+// Quando a busca retornar erro, verificar se é o SICAR offline
+if (error?.sicarOffline || response?.status === 502) {
+  setSicarStatus("offline");
+  toast({
+    title: "SICAR indisponível",
+    description: "O servidor do CAR está fora do ar. Use o código CAR direto ou tente novamente em alguns minutos.",
+    variant: "destructive",
+  });
+} else {
+  toast({
+    title: "Erro na busca",
+    description: error?.detail || "Tente novamente.",
+    variant: "destructive",
+  });
+}
+```
+
+Certifique-se que `WifiOff`, `Wifi` e `ExternalLink` estão nos imports do lucide-react
+(provavelmente já estão, confirme no topo do arquivo).
+
+Salve os dois arquivos.
+
+---
+
+## O que isso resolve
+
+Antes: quando SICAR cai → tela trava → usuário não sabe o que fazer
+
+Depois:
+- Banner âmbar aparece quando SICAR está offline
+- Campo para colar código CAR e abrir direto no portal público oficial
+- Botão para ir ao portal completo do CAR
+- Quando SICAR volta, banner some automaticamente
+- A integração WFS original continua funcionando quando o serviço está no ar

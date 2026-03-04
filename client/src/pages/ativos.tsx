@@ -24,7 +24,7 @@ import {
 import {
   Plus, Search, MapPin, DollarSign, Ruler, Building2, Eye, Pencil,
   Trash2, Loader2, Filter, X, FileText, Layers, ChevronRight, TreePine,
-  Pickaxe, Briefcase, Home, Wheat, Factory, Mountain, Download,
+  Pickaxe, Briefcase, Home, Wheat, Factory, Mountain, Download, AlertTriangle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -55,11 +55,123 @@ const DOCS_STATUS_OPTIONS = [
   { value: "pendente", label: "Documentação pendente" },
 ];
 
+const STATUS_ATIVO_OPTIONS = [
+  { value: "rascunho",      label: "Rascunho" },
+  { value: "em_validacao",  label: "Em validação" },
+  { value: "ativo",         label: "Ativo" },
+  { value: "em_negociacao", label: "Em negociação" },
+  { value: "fechado",       label: "Fechado" },
+  { value: "arquivado",     label: "Arquivado" },
+];
+
+const STATUS_BADGE_CONFIG: Record<string, { label: string; class: string }> = {
+  rascunho:      { label: "Rascunho",      class: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300" },
+  em_validacao:  { label: "Em validação",  class: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" },
+  ativo:         { label: "Ativo",         class: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" },
+  em_negociacao: { label: "Em negociação", class: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" },
+  fechado:       { label: "Fechado",       class: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" },
+  arquivado:     { label: "Arquivado",     class: "bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400" },
+};
+
+const ORIGEM_ATIVO_OPTIONS = [
+  { value: "prospeccao_interna", label: "Prospecção interna (ANM, SICAR, CNPJA)" },
+  { value: "oferta_recebida",    label: "Oferta recebida (proprietário entrou em contato)" },
+  { value: "indicacao",          label: "Indicação de parceiro" },
+  { value: "portal_publico",     label: "Portal público" },
+];
+
+const ORIGEM_BADGE_CONFIG: Record<string, { label: string; class: string }> = {
+  oferta_recebida:     { label: "Oferta recebida", class: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" },
+  indicacao:           { label: "Indicação",        class: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" },
+  prospeccao_interna:  { label: "Prospecção",       class: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300" },
+  portal_publico:      { label: "Portal público",   class: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" },
+};
+
+const CAMPOS_ESPECIFICOS: Record<string, Array<{ key: string; label: string; placeholder: string; type?: string }>> = {
+  MINA: [
+    { key: "processoAnm",     label: "Nº Processo ANM",      placeholder: "ex: 800.123/2020" },
+    { key: "substancia",      label: "Substância principal", placeholder: "ex: Ferro, Ouro, Calcário" },
+    { key: "faseAnm",         label: "Fase do processo",     placeholder: "ex: Concessão de Lavra" },
+    { key: "situacaoAnm",     label: "Situação jurídica",    placeholder: "ex: Ativo, Suspenso" },
+    { key: "validadeAnm",     label: "Validade da licença",  placeholder: "ex: 2027-12-31", type: "date" },
+    { key: "ultimoEventoAnm", label: "Último evento ANM",    placeholder: "ex: Relatório anual enviado" },
+  ],
+  TERRA: [
+    { key: "codigoCar",          label: "Código CAR",           placeholder: "ex: MT-5107800-ABC123" },
+    { key: "validadeCar",        label: "Validade do CAR",      placeholder: "ex: 2026-06-30", type: "date" },
+    { key: "ccir",               label: "CCIR",                 placeholder: "Nº do CCIR" },
+    { key: "itrEmDia",           label: "ITR em dia?",          placeholder: "Sim / Não / Pendente" },
+    { key: "aptidaoAgricola",    label: "Aptidão agrícola",     placeholder: "ex: Soja, Milho, Pecuária" },
+    { key: "certificacaoSigef",  label: "Certificação SIGEF",   placeholder: "ex: Certificado, Pendente" },
+  ],
+  AGRO: [
+    { key: "codigoCar",             label: "Código CAR",           placeholder: "ex: MT-5107800-ABC123" },
+    { key: "culturas",              label: "Culturas produzidas",  placeholder: "ex: Soja, Milho, Algodão" },
+    { key: "capacidadeArmazenagem", label: "Armazenagem (ton)",    placeholder: "ex: 5000" },
+    { key: "possuiSilos",           label: "Possui silos?",        placeholder: "Sim / Não" },
+  ],
+  FII_CRI: [
+    { key: "registroCvm", label: "Registro CVM",    placeholder: "ex: FII 123.456/2020" },
+    { key: "gestora",     label: "Gestora",          placeholder: "ex: XP Gestão" },
+    { key: "dy12m",       label: "DY 12 meses (%)", placeholder: "ex: 8.5", type: "number" },
+    { key: "pvp",         label: "P/VP",             placeholder: "ex: 0.95", type: "number" },
+  ],
+  DESENVOLVIMENTO: [
+    { key: "alvara",         label: "Nº Alvará",           placeholder: "ex: 2024/1234" },
+    { key: "validadeAlvara", label: "Validade Alvará",      placeholder: "ex: 2026-12-31", type: "date" },
+    { key: "vgv",            label: "VGV estimado (R$)",    placeholder: "ex: 15000000", type: "number" },
+    { key: "estagioObra",    label: "Estágio da obra",      placeholder: "ex: Terreno, 30%" },
+  ],
+  NEGOCIO: [
+    { key: "cnpj",             label: "CNPJ da empresa",       placeholder: "ex: 00.000.000/0001-00" },
+    { key: "faturamentoAnual", label: "Faturamento anual (R$)", placeholder: "ex: 5000000", type: "number" },
+    { key: "ebitda",           label: "EBITDA (R$)",           placeholder: "ex: 800000", type: "number" },
+    { key: "multiplo",         label: "Múltiplo pedido (x)",   placeholder: "ex: 6x EBITDA" },
+    { key: "motivoVenda",      label: "Motivo da venda",       placeholder: "ex: Sucessão, Expansão" },
+  ],
+};
+
+function verificarUrgenciaDocumental(ativo: any): { urgente: boolean; diasRestantes: number | null; campo: string } {
+  const campos = (ativo.camposEspecificos as any) || {};
+  const datas = [
+    { key: "validadeCar",    label: "CAR" },
+    { key: "validadeAnm",    label: "ANM" },
+    { key: "validadeAlvara", label: "Alvará" },
+  ];
+  for (const { key, label } of datas) {
+    if (campos[key]) {
+      const dias = Math.floor((new Date(campos[key]).getTime() - Date.now()) / 86400000);
+      if (dias <= 90) return { urgente: true, diasRestantes: dias, campo: label };
+    }
+  }
+  return { urgente: false, diasRestantes: null, campo: "" };
+}
+
+function verificarExclusividade(ativo: any): { ativa: boolean; diasRestantes: number; empresa: string } {
+  const campos = (ativo.camposEspecificos as any) || {};
+  if (!campos.exclusividadeAte) return { ativa: false, diasRestantes: 0, empresa: "" };
+  const dias = Math.floor((new Date(campos.exclusividadeAte).getTime() - Date.now()) / 86400000);
+  return {
+    ativa: dias >= 0,
+    diasRestantes: dias,
+    empresa: campos.exclusividadeEmpresa || "",
+  };
+}
+
 // ── Create/Edit Form ────────────────────────────────────────────────────────
 const EMPTY_FORM = {
   title: "", type: "TERRA", description: "", location: "", municipio: "",
   estado: "", priceAsking: "", areaHa: "", areaUtil: "", matricula: "",
   docsStatus: "", observacoes: "", linkedCompanyId: "",
+  statusAtivo: "ativo",
+  origemAtivo: "prospeccao_interna",
+  ofertanteNome: "",
+  ofertanteTelefone: "",
+  ofertanteEmail: "",
+  ofertanteObservacoes: "",
+  exclusividadeAte: "",
+  exclusividadeEmpresa: "",
+  camposEspecificos: {} as Record<string, string>,
 };
 
 export function AtivoFormDialog({
@@ -87,6 +199,15 @@ export function AtivoFormDialog({
           docsStatus: initial.docsStatus || "",
           observacoes: initial.observacoes || "",
           linkedCompanyId: initial.linkedCompanyId != null ? String(initial.linkedCompanyId) : "",
+          statusAtivo: initial.statusAtivo || "ativo",
+          origemAtivo: (initial.camposEspecificos as any)?.origemAtivo || "prospeccao_interna",
+          ofertanteNome: (initial.camposEspecificos as any)?.ofertanteNome || "",
+          ofertanteTelefone: (initial.camposEspecificos as any)?.ofertanteTelefone || "",
+          ofertanteEmail: (initial.camposEspecificos as any)?.ofertanteEmail || "",
+          ofertanteObservacoes: (initial.camposEspecificos as any)?.ofertanteObservacoes || "",
+          exclusividadeAte: (initial.camposEspecificos as any)?.exclusividadeAte || "",
+          exclusividadeEmpresa: (initial.camposEspecificos as any)?.exclusividadeEmpresa || "",
+          camposEspecificos: (initial.camposEspecificos as any) || {},
         }
       : { ...EMPTY_FORM }
   );
@@ -138,6 +259,19 @@ export function AtivoFormDialog({
         observacoes: form.observacoes || null,
         linkedCompanyId: (form.linkedCompanyId && form.linkedCompanyId !== "none")
           ? parseInt(form.linkedCompanyId) : null,
+        statusAtivo: form.statusAtivo || "ativo",
+        camposEspecificos: {
+          ...(form.camposEspecificos as any || {}),
+          origemAtivo: form.origemAtivo || "prospeccao_interna",
+          ...(form.origemAtivo === "oferta_recebida" || form.origemAtivo === "indicacao" ? {
+            ofertanteNome: form.ofertanteNome || null,
+            ofertanteTelefone: form.ofertanteTelefone || null,
+            ofertanteEmail: form.ofertanteEmail || null,
+            ofertanteObservacoes: form.ofertanteObservacoes || null,
+          } : {}),
+          exclusividadeAte: form.exclusividadeAte || null,
+          exclusividadeEmpresa: form.exclusividadeEmpresa || null,
+        },
       };
       if (isEdit) {
         await apiRequest("PATCH", `/api/matching/assets/${initial.id}`, payload);
@@ -294,6 +428,115 @@ export function AtivoFormDialog({
             </p>
           </div>
 
+          {/* Status do ativo */}
+          <div className="space-y-2">
+            <Label>Status do ativo</Label>
+            <Select value={form.statusAtivo || "ativo"} onValueChange={v => set("statusAtivo", v)}>
+              <SelectTrigger data-testid="select-status-ativo"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {STATUS_ATIVO_OPTIONS.map(o => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Origem do ativo */}
+          <div className="space-y-2">
+            <Label>Origem do ativo</Label>
+            <Select value={form.origemAtivo || "prospeccao_interna"} onValueChange={v => set("origemAtivo", v)}>
+              <SelectTrigger data-testid="select-origem-ativo"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {ORIGEM_ATIVO_OPTIONS.map(o => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Dados do ofertante */}
+          {(form.origemAtivo === "oferta_recebida" || form.origemAtivo === "indicacao") && (
+            <div className="space-y-3 p-4 rounded-lg border bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800">
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                {form.origemAtivo === "oferta_recebida" ? "Dados do ofertante" : "Dados de quem indicou"}
+              </p>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-xs">Nome completo</Label>
+                  <Input data-testid="input-ofertante-nome" value={form.ofertanteNome} onChange={e => set("ofertanteNome", e.target.value)} placeholder="ex: João da Silva" />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">Telefone / WhatsApp</Label>
+                  <Input data-testid="input-ofertante-telefone" value={form.ofertanteTelefone} onChange={e => set("ofertanteTelefone", e.target.value)} placeholder="ex: (65) 99999-0000" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs">E-mail</Label>
+                <Input data-testid="input-ofertante-email" type="email" value={form.ofertanteEmail} onChange={e => set("ofertanteEmail", e.target.value)} placeholder="ex: joao@fazenda.com" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs">Observações sobre o contato</Label>
+                <Textarea data-testid="input-ofertante-obs" rows={2} value={form.ofertanteObservacoes} onChange={e => set("ofertanteObservacoes", e.target.value)} placeholder="ex: Quer vender urgente, documentação em ordem..." />
+              </div>
+            </div>
+          )}
+
+          {/* Exclusividade */}
+          <div className="space-y-3 p-4 rounded-lg border bg-red-50/40 dark:bg-red-900/10 border-red-200 dark:border-red-900">
+            <p className="text-sm font-medium text-red-800 dark:text-red-300 flex items-center gap-2">
+              🔒 Exclusividade
+            </p>
+            <p className="text-xs text-red-700 dark:text-red-400">
+              Se preenchido, este ativo fica bloqueado para novo matching até a data informada.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-xs">Exclusivo até</Label>
+                <Input
+                  type="date"
+                  value={form.exclusividadeAte || ""}
+                  onChange={e => set("exclusividadeAte", e.target.value)}
+                  data-testid="input-exclusividade-ate"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs">Empresa com exclusividade</Label>
+                <Input
+                  value={form.exclusividadeEmpresa || ""}
+                  onChange={e => set("exclusividadeEmpresa", e.target.value)}
+                  placeholder="ex: Fundo XP Agro"
+                  data-testid="input-exclusividade-empresa"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Campos específicos por tipo */}
+          {CAMPOS_ESPECIFICOS[form.type] && (
+            <div className="space-y-3 p-4 rounded-lg border bg-muted/30">
+              <p className="text-sm font-medium text-muted-foreground">
+                Dados específicos — {TIPO_CONFIG[form.type]?.label}
+              </p>
+              <div className="grid sm:grid-cols-2 gap-4">
+                {CAMPOS_ESPECIFICOS[form.type].map(campo => (
+                  <div key={campo.key} className="space-y-2">
+                    <Label className="text-xs">{campo.label}</Label>
+                    <Input
+                      data-testid={`input-campo-${campo.key}`}
+                      type={campo.type || "text"}
+                      value={(form.camposEspecificos as any)?.[campo.key] || ""}
+                      onChange={e => setForm(f => ({
+                        ...f,
+                        camposEspecificos: { ...(f.camposEspecificos as any), [campo.key]: e.target.value },
+                      }))}
+                      placeholder={campo.placeholder}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Descrição */}
           <div className="space-y-2">
             <Label>Descrição</Label>
@@ -350,6 +593,40 @@ function AtivoCard({ ativo, onEdit, onDelete }: { ativo: any; onEdit: () => void
                 <Badge variant="outline" className={cn("text-xs mt-1 border-0 font-medium", tipo.badge)}>
                   {tipo.label}
                 </Badge>
+                {ativo.statusAtivo && ativo.statusAtivo !== "ativo" && (
+                  <Badge variant="outline" className={cn("text-xs mt-1 border-0 font-medium", STATUS_BADGE_CONFIG[ativo.statusAtivo]?.class)} data-testid={`badge-status-${ativo.id}`}>
+                    {STATUS_BADGE_CONFIG[ativo.statusAtivo]?.label}
+                  </Badge>
+                )}
+                {(() => {
+                  const u = verificarUrgenciaDocumental(ativo);
+                  if (!u.urgente) return null;
+                  return (
+                    <Badge variant="outline" className="text-xs mt-1 border-0 font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" data-testid={`badge-urgencia-${ativo.id}`}>
+                      <AlertTriangle className="w-3 h-3 mr-1 inline" /> {u.campo} vence em {u.diasRestantes}d
+                    </Badge>
+                  );
+                })()}
+                {(() => {
+                  const origem = (ativo.camposEspecificos as any)?.origemAtivo;
+                  if (!origem || origem === "prospeccao_interna") return null;
+                  const cfg = ORIGEM_BADGE_CONFIG[origem];
+                  if (!cfg) return null;
+                  return (
+                    <Badge variant="outline" className={cn("text-xs mt-1 border-0 font-medium", cfg.class)} data-testid={`badge-origem-${ativo.id}`}>
+                      {cfg.label}
+                    </Badge>
+                  );
+                })()}
+                {(() => {
+                  const excl = verificarExclusividade(ativo);
+                  if (!excl.ativa) return null;
+                  return (
+                    <Badge variant="outline" className="text-xs mt-1 border-0 font-medium bg-red-100 text-red-700" data-testid={`badge-exclusividade-${ativo.id}`}>
+                      🔒 Exclusivo {excl.empresa ? `— ${excl.empresa}` : ""} por {excl.diasRestantes}d
+                    </Badge>
+                  );
+                })()}
               </div>
               <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                 <Button

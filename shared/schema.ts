@@ -142,6 +142,11 @@ export const deals = pgTable("deals", {
   attachments: jsonb("attachments").default([]), // [{name, driveId, driveUrl, size, uploadedAt}]
   companyId: integer("company_id").references(() => companies.id),
   assetId: integer("asset_id").references(() => assets.id),
+  feeType: text("fee_type"),
+  feePercent: doublePrecision("fee_percent"),
+  feeValue: doublePrecision("fee_value"),
+  feeStatus: text("fee_status").default("a_receber"),
+  feeNotes: text("fee_notes"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -186,6 +191,9 @@ export const assets = pgTable("assets", {
   geoScoreEnergia: text("geo_score_energia"),
   geoScore: integer("geo_score"),
   geoAnalyzedAt: timestamp("geo_analyzed_at"),
+  statusAtivo: text("status_ativo").default("ativo"),
+  activityLog: jsonb("activity_log").default([]),
+  camposEspecificos: jsonb("campos_especificos").default({}),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -200,6 +208,11 @@ export const investorProfiles = pgTable("investor_profiles", {
   ticketMax: doublePrecision("ticket_max"),
   preferencesJson: jsonb("preferences_json").default({}),
   tags: jsonb("tags").default([]),
+  buyerType: text("buyer_type").default("financeiro"),
+  cnaeInteresse: jsonb("cnae_interesse").default([]),
+  prazoDecisao: text("prazo_decisao"),
+  dealsAnteriores: boolean("deals_anteriores").default(false),
+  capacidadeAquisicao: doublePrecision("capacidade_aquisicao"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -558,6 +571,8 @@ export const norionCafRegistros = pgTable("norion_caf_registros", {
   entidadeCnpj: text("entidade_cnpj"),
   cadastrador: text("cadastrador"),
   status: text("status").notNull().default("ativo"),
+  norionProfile: text("norion_profile").default("baixo"),
+  classificacao: text("classificacao").default("pendente"),
   observacoes: text("observacoes"),
   dadosExtras: jsonb("dados_extras").default({}),
   createdAt: timestamp("created_at").defaultNow(),

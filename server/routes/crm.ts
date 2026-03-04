@@ -125,20 +125,29 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
     const assetNames = assetStages.map(s => s.name);
 
     const investorWorkflow = ["Prospecção", "Análise", "LOI", "Due Diligence", "Fechamento"];
-    const assetWorkflow = ["Captação", "Validação Docs", "Análise", "LOI", "Fechamento"];
+    const maWorkflow = [
+      { name: "Identificado",             color: "#94a3b8" },
+      { name: "Contato Inicial",           color: "#60a5fa" },
+      { name: "NDA Assinado",              color: "#818cf8" },
+      { name: "Due Diligence",             color: "#f59e0b" },
+      { name: "LOI / Carta de Intenção",   color: "#f97316" },
+      { name: "Negociação Final",          color: "#ef4444" },
+      { name: "Fechamento",                color: "#10b981" },
+    ];
 
     const needsInvestorSeed = !investorWorkflow.every(n => investorNames.includes(n));
-    const needsAssetSeed = !assetWorkflow.every(n => assetNames.includes(n));
+    const needsMaSeed = !maWorkflow.some(s => assetNames.includes(s.name));
 
     if (needsInvestorSeed && investorStages.length === 0) {
       for (let i = 0; i < investorWorkflow.length; i++) {
         await storage.createPipelineStage({ orgId: getOrgId(), pipelineType: "INVESTOR", name: investorWorkflow[i], order: i + 1, color: null });
       }
     }
-    if (needsAssetSeed && assetStages.length === 0) {
-      for (let i = 0; i < assetWorkflow.length; i++) {
-        await storage.createPipelineStage({ orgId: getOrgId(), pipelineType: "ASSET", name: assetWorkflow[i], order: i + 1, color: null });
+    if (needsMaSeed && assetStages.length === 0) {
+      for (let i = 0; i < maWorkflow.length; i++) {
+        await storage.createPipelineStage({ orgId: getOrgId(), pipelineType: "ASSET", name: maWorkflow[i].name, order: i + 1, color: maWorkflow[i].color });
       }
+      console.log("✓ Estágios M&A criados no pipeline de Ativos");
     }
 
     const finalStages = (investorStages.length < 5 || assetStages.length < 5)
@@ -213,6 +222,35 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
       await storage.deleteDealComment(Number(req.params.id));
       res.status(204).end();
     } catch (err) { res.status(500).json({ message: "Erro interno" }); }
+  });
+
+  app.get("/api/crm/deals/:id/activities", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const dealId = Number(req.params.id);
+      const activities = await db.execute(
+        sql`SELECT * FROM deal_activities WHERE deal_id = ${dealId} ORDER BY created_at DESC`
+      );
+      res.json(activities.rows);
+    } catch (err: any) {
+      res.status(500).json({ message: "Erro ao buscar atividades" });
+    }
+  });
+
+  app.post("/api/crm/deals/:id/activities", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const dealId = Number(req.params.id);
+      const { type, description } = req.body;
+      const user = req.user as any;
+      await db.execute(
+        sql`INSERT INTO deal_activities (deal_id, type, description, created_by, created_at)
+            VALUES (${dealId}, ${type || "nota"}, ${description}, ${user?.username || "Sistema"}, NOW())`
+      );
+      res.status(201).json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: "Erro ao salvar atividade" });
+    }
   });
 
   app.get(api.stats.dashboard.path, async (req, res) => {

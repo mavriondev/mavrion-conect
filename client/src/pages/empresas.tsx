@@ -16,12 +16,14 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Building2, MapPin, Briefcase, Phone, Mail, Search,
-  Loader2, UserPlus, Filter, X, Download,
+  Loader2, UserPlus, Filter, X, Download, Trash2, UserX,
 } from "lucide-react";
 import { Link } from "wouter";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
 interface CompanyWithLead {
   id: number;
   legalName: string;
@@ -38,7 +40,6 @@ interface CompanyWithLead {
   lead: { id: number; status: string; score: number; source: string | null } | null;
 }
 
-// ── Constants ─────────────────────────────────────────────────────────────────
 const LEAD_STATUS_LABELS: Record<string, string> = {
   new: "Novo", queued: "Na fila", in_progress: "Em progresso",
   contacted: "Contactado", qualified: "Qualificado", disqualified: "Descartado",
@@ -53,6 +54,18 @@ const LEAD_STATUS_COLORS: Record<string, string> = {
   disqualified: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
 };
 
+const STATUS_FILTER_TAGS = [
+  { key: "new", label: "Novo" },
+  { key: "queued", label: "Na fila" },
+  { key: "in_progress", label: "Em progresso" },
+  { key: "contacted", label: "Contactado" },
+  { key: "qualified", label: "Qualificado" },
+  { key: "disqualified", label: "Descartado" },
+  { key: "_no_lead", label: "Sem Lead" },
+];
+
+const NO_LEAD_COLOR = "bg-gray-100 text-gray-600 dark:bg-gray-800/40 dark:text-gray-400";
+
 const PORTES = [
   { id: "Microempresa", label: "ME" },
   { id: "Empresa de Pequeno Porte", label: "EPP" },
@@ -64,14 +77,12 @@ const ESTADOS = [
   "PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO",
 ];
 
-// ── Mode config ───────────────────────────────────────────────────────────────
 const MODE_CONFIG = {
   all: { title: "Empresas Importadas", subtitle: "Todas as empresas importadas para o sistema.", leadFilter: "all" as const },
   leads: { title: "Leads Ativas", subtitle: "Empresas com leads ativos no pipeline.", leadFilter: "active" as const },
   desqualificadas: { title: "Leads Desqualificadas", subtitle: "Empresas marcadas como sem interesse — não aparecem na busca.", leadFilter: "disqualified" as const },
 };
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
 export default function EmpresasPage({ mode = "all" }: { mode?: "all" | "leads" | "desqualificadas" }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -82,8 +93,12 @@ export default function EmpresasPage({ mode = "all" }: { mode?: "all" | "leads" 
   const [filterPortes, setFilterPortes] = useState<string[]>([]);
   const [filterStates, setFilterStates] = useState<string[]>([]);
   const [filterCity, setFilterCity] = useState("");
+  const [filterStatuses, setFilterStatuses] = useState<string[]>([]);
   const [showFilters, setShowFilters] = useState(false);
   const [creatingLead, setCreatingLead] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
 
   const { data: companies, isLoading } = useQuery<CompanyWithLead[]>({
     queryKey: ["/api/companies/with-leads"],
@@ -110,6 +125,27 @@ export default function EmpresasPage({ mode = "all" }: { mode?: "all" | "leads" 
     onError: () => toast({ title: "Erro ao atualizar status", variant: "destructive" }),
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (companyId: number) => apiRequest("DELETE", `/api/companies/${companyId}`),
+    onSuccess: () => {
+      toast({ title: "Empresa excluída com sucesso" });
+      queryClient.invalidateQueries({ queryKey: ["/api/companies/with-leads"] });
+      setDeleteTarget(null);
+    },
+    onError: () => toast({ title: "Erro ao excluir empresa", variant: "destructive" }),
+  });
+
+  const batchDeleteMutation = useMutation({
+    mutationFn: (ids: number[]) => apiRequest("POST", "/api/companies/batch-delete", { ids }),
+    onSuccess: (_data, ids) => {
+      toast({ title: `${ids.length} empresa(s) excluída(s)` });
+      queryClient.invalidateQueries({ queryKey: ["/api/companies/with-leads"] });
+      setSelectedIds(new Set());
+      setShowBatchDeleteConfirm(false);
+    },
+    onError: () => toast({ title: "Erro ao excluir empresas", variant: "destructive" }),
+  });
+
   const handleCreateLead = (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
     e.preventDefault();
@@ -123,11 +159,27 @@ export default function EmpresasPage({ mode = "all" }: { mode?: "all" | "leads" 
   const toggleState = (s: string) =>
     setFilterStates(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
 
+  const toggleStatus = (s: string) =>
+    setFilterStatuses(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelectedIds(new Set(filtered.map(c => c.id)));
+  };
+
   const clearFilters = () => {
     setSearch("");
     setFilterPortes([]);
     setFilterStates([]);
     setFilterCity("");
+    setFilterStatuses([]);
   };
 
   const modeFiltered = (companies || []).filter(c => {
@@ -153,6 +205,18 @@ export default function EmpresasPage({ mode = "all" }: { mode?: "all" | "leads" 
       const q = filterCity.trim().toLowerCase();
       if (!(c.address?.city?.toLowerCase().includes(q))) return false;
     }
+    if (filterStatuses.length > 0) {
+      const hasNoLead = filterStatuses.includes("_no_lead");
+      const statusKeys = filterStatuses.filter(s => s !== "_no_lead");
+      if (!c.lead) {
+        if (!hasNoLead) return false;
+      } else {
+        if (statusKeys.length > 0 && !statusKeys.includes(c.lead.status)) {
+          if (!hasNoLead) return false;
+        }
+        if (hasNoLead && statusKeys.length === 0) return false;
+      }
+    }
     return true;
   });
 
@@ -160,21 +224,31 @@ export default function EmpresasPage({ mode = "all" }: { mode?: "all" | "leads" 
     filterPortes.length > 0,
     filterStates.length > 0,
     filterCity.trim().length > 0,
+    filterStatuses.length > 0,
   ].filter(Boolean).length;
+
+  const statusCounts: Record<string, number> = {};
+  let noLeadCount = 0;
+  for (const c of modeFiltered) {
+    if (c.lead) {
+      statusCounts[c.lead.status] = (statusCounts[c.lead.status] || 0) + 1;
+    } else {
+      noLeadCount++;
+    }
+  }
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-4 md:space-y-5">
-      {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">{cfg.title}</h1>
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">{cfg.title}</h1>
           <p className="text-muted-foreground text-sm mt-1">{cfg.subtitle}</p>
         </div>
         {companies && (
           <div className="flex gap-4 text-sm flex-wrap items-center">
             <span className="flex items-center gap-1.5 text-muted-foreground">
               <Building2 className="w-4 h-4" />
-              <strong>{modeFiltered.length}</strong> {mode === "all" ? "total" : "resultado(s)"}
+              <strong data-testid="text-total-count">{modeFiltered.length}</strong> {mode === "all" ? "total" : "resultado(s)"}
             </span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -195,7 +269,6 @@ export default function EmpresasPage({ mode = "all" }: { mode?: "all" | "leads" 
         )}
       </div>
 
-      {/* Search + Filters */}
       <div className="flex flex-col gap-3">
         <div className="flex gap-2">
           <div className="relative flex-1 max-w-sm">
@@ -227,10 +300,32 @@ export default function EmpresasPage({ mode = "all" }: { mode?: "all" | "leads" 
           )}
         </div>
 
+        <div className="flex flex-wrap gap-1.5" data-testid="status-filter-tags">
+          {STATUS_FILTER_TAGS.map(tag => {
+            const isActive = filterStatuses.includes(tag.key);
+            const count = tag.key === "_no_lead" ? noLeadCount : (statusCounts[tag.key] || 0);
+            const colorClass = tag.key === "_no_lead" ? NO_LEAD_COLOR : (LEAD_STATUS_COLORS[tag.key] || "");
+            return (
+              <button
+                key={tag.key}
+                onClick={() => toggleStatus(tag.key)}
+                data-testid={`filter-status-${tag.key}`}
+                className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium transition-all ${
+                  isActive
+                    ? `${colorClass} ring-2 ring-offset-1 ring-current`
+                    : `${colorClass} opacity-60 hover:opacity-100`
+                }`}
+              >
+                {tag.label}
+                <span className="font-normal opacity-75">({count})</span>
+              </button>
+            );
+          })}
+        </div>
+
         {showFilters && (
           <Card className="border-dashed">
             <CardContent className="pt-4 pb-4 space-y-4">
-              {/* Porte */}
               <div className="space-y-2">
                 <Label className="text-xs uppercase tracking-wider text-muted-foreground">Porte</Label>
                 <div className="flex gap-4 flex-wrap">
@@ -248,7 +343,6 @@ export default function EmpresasPage({ mode = "all" }: { mode?: "all" | "leads" 
                 </div>
               </div>
 
-              {/* Estado */}
               <div className="space-y-2">
                 <Label className="text-xs uppercase tracking-wider text-muted-foreground">Estado (UF)</Label>
                 <div className="flex flex-wrap gap-1.5">
@@ -269,7 +363,6 @@ export default function EmpresasPage({ mode = "all" }: { mode?: "all" | "leads" 
                 </div>
               </div>
 
-              {/* Cidade */}
               <div className="space-y-2">
                 <Label className="text-xs uppercase tracking-wider text-muted-foreground">Cidade</Label>
                 <div className="relative max-w-xs">
@@ -288,14 +381,47 @@ export default function EmpresasPage({ mode = "all" }: { mode?: "all" | "leads" 
         )}
       </div>
 
-      {/* Loading */}
+      {selectedIds.size > 0 && (
+        <div className="sticky top-0 z-10 bg-background/95 backdrop-blur border rounded-lg px-4 py-2.5 flex items-center justify-between gap-3 shadow-sm" data-testid="batch-action-bar">
+          <div className="flex items-center gap-3">
+            <Checkbox
+              checked={selectedIds.size === filtered.length && filtered.length > 0}
+              onCheckedChange={(checked) => checked ? selectAll() : setSelectedIds(new Set())}
+              data-testid="checkbox-select-all"
+            />
+            <span className="text-sm font-medium" data-testid="text-selected-count">
+              {selectedIds.size} selecionada{selectedIds.size !== 1 ? "s" : ""}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="destructive"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => setShowBatchDeleteConfirm(true)}
+              data-testid="button-batch-delete"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Excluir selecionadas
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedIds(new Set())}
+              data-testid="button-clear-selection"
+            >
+              Limpar seleção
+            </Button>
+          </div>
+        </div>
+      )}
+
       {isLoading && (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
         </div>
       )}
 
-      {/* Empty state */}
       {!isLoading && (!companies || companies.length === 0) && (
         <Card>
           <CardContent className="pt-12 pb-12 text-center space-y-3">
@@ -308,7 +434,6 @@ export default function EmpresasPage({ mode = "all" }: { mode?: "all" | "leads" 
         </Card>
       )}
 
-      {/* No results for mode */}
       {!isLoading && companies && companies.length > 0 && modeFiltered.length === 0 && (
         <Card>
           <CardContent className="pt-8 pb-8 text-center text-muted-foreground text-sm">
@@ -319,7 +444,6 @@ export default function EmpresasPage({ mode = "all" }: { mode?: "all" | "leads" 
         </Card>
       )}
 
-      {/* No filter results */}
       {!isLoading && modeFiltered.length > 0 && filtered.length === 0 && (
         <Card>
           <CardContent className="pt-8 pb-8 text-center text-muted-foreground text-sm">
@@ -328,95 +452,113 @@ export default function EmpresasPage({ mode = "all" }: { mode?: "all" | "leads" 
         </Card>
       )}
 
-      {/* Company list */}
       <div className="space-y-2">
         {filtered.map(company => (
-          <Link
-            key={company.id}
-            href={`/empresas/${company.id}`}
-            className="block"
-            data-testid={`link-empresa-${company.id}`}
-          >
-            <Card
-              className="cursor-pointer hover:shadow-md hover:border-primary/30 transition-all duration-150"
-              data-testid={`card-empresa-${company.id}`}
+          <div key={company.id} className="flex items-stretch gap-0">
+            <div
+              className="flex items-center px-2 shrink-0"
+              onClick={e => { e.stopPropagation(); e.preventDefault(); }}
             >
-              <CardContent className="pt-4 pb-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-semibold text-sm">{company.legalName}</p>
-                      {company.tradeName && (
-                        <span className="text-xs text-muted-foreground">({company.tradeName})</span>
-                      )}
+              <Checkbox
+                checked={selectedIds.has(company.id)}
+                onCheckedChange={() => toggleSelect(company.id)}
+                data-testid={`checkbox-select-${company.id}`}
+              />
+            </div>
+            <Link
+              href={`/empresas/${company.id}`}
+              className="block flex-1 min-w-0"
+              data-testid={`link-empresa-${company.id}`}
+            >
+              <Card
+                className="cursor-pointer hover:shadow-md hover:border-primary/30 transition-all duration-150"
+                data-testid={`card-empresa-${company.id}`}
+              >
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold text-sm">{company.legalName}</p>
+                        {company.tradeName && (
+                          <span className="text-xs text-muted-foreground">({company.tradeName})</span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-3 mt-1.5 text-xs text-muted-foreground">
+                        {company.cnpj && <span className="font-mono">{company.cnpj}</span>}
+                        {company.porte && <Badge variant="outline" className="text-xs py-0">{company.porte}</Badge>}
+                        {company.cnaePrincipal && (
+                          <span className="flex items-center gap-1">
+                            <Briefcase className="w-3 h-3" />
+                            {company.cnaePrincipal.length > 40
+                              ? company.cnaePrincipal.substring(0, 40) + "…"
+                              : company.cnaePrincipal}
+                          </span>
+                        )}
+                        {(company.address?.city || company.address?.state) && (
+                          <span className="flex items-center gap-1">
+                            <MapPin className="w-3 h-3" />
+                            {[company.address?.city, company.address?.state].filter(Boolean).join(" – ")}
+                          </span>
+                        )}
+                        {company.phones.length > 0 && (
+                          <span className="flex items-center gap-1">
+                            <Phone className="w-3 h-3" /> {company.phones[0]}
+                          </span>
+                        )}
+                        {company.emails.length > 0 && (
+                          <span className="flex items-center gap-1">
+                            <Mail className="w-3 h-3" /> {company.emails[0]}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex flex-wrap gap-3 mt-1.5 text-xs text-muted-foreground">
-                      {company.cnpj && <span className="font-mono">{company.cnpj}</span>}
-                      {company.porte && <Badge variant="outline" className="text-xs py-0">{company.porte}</Badge>}
-                      {company.cnaePrincipal && (
-                        <span className="flex items-center gap-1">
-                          <Briefcase className="w-3 h-3" />
-                          {company.cnaePrincipal.length > 40
-                            ? company.cnaePrincipal.substring(0, 40) + "…"
-                            : company.cnaePrincipal}
-                        </span>
-                      )}
-                      {(company.address?.city || company.address?.state) && (
-                        <span className="flex items-center gap-1">
-                          <MapPin className="w-3 h-3" />
-                          {[company.address?.city, company.address?.state].filter(Boolean).join(" – ")}
-                        </span>
-                      )}
-                      {company.phones.length > 0 && (
-                        <span className="flex items-center gap-1">
-                          <Phone className="w-3 h-3" /> {company.phones[0]}
-                        </span>
-                      )}
-                      {company.emails.length > 0 && (
-                        <span className="flex items-center gap-1">
-                          <Mail className="w-3 h-3" /> {company.emails[0]}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="shrink-0 flex items-center gap-2" onClick={e => { e.stopPropagation(); e.preventDefault(); }}>
-                    {company.lead ? (
-                      <Select
-                        value={company.lead.status}
-                        onValueChange={status => updateStatusMutation.mutate({ leadId: company.lead!.id, status })}
-                      >
-                        <SelectTrigger
-                          className={`h-7 text-xs px-2.5 rounded-full border-0 font-medium w-auto gap-1 focus:ring-0 ${LEAD_STATUS_COLORS[company.lead.status] || LEAD_STATUS_COLORS.new}`}
-                          data-testid={`select-status-${company.id}`}
+                    <div className="shrink-0 flex items-center gap-2" onClick={e => { e.stopPropagation(); e.preventDefault(); }}>
+                      {company.lead ? (
+                        <Select
+                          value={company.lead.status}
+                          onValueChange={status => updateStatusMutation.mutate({ leadId: company.lead!.id, status })}
                         >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {Object.entries(LEAD_STATUS_LABELS).map(([val, label]) => (
-                            <SelectItem key={val} value={val} className="text-xs">{label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
+                          <SelectTrigger
+                            className={`h-7 text-xs px-2.5 rounded-full border-0 font-medium w-auto gap-1 focus:ring-0 ${LEAD_STATUS_COLORS[company.lead.status] || LEAD_STATUS_COLORS.new}`}
+                            data-testid={`select-status-${company.id}`}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Object.entries(LEAD_STATUS_LABELS).map(([val, label]) => (
+                              <SelectItem key={val} value={val} className="text-xs">{label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs gap-1"
+                          onClick={e => handleCreateLead(e, company.id)}
+                          disabled={creatingLead === company.id}
+                          data-testid={`button-criar-lead-${company.id}`}
+                        >
+                          {creatingLead === company.id
+                            ? <Loader2 className="w-3 h-3 animate-spin" />
+                            : <UserPlus className="w-3 h-3" />}
+                          Criar Lead
+                        </Button>
+                      )}
                       <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 text-xs gap-1"
-                        onClick={e => handleCreateLead(e, company.id)}
-                        disabled={creatingLead === company.id}
-                        data-testid={`button-criar-lead-${company.id}`}
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => setDeleteTarget({ id: company.id, name: company.legalName })}
+                        data-testid={`button-delete-${company.id}`}
                       >
-                        {creatingLead === company.id
-                          ? <Loader2 className="w-3 h-3 animate-spin" />
-                          : <UserPlus className="w-3 h-3" />}
-                        Criar Lead
+                        <Trash2 className="w-3.5 h-3.5" />
                       </Button>
-                    )}
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
+                </CardContent>
+              </Card>
+            </Link>
+          </div>
         ))}
       </div>
 
@@ -426,6 +568,56 @@ export default function EmpresasPage({ mode = "all" }: { mode?: "all" | "leads" 
           {modeFiltered.length > 0 && filtered.length < modeFiltered.length ? ` de ${modeFiltered.length}` : ""}
         </p>
       )}
+
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent data-testid="dialog-confirm-delete">
+          <DialogHeader>
+            <DialogTitle>Excluir empresa</DialogTitle>
+            <DialogDescription>
+              Tem certeza que deseja excluir <strong>{deleteTarget?.name}</strong>? Todos os dados associados (leads, contatos, deals) serão removidos permanentemente.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)} data-testid="button-cancel-delete">
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+              disabled={deleteMutation.isPending}
+              data-testid="button-confirm-delete"
+            >
+              {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Trash2 className="w-4 h-4 mr-1" />}
+              Excluir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showBatchDeleteConfirm} onOpenChange={setShowBatchDeleteConfirm}>
+        <DialogContent data-testid="dialog-confirm-batch-delete">
+          <DialogHeader>
+            <DialogTitle>Excluir {selectedIds.size} empresa{selectedIds.size !== 1 ? "s" : ""}</DialogTitle>
+            <DialogDescription>
+              Esta ação é irreversível. Todos os dados associados (leads, contatos, deals) das {selectedIds.size} empresa{selectedIds.size !== 1 ? "s" : ""} selecionada{selectedIds.size !== 1 ? "s" : ""} serão removidos permanentemente.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBatchDeleteConfirm(false)} data-testid="button-cancel-batch-delete">
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => batchDeleteMutation.mutate(Array.from(selectedIds))}
+              disabled={batchDeleteMutation.isPending}
+              data-testid="button-confirm-batch-delete"
+            >
+              {batchDeleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Trash2 className="w-4 h-4 mr-1" />}
+              Excluir {selectedIds.size} empresa{selectedIds.size !== 1 ? "s" : ""}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

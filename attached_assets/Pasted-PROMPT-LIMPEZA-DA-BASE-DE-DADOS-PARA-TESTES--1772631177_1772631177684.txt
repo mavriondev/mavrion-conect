@@ -1,0 +1,123 @@
+PROMPT — LIMPEZA DA BASE DE DADOS PARA TESTES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️  ATENÇÃO: Este prompt apaga dados permanentemente.
+    Não tem como desfazer. Faça backup antes se necessário.
+    Usuários e configurações do sistema NÃO serão apagados.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Cole este prompt no Replit AI:
+
+---
+
+No terminal do Replit, execute o seguinte script SQL para limpar
+os dados de teste da base de dados, preservando usuários e
+configurações. Crie um arquivo temporário chamado `cleanup.sql`
+com o seguinte conteúdo e execute via psql:
+
+```sql
+-- LIMPEZA SELETIVA — preserva users e organizations
+-- Execute na ordem abaixo para respeitar as foreign keys
+
+-- 1. Sugestões de matching
+TRUNCATE TABLE match_suggestions RESTART IDENTITY CASCADE;
+
+-- 2. Deals e atividades relacionadas
+TRUNCATE TABLE deal_activities RESTART IDENTITY CASCADE;
+TRUNCATE TABLE deals RESTART IDENTITY CASCADE;
+
+-- 3. Propostas e contratos
+TRUNCATE TABLE proposals RESTART IDENTITY CASCADE;
+TRUNCATE TABLE contracts RESTART IDENTITY CASCADE;
+
+-- 4. Ativos do portfólio
+TRUNCATE TABLE assets RESTART IDENTITY CASCADE;
+
+-- 5. Perfis de investidores
+TRUNCATE TABLE investor_profiles RESTART IDENTITY CASCADE;
+
+-- 6. Leads e fila SDR
+TRUNCATE TABLE leads RESTART IDENTITY CASCADE;
+TRUNCATE TABLE sdr_queue RESTART IDENTITY CASCADE;
+
+-- 7. Empresas prospectadas
+TRUNCATE TABLE companies RESTART IDENTITY CASCADE;
+
+-- 8. Notificações
+TRUNCATE TABLE notifications RESTART IDENTITY CASCADE;
+
+-- Confirmar o que foi limpo
+SELECT
+  'match_suggestions' as tabela, COUNT(*) as registros FROM match_suggestions
+UNION ALL SELECT 'deals', COUNT(*) FROM deals
+UNION ALL SELECT 'assets', COUNT(*) FROM assets
+UNION ALL SELECT 'investor_profiles', COUNT(*) FROM investor_profiles
+UNION ALL SELECT 'companies', COUNT(*) FROM companies
+UNION ALL SELECT 'leads', COUNT(*) FROM leads;
+```
+
+Para executar, rode no terminal:
+
+```bash
+npx tsx -e "
+import { db } from './server/db';
+import { sql } from 'drizzle-orm';
+
+async function cleanup() {
+  console.log('Iniciando limpeza...');
+  
+  const tables = [
+    'match_suggestions',
+    'deal_activities', 
+    'deals',
+    'proposals',
+    'contracts',
+    'assets',
+    'investor_profiles',
+    'leads',
+    'sdr_queue',
+    'companies',
+    'notifications',
+  ];
+
+  for (const table of tables) {
+    try {
+      await db.execute(sql.raw(\`TRUNCATE TABLE \${table} RESTART IDENTITY CASCADE\`));
+      console.log(\`✓ \${table} limpa\`);
+    } catch (e: any) {
+      console.log(\`⚠ \${table} — \${e.message}\`);
+    }
+  }
+
+  console.log('');
+  console.log('✅ Limpeza concluída!');
+  console.log('Preservados: users, organizations, configurações');
+  process.exit(0);
+}
+
+cleanup();
+"
+```
+
+Após rodar, deve aparecer no terminal:
+✓ match_suggestions limpa
+✓ deals limpa
+✓ assets limpa
+✓ companies limpa
+... e assim por diante.
+
+Se alguma tabela não existir, aparecerá ⚠ com o nome — isso é normal,
+significa que aquela tabela ainda não foi criada no seu sistema.
+
+---
+
+## Depois da limpeza, para confirmar que funcionou:
+
+Abra o sistema e verifique:
+- Empresas → deve estar vazia (0 registros)
+- Portfólio de Ativos → deve estar vazio
+- Pipeline de Deals → deve estar vazio
+- Matching → sem sugestões
+- Usuários → ainda existem ✓
+- Login ainda funciona ✓

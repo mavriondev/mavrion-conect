@@ -269,6 +269,161 @@ function ActivityFeed() {
   );
 }
 
+function FunilConversao({ deals, assets, companies }: {
+  deals: any[]; assets: any[]; companies: any[];
+}) {
+  const etapas = [
+    {
+      label: "Empresas prospectadas",
+      valor: companies?.length || 0,
+      cor: "#6366f1",
+      desc: "Total de empresas no CRM"
+    },
+    {
+      label: "Leads qualificados",
+      valor: (companies || []).filter((c: any) => c.lead?.status === "qualified").length,
+      cor: "#8b5cf6",
+      desc: "Empresas com status Qualificado"
+    },
+    {
+      label: "Ativos no portfólio",
+      valor: assets?.length || 0,
+      cor: "#a78bfa",
+      desc: "Ativos cadastrados"
+    },
+    {
+      label: "Matches gerados",
+      valor: (deals || []).length,
+      cor: "#f59e0b",
+      desc: "Deals abertos no pipeline"
+    },
+    {
+      label: "Em Due Diligence",
+      valor: (deals || []).filter((d: any) =>
+        d.stage?.name?.toLowerCase().includes("diligence") ||
+        d.stage?.name?.toLowerCase().includes("nda")
+      ).length,
+      cor: "#f97316",
+      desc: "Deals em NDA ou Due Diligence"
+    },
+    {
+      label: "Em negociação final",
+      valor: (deals || []).filter((d: any) =>
+        d.stage?.name?.toLowerCase().includes("negociação") ||
+        d.stage?.name?.toLowerCase().includes("loi")
+      ).length,
+      cor: "#ef4444",
+      desc: "Deals em LOI ou Negociação Final"
+    },
+    {
+      label: "Fechamentos",
+      valor: (deals || []).filter((d: any) =>
+        d.stage?.name?.toLowerCase().includes("fechamento") ||
+        d.stage?.name?.toLowerCase().includes("fechado")
+      ).length,
+      cor: "#10b981",
+      desc: "Deals fechados"
+    },
+  ];
+
+  const ticketMedio = (() => {
+    const comValor = (deals || []).filter((d: any) => d.amountEstimate > 0);
+    if (comValor.length === 0) return 0;
+    return comValor.reduce((s: number, d: any) => s + d.amountEstimate, 0) / comValor.length;
+  })();
+
+  const feesTotal = (deals || []).reduce((s: number, d: any) => s + (d.feeValue || 0), 0);
+  const feesRecebidos = (deals || [])
+    .filter((d: any) => d.feeStatus === "recebido")
+    .reduce((s: number, d: any) => s + (d.feeValue || 0), 0);
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card>
+          <CardContent className="p-4 text-center">
+            <p className="text-xs text-muted-foreground">Ticket médio</p>
+            <p className="text-xl font-bold mt-1" data-testid="kpi-ticket-medio">
+              {ticketMedio >= 1_000_000
+                ? `R$ ${(ticketMedio / 1_000_000).toFixed(1)}M`
+                : `R$ ${(ticketMedio / 1_000).toFixed(0)}k`}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 text-center">
+            <p className="text-xs text-muted-foreground">Fees totais</p>
+            <p className="text-xl font-bold mt-1 text-amber-600" data-testid="kpi-fees-totais">
+              R$ {(feesTotal / 1_000).toFixed(0)}k
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 text-center">
+            <p className="text-xs text-muted-foreground">Fees recebidos</p>
+            <p className="text-xl font-bold mt-1 text-green-600" data-testid="kpi-fees-recebidos">
+              R$ {(feesRecebidos / 1_000).toFixed(0)}k
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 text-center">
+            <p className="text-xs text-muted-foreground">Taxa de fechamento</p>
+            <p className="text-xl font-bold mt-1" data-testid="kpi-taxa-fechamento">
+              {deals?.length > 0
+                ? `${Math.round((etapas[6].valor / deals.length) * 100)}%`
+                : "—"}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm">Funil de Conversão M&A</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {etapas.map((etapa, i) => {
+            const maxValor = etapas[0].valor || 1;
+            const pct = Math.round((etapa.valor / maxValor) * 100);
+            const taxa = i > 0 && etapas[i - 1].valor > 0
+              ? Math.round((etapa.valor / etapas[i - 1].valor) * 100)
+              : null;
+            return (
+              <div key={etapa.label} className="space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium">{etapa.label}</span>
+                  <div className="flex items-center gap-3">
+                    {taxa !== null && (
+                      <span className="text-muted-foreground">
+                        {taxa}% da etapa anterior
+                      </span>
+                    )}
+                    <span className="font-bold" style={{ color: etapa.cor }}>
+                      {etapa.valor}
+                    </span>
+                  </div>
+                </div>
+                <div className="h-7 bg-muted rounded-lg overflow-hidden relative">
+                  <div
+                    className="h-full rounded-lg transition-all flex items-center pl-3"
+                    style={{ width: `${Math.max(pct, 3)}%`, backgroundColor: etapa.cor }}
+                  >
+                    {pct > 15 && (
+                      <span className="text-white text-[10px] font-bold">{etapa.valor}</span>
+                    )}
+                  </div>
+                </div>
+                <p className="text-[10px] text-muted-foreground">{etapa.desc}</p>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function RelatoriosPage() {
   const [period, setPeriod] = useState("30");
   const [activeTab, setActiveTab] = useState("geral");
@@ -488,6 +643,9 @@ export default function RelatoriosPage() {
           </TabsTrigger>
           <TabsTrigger value="ma" className="text-xs md:text-sm" data-testid="tab-ma">
             <Briefcase className="w-3.5 h-3.5 mr-1.5" /> M&A
+          </TabsTrigger>
+          <TabsTrigger value="funil" className="text-xs md:text-sm" data-testid="tab-funil">
+            Funil M&A
           </TabsTrigger>
           <TabsTrigger value="atividades" className="text-xs md:text-sm" data-testid="tab-atividades">
             <History className="w-3.5 h-3.5 mr-1.5" /> Atividades
@@ -1097,6 +1255,10 @@ export default function RelatoriosPage() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="funil" className="mt-4 space-y-4">
+          <FunilConversao deals={deals as any[]} assets={assets as any[]} companies={companies as any[]} />
         </TabsContent>
 
         <TabsContent value="atividades" className="space-y-5 mt-5">

@@ -52,6 +52,7 @@ const MODULE_OPTIONS = [
   { value: "matching", label: "Matching" },
   { value: "anm", label: "ANM Geoportal" },
   { value: "geo-rural", label: "Prospecção Rural" },
+  { value: "analise-agro", label: "Análise Agro" },
   { value: "configuracoes", label: "Configurações" },
   { value: "relatorios", label: "Relatórios" },
   { value: "outro", label: "Outro" },

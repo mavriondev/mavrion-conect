@@ -14,6 +14,7 @@ import {
 
 const ANM_MAPSERVER_URL = "https://geo.anm.gov.br/arcgis/rest/services/SIGMINE/dados_anm/MapServer/0/query";
 const SICAR_WFS = "https://geoserver.car.gov.br/geoserver/sicar/wfs";
+const CAR_PUBLIC_URL = "https://consultapublica.car.gov.br/publico/imoveis/index";
 const IBGE_WFS = "https://geoservicos.ibge.gov.br/geoserver/wfs";
 const ELEVATION_API = "https://api.opentopodata.org/v1/srtm30m";
 const UF_LIST = ["AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO"];
@@ -361,6 +362,35 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
     }
   });
 
+  app.get("/api/geo/sicar-status", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+
+      const testUrl = `${SICAR_WFS}?service=WFS&version=2.0.0&request=GetCapabilities`;
+      const response = await fetch(testUrl, {
+        signal: controller.signal,
+        method: "GET",
+      }).catch(() => null);
+
+      clearTimeout(timeout);
+
+      const online = response?.ok || response?.status === 400;
+      res.json({
+        online,
+        checkedAt: new Date().toISOString(),
+        portalUrl: CAR_PUBLIC_URL,
+      });
+    } catch {
+      res.json({
+        online: false,
+        checkedAt: new Date().toISOString(),
+        portalUrl: CAR_PUBLIC_URL,
+      });
+    }
+  });
+
   app.get("/api/geo/fazendas", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
@@ -443,7 +473,12 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
       throw new Error(lastError);
     } catch (err: any) {
       console.error("Geo fazendas error:", err.message);
-      res.status(502).json({ message: "Erro ao consultar SICAR", detail: "O servidor do SICAR (geoserver.car.gov.br) está instável. Tente novamente em alguns segundos." });
+      res.status(502).json({
+        message: "SICAR indisponível",
+        detail: "O servidor do SICAR (geoserver.car.gov.br) está fora do ar no momento. Use a busca manual por código CAR ou acesse o portal público.",
+        portalUrl: CAR_PUBLIC_URL,
+        sicarOffline: true,
+      });
     }
   });
 

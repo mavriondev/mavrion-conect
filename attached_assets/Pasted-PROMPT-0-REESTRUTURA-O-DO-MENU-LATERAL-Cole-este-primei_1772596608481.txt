@@ -1,0 +1,97 @@
+PROMPT 0 — REESTRUTURAÇÃO DO MENU LATERAL
+Cole este primeiro. Não depende de nenhum outro.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+No arquivo client/src/components/layout-sidebar.tsx, substitua todo o bloco <div className="flex-1 py-3 px-3 overflow-y-auto space-y-0.5"> e seu conteúdo interno (até o </div> que fecha esse bloco) pelo seguinte:
+tsx<div className="flex-1 py-3 px-3 overflow-y-auto space-y-0.5">
+
+  {hasPermission(user, "dashboard") && (
+    <NavLink href="/" icon={LayoutDashboard} label="Dashboard" exact />
+  )}
+
+  {/* ── FLUXO 1: CLIENTES & INVESTIDORES ── */}
+  <SectionLabel label="Clientes & Investidores" />
+  {hasPermission(user, "prospeccao") && (
+    <NavLink href="/prospeccao" icon={Telescope} label="Prospecção CNPJ" />
+  )}
+  {hasPermission(user, "prospeccao") && (
+    <NavLink href="/ma" icon={Handshake} label="M&A — Fusões & Aquisições" />
+  )}
+  {hasPermission(user, "sdr") && (
+    <NavLink href="/sdr" icon={Magnet} label="Fila SDR" />
+  )}
+  {hasPermission(user, "empresas") && (
+    <ExpandableNav href="/empresas" icon={Building2} label="Empresas">
+      <SubLink href="/empresas" icon={Download} label="Todas as Empresas" exact />
+      <SubLink href="/empresas/leads" icon={BadgeCheck} label="Leads Ativas" />
+      <SubLink href="/empresas/desqualificadas" icon={XCircle} label="Desqualificadas" />
+    </ExpandableNav>
+  )}
+  {hasPermission(user, "crm") && (
+    <NavLink href="/crm" icon={KanbanSquare} label="Pipeline de Deals" />
+  )}
+  {hasPermission(user, "propostas") && (
+    <NavLink href="/propostas" icon={FileText} label="Propostas" />
+  )}
+  {hasPermission(user, "propostas") && (
+    <NavLink href="/contratos" icon={FileSignature} label="Contratos" />
+  )}
+  {hasPermission(user, "crm") && (
+    <NavLink href="/portal-admin" icon={Globe} label="Portal Investidor" />
+  )}
+
+  {/* ── FLUXO 2: ATIVOS & OPORTUNIDADES ── */}
+  <SectionLabel label="Ativos & Oportunidades" />
+  {hasPermission(user, "ativos") && (
+    <ExpandableNav href="/ativos" icon={Layers} label="Portfólio de Ativos">
+      <SubLink href="/ativos" icon={Layers} label="Todos os Ativos" exact />
+      <SubLink href="/ativos/tipo/TERRA" icon={TreePine} label="Terras & Fazendas" />
+      <SubLink href="/ativos/tipo/MINA" icon={Pickaxe} label="Mineração" />
+      <SubLink href="/ativos/tipo/NEGOCIO" icon={Briefcase} label="Negócios M&A" />
+      <SubLink href="/ativos/tipo/FII_CRI" icon={Home} label="FII / CRI / Imóveis" />
+      <SubLink href="/ativos/tipo/DESENVOLVIMENTO" icon={Factory} label="Desenvolvimento" />
+      <SubLink href="/ativos/tipo/AGRO" icon={Wheat} label="Agronegócio" />
+    </ExpandableNav>
+  )}
+  {hasPermission(user, "ativos") && (
+    <NavLink href="/geo-rural" icon={TreePine} label="Prospecção Rural (SICAR)" status={serviceStatus?.sicar} />
+  )}
+  {hasPermission(user, "ativos") && (
+    <NavLink href="/anm" icon={Map} label="Portal ANM" status={serviceStatus?.anm} />
+  )}
+  {hasPermission(user, "matching") && (
+    <NavLink href="/matching" icon={Target} label="Matching" />
+  )}
+
+  {/* ── RESULTADOS ── */}
+  <SectionLabel label="Resultados" />
+  <NavLink href="/relatorios" icon={BarChart3} label="Relatórios" />
+
+  {/* ── SISTEMA — apenas admin/manager ── */}
+  {(user?.role === "admin" || user?.role === "manager") && (
+    <>
+      <SectionLabel label="Sistema" />
+      {hasPermission(user, "connectors") && (
+        <NavLink href="/connectors" icon={Plug} label="Connectors" />
+      )}
+      {hasPermission(user, "users") && (
+        <NavLink href="/users" icon={Users} label="Usuários" />
+      )}
+      <NavLink href="/error-reports" icon={Bug} label="Erros & Relatórios" />
+      <NavLink href="/configuracoes" icon={Settings2} label="Configurações" />
+    </>
+  )}
+
+  {/* Manual — visível para todos */}
+  <SectionLabel label="Ajuda" />
+  <NavLink href="/manual" icon={BookOpen} label="Manual do Sistema" />
+
+</div>
+Não altere nada fora desse bloco. Não remova nenhum import existente. Salve o arquivo.
+O que foi mudado:
+
+Menu organizado em 2 fluxos claros: "Clientes & Investidores" e "Ativos & Oportunidades"
+"Arquitetura" removida do menu (é documentação de desenvolvimento, não funcionalidade)
+"Erros & Relatórios", "Connectors" e "Usuários" movidos para seção "Sistema" visível apenas para admin e manager
+CAF removido do menu (módulo desativado temporariamente)
+M&A movido para "Clientes & Investidores" onde faz sentido
+Matching movido para "Ativos & Oportunidades" onde é usado

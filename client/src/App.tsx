@@ -25,6 +25,8 @@ import AtivoDetalhePage from "@/pages/ativo-detalhe";
 import RelatoriosPage from "@/pages/relatorios";
 import AnmPage from "@/pages/anm";
 import GeoRuralPage from "@/pages/geo-rural";
+import AnaliseAgroPage from "@/pages/analise-agro";
+import InteligenciaAgroPage from "@/pages/inteligencia-agro";
 import ManualPage from "@/pages/manual";
 import ContratosPage from "@/pages/contratos";
 import PortalAdminPage from "@/pages/portal-admin";
@@ -33,31 +35,11 @@ import LandingPagePublic from "@/pages/landing-page";
 import ErrorReportsPage from "@/pages/error-reports";
 import ArquiteturaPage from "@/pages/arquitetura";
 import MADealsPage from "@/pages/ma-deals";
+import MapaConexoesPage from "@/pages/mapa-conexoes";
 import Sidebar, { SidebarProvider, MobileTopBar } from "@/components/layout-sidebar";
 import TopBar from "@/components/top-bar";
 import { useErrorCapture } from "@/hooks/use-error-capture";
 
-import NorionLoginPage from "@/pages/norion/login";
-import NorionDashboardPage from "@/pages/norion/dashboard";
-import NorionOperacoesPage from "@/pages/norion/operacoes";
-import NorionEmpresasPage from "@/pages/norion/empresas";
-import NorionEmpresaNovaPage from "@/pages/norion/empresa-nova";
-import NorionEmpresaDetalhePage from "@/pages/norion/empresa-detalhe";
-import NorionSdrPage from "@/pages/norion/sdr";
-import NorionFundosParceirosPage from "@/pages/norion/fundos-parceiros";
-import NorionFundoNovoPage from "@/pages/norion/fundo-novo";
-import NorionFundoDetalhePage from "@/pages/norion/fundo-detalhe";
-import NorionConsultaFundosPage from "@/pages/norion/consulta-fundos";
-import NorionRelatorioPage from "@/pages/norion/relatorio";
-import NorionConfiguracoesPage from "@/pages/norion/configuracoes";
-import NorionCafPage from "@/pages/norion/caf";
-import NorionOperacaoNovaPage from "@/pages/norion/operacao-nova";
-import NorionOperacaoDetalhePage from "@/pages/norion/operacao-detalhe";
-import NorionPortalClientesAdminPage from "@/pages/norion/portal-clientes-admin";
-import NorionSidebar, { NorionSidebarProvider, NorionMobileTopBar } from "@/components/norion-layout";
-import PortalClienteLogin from "@/pages/norion/portal-cliente";
-import PortalClienteDashboard from "@/pages/norion/portal-cliente-dashboard";
-import PortalClienteFormulario from "@/pages/norion/portal-cliente-formulario";
 
 function PrivateRoute({ component: Component, ...rest }: any) {
   const { user, isLoading } = useAuth();
@@ -93,38 +75,6 @@ function PrivateRoute({ component: Component, ...rest }: any) {
         </main>
       </div>
     </SidebarProvider>
-  );
-}
-
-function NorionPrivateRoute({ component: Component, ...rest }: any) {
-  const { user, isLoading } = useAuth();
-  const [, setLocation] = useLocation();
-
-  useEffect(() => {
-    if (!isLoading && !user) {
-      setLocation("/norion-app/login");
-    }
-  }, [user, isLoading, setLocation]);
-
-  if (isLoading) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-[#0f172a]">
-        <div className="animate-spin h-8 w-8 border-4 border-amber-500 border-t-transparent rounded-full" />
-      </div>
-    );
-  }
-
-  if (!user) return null;
-
-  return (
-    <NorionSidebarProvider>
-      <div className="min-h-screen bg-background">
-        <NorionSidebar />
-        <main className="pt-16">
-          <Component {...rest} />
-        </main>
-      </div>
-    </NorionSidebarProvider>
   );
 }
 
@@ -215,8 +165,12 @@ function Router() {
         {() => <PrivateRoute component={GeoRuralPage} />}
       </Route>
 
-      <Route path="/caf">
-        {() => <PrivateRoute component={NorionCafPage} />}
+      <Route path="/analise-agro">
+        {() => <PrivateRoute component={AnaliseAgroPage} />}
+      </Route>
+
+      <Route path="/inteligencia-agro">
+        {() => <PrivateRoute component={InteligenciaAgroPage} />}
       </Route>
 
       <Route path="/contratos">
@@ -235,73 +189,8 @@ function Router() {
         {() => <PrivateRoute component={MADealsPage} />}
       </Route>
 
-      <Route path="/portal-cliente/formulario" component={PortalClienteFormulario} />
-      <Route path="/portal-cliente/dashboard" component={PortalClienteDashboard} />
-      <Route path="/portal-cliente" component={PortalClienteLogin} />
-
-      <Route path="/norion-app/login" component={NorionLoginPage} />
-
-      <Route path="/norion-app">
-        {() => <NorionPrivateRoute component={NorionDashboardPage} />}
-      </Route>
-
-      <Route path="/norion-app/operacoes/nova">
-        {() => <NorionPrivateRoute component={NorionOperacaoNovaPage} />}
-      </Route>
-
-      <Route path="/norion-app/operacoes/:id">
-        {(params) => <NorionPrivateRoute component={NorionOperacaoDetalhePage} id={params.id} />}
-      </Route>
-
-      <Route path="/norion-app/operacoes">
-        {() => <NorionPrivateRoute component={NorionOperacoesPage} />}
-      </Route>
-
-      <Route path="/norion-app/empresas/nova">
-        {() => <NorionPrivateRoute component={NorionEmpresaNovaPage} />}
-      </Route>
-
-      <Route path="/norion-app/empresas/:id">
-        {(params) => <NorionPrivateRoute component={NorionEmpresaDetalhePage} id={params.id} />}
-      </Route>
-
-      <Route path="/norion-app/empresas">
-        {() => <NorionPrivateRoute component={NorionEmpresasPage} />}
-      </Route>
-      <Route path="/norion-app/caf">
-        {() => <NorionPrivateRoute component={NorionCafPage} />}
-      </Route>
-
-      <Route path="/norion-app/sdr">
-        {() => <NorionPrivateRoute component={NorionSdrPage} />}
-      </Route>
-
-      <Route path="/norion-app/fundos-parceiros/novo">
-        {() => <NorionPrivateRoute component={NorionFundoNovoPage} />}
-      </Route>
-
-      <Route path="/norion-app/fundos-parceiros/:id">
-        {(params) => <NorionPrivateRoute component={NorionFundoDetalhePage} id={params.id} />}
-      </Route>
-
-      <Route path="/norion-app/fundos-parceiros">
-        {() => <NorionPrivateRoute component={NorionFundosParceirosPage} />}
-      </Route>
-
-      <Route path="/norion-app/consulta-fundos">
-        {() => <NorionPrivateRoute component={NorionConsultaFundosPage} />}
-      </Route>
-
-      <Route path="/norion-app/relatorio">
-        {() => <NorionPrivateRoute component={NorionRelatorioPage} />}
-      </Route>
-
-      <Route path="/norion-app/portal-clientes">
-        {() => <NorionPrivateRoute component={NorionPortalClientesAdminPage} />}
-      </Route>
-
-      <Route path="/norion-app/configuracoes">
-        {() => <NorionPrivateRoute component={NorionConfiguracoesPage} />}
+      <Route path="/mapa-conexoes">
+        {() => <PrivateRoute component={MapaConexoesPage} />}
       </Route>
 
       <Route path="/lp/:slug">
