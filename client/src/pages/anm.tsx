@@ -101,7 +101,7 @@ const OPPORTUNITY_SHORTCUTS = [
     icon: X,
     color: "text-purple-600",
     bg: "bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800",
-    filters: { ultEvento: "DESISTENCIA" },
+    filters: { ultEvento: "DESISTÊNCIA" },
   },
 ];
 

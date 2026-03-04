@@ -163,6 +163,7 @@ const EMPTY_FORM = {
   title: "", type: "TERRA", description: "", location: "", municipio: "",
   estado: "", priceAsking: "", areaHa: "", areaUtil: "", matricula: "",
   docsStatus: "", observacoes: "", linkedCompanyId: "",
+  latitude: "", longitude: "", codigoIbge: "",
   statusAtivo: "ativo",
   origemAtivo: "prospeccao_interna",
   ofertanteNome: "",
@@ -207,6 +208,11 @@ export function AtivoFormDialog({
           ofertanteObservacoes: (initial.camposEspecificos as any)?.ofertanteObservacoes || "",
           exclusividadeAte: (initial.camposEspecificos as any)?.exclusividadeAte || "",
           exclusividadeEmpresa: (initial.camposEspecificos as any)?.exclusividadeEmpresa || "",
+          latitude: (initial.camposEspecificos as any)?.latitude != null
+            ? String((initial.camposEspecificos as any).latitude) : "",
+          longitude: (initial.camposEspecificos as any)?.longitude != null
+            ? String((initial.camposEspecificos as any).longitude) : "",
+          codigoIbge: (initial.camposEspecificos as any)?.codigoIbge || "",
           camposEspecificos: (initial.camposEspecificos as any) || {},
         }
       : { ...EMPTY_FORM }
@@ -271,6 +277,9 @@ export function AtivoFormDialog({
           } : {}),
           exclusividadeAte: form.exclusividadeAte || null,
           exclusividadeEmpresa: form.exclusividadeEmpresa || null,
+          latitude:   form.latitude   ? parseFloat(form.latitude)  : null,
+          longitude:  form.longitude  ? parseFloat(form.longitude) : null,
+          codigoIbge: form.codigoIbge || null,
         },
       };
       if (isEdit) {
@@ -347,6 +356,74 @@ export function AtivoFormDialog({
               <Input value={form.location} onChange={e => set("location", e.target.value)} placeholder="ex: Norte de Mato Grosso" />
             </div>
           </div>
+
+          {(form.type === "TERRA" || form.type === "AGRO") && (
+            <div className="space-y-3 p-4 rounded-lg border border-dashed border-green-300 bg-green-50/30 dark:bg-green-900/10">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold text-green-700 dark:text-green-400 flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5" />
+                  Coordenadas GPS — habilita análise Embrapa
+                </Label>
+                {form.latitude && form.longitude && (
+                  <a
+                    href={`https://maps.google.com/?q=${form.latitude},${form.longitude}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-primary hover:underline flex items-center gap-1"
+                    data-testid="link-ver-mapa"
+                  >
+                    <MapPin className="w-3 h-3" /> Ver no mapa
+                  </a>
+                )}
+              </div>
+              <div className="grid sm:grid-cols-3 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Latitude</Label>
+                  <Input
+                    type="number"
+                    step="0.000001"
+                    value={form.latitude}
+                    onChange={e => set("latitude", e.target.value)}
+                    placeholder="ex: -12.5431"
+                    data-testid="input-latitude"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Longitude</Label>
+                  <Input
+                    type="number"
+                    step="0.000001"
+                    value={form.longitude}
+                    onChange={e => set("longitude", e.target.value)}
+                    placeholder="ex: -55.7213"
+                    data-testid="input-longitude"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Código IBGE do município</Label>
+                  <Input
+                    value={form.codigoIbge}
+                    onChange={e => set("codigoIbge", e.target.value)}
+                    placeholder="ex: 5107925"
+                    maxLength={7}
+                    data-testid="input-codigo-ibge"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                💡 Informe as coordenadas do centro da propriedade. O código IBGE tem 7 dígitos —
+                consulte em{" "}
+                <a
+                  href="https://www.ibge.gov.br/explica/codigos-dos-municipios.php"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  ibge.gov.br
+                </a>
+              </p>
+            </div>
+          )}
 
           {/* Áreas */}
           <div className="grid sm:grid-cols-3 gap-4">
@@ -573,13 +650,26 @@ export function AtivoFormDialog({
 
 // ── Asset Card ──────────────────────────────────────────────────────────────
 function AtivoCard({ ativo, onEdit, onDelete }: { ativo: any; onEdit: () => void; onDelete: () => void }) {
+  const [, navigate] = useLocation();
   const tipo = TIPO_CONFIG[ativo.type] || TIPO_CONFIG.TERRA;
   const Icon = tipo.icon;
 
   return (
     <Card
       data-testid={`card-ativo-${ativo.id}`}
-      className="hover:border-primary/30 hover:shadow-md transition-all group"
+      className="hover:border-primary/30 hover:shadow-md transition-all group cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+      tabIndex={0}
+      role="link"
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest("button, a, [role='menuitem']")) return;
+        navigate(`/ativos/${ativo.id}`);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          navigate(`/ativos/${ativo.id}`);
+        }
+      }}
     >
       <CardContent className="p-4">
         <div className="flex items-start gap-3">
@@ -628,24 +718,7 @@ function AtivoCard({ ativo, onEdit, onDelete }: { ativo: any; onEdit: () => void
                   );
                 })()}
               </div>
-              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                <Button
-                  size="icon" variant="ghost"
-                  className="h-7 w-7 text-muted-foreground hover:text-primary"
-                  onClick={onEdit}
-                  data-testid={`button-edit-ativo-${ativo.id}`}
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                </Button>
-                <Button
-                  size="icon" variant="ghost"
-                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                  onClick={onDelete}
-                  data-testid={`button-delete-ativo-${ativo.id}`}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </Button>
-              </div>
+              <div className="shrink-0" />
             </div>
 
             {/* Location */}
@@ -748,13 +821,31 @@ function AtivoCard({ ativo, onEdit, onDelete }: { ativo: any; onEdit: () => void
               )}
             </div>
 
-            {/* View detail link */}
-            <Link
-              href={`/ativos/${ativo.id}`}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors mt-2"
-            >
-              Ver detalhes <ChevronRight className="w-3 h-3" />
-            </Link>
+            {/* View detail button */}
+            <div className="flex items-center justify-between gap-2 mt-3 pt-2.5 border-t border-border/50">
+              <Button variant="secondary" size="sm" asChild data-testid={`button-ver-detalhes-${ativo.id}`}>
+                <Link href={`/ativos/${ativo.id}`}>
+                  <Eye className="w-3.5 h-3.5 mr-1.5" />
+                  Ver detalhes
+                </Link>
+              </Button>
+              <div className="flex gap-1">
+                <Button
+                  size="icon" variant="ghost"
+                  onClick={onEdit}
+                  data-testid={`button-edit-ativo-card-${ativo.id}`}
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </Button>
+                <Button
+                  size="icon" variant="ghost"
+                  onClick={onDelete}
+                  data-testid={`button-delete-ativo-card-${ativo.id}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       </CardContent>

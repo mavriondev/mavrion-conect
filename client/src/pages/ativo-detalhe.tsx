@@ -16,7 +16,9 @@ import {
   TreePine, Pickaxe, Briefcase, Home, Wheat, Factory, Link2,
   Tag, MessageSquare, Zap, Search, Leaf, Thermometer, Droplets,
   FlaskConical, RefreshCw, Upload, ExternalLink, Paperclip, X as XIcon,
+  Filter, ChevronRight,
 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -279,6 +281,12 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
   const [compradores, setCompradores] = useState<any[]>([]);
   const [totalEncontrados, setTotalEncontrados] = useState<number | null>(null);
   const [buscaRealizada, setBuscaRealizada] = useState(false);
+  const [primaryCount, setPrimaryCount] = useState(0);
+  const [secondaryCount, setSecondaryCount] = useState(0);
+  const [showFiltros, setShowFiltros] = useState(false);
+  const [filtroPorte, setFiltroPorte] = useState("auto");
+  const [filtroEstado, setFiltroEstado] = useState("auto");
+  const [ocultarCrm, setOcultarCrm] = useState(false);
 
   const [enriquecendo, setEnriquecendo] = useState(false);
 
@@ -308,12 +316,22 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
     try {
       const params = new URLSearchParams({ tipo: ativo.type });
       if (ativo.estado) params.set("estado", ativo.estado);
-      const campos = (ativo.camposEspecificos as any) || {};
-      if (ativo.type === "MINA" && campos.substancia) params.set("substancia", campos.substancia);
+      if (ativo.priceAsking) params.set("preco", String(ativo.priceAsking));
+      if (ativo.type === "MINA") {
+        const campos = (ativo.camposEspecificos as any) || {};
+        const attrs  = (ativo.attributesJson as any) || {};
+        const sub = campos.substancia || attrs.anmSubstancia || campos.anmSubstancia;
+        if (sub) params.set("substancia", sub);
+      }
+      if (filtroPorte  !== "auto") params.set("porteOverride",  filtroPorte);
+      if (filtroEstado !== "auto") params.set("estadoOverride", filtroEstado);
+      if (ocultarCrm)              params.set("ocultarCrm",     "true");
       const res = await apiRequest("GET", `/api/prospeccao/reversa?${params.toString()}`);
       const data = await res.json();
       setCompradores(data.results || []);
       setTotalEncontrados(data.count ?? null);
+      setPrimaryCount(data.primaryCount ?? 0);
+      setSecondaryCount(data.secondaryCount ?? 0);
       setBuscaRealizada(true);
     } catch {
       toast({ title: "Erro ao buscar compradores", variant: "destructive" });
@@ -759,14 +777,82 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
               </CardTitle>
               <p className="text-xs text-muted-foreground mt-1">
                 Empresas compradoras compatíveis com este ativo via CNPJA
-                {ativo.estado ? ` em ${ativo.estado}` : ""}.
+                {ativo.estado ? ` — ${ativo.estado}` : ""}.
               </p>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors"
+                  onClick={() => setShowFiltros(f => !f)}
+                  data-testid="button-toggle-filtros"
+                >
+                  <Filter className="w-3.5 h-3.5" />
+                  Ajustar filtros
+                  <ChevronRight className={cn("w-3 h-3 transition-transform", showFiltros && "rotate-90")} />
+                </button>
+
+                {showFiltros && (
+                  <div className="flex flex-wrap gap-2 p-3 rounded-lg bg-muted/30 border">
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-muted-foreground font-medium uppercase">Porte mínimo</p>
+                      <Select value={filtroPorte} onValueChange={setFiltroPorte}>
+                        <SelectTrigger className="h-7 text-xs w-36" data-testid="select-porte">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auto">Automático</SelectItem>
+                          <SelectItem value="all">Todos os portes</SelectItem>
+                          <SelectItem value="medio">Médio ou maior</SelectItem>
+                          <SelectItem value="grande">Apenas grande</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-muted-foreground font-medium uppercase">Estado</p>
+                      <Select value={filtroEstado} onValueChange={setFiltroEstado}>
+                        <SelectTrigger className="h-7 text-xs w-40" data-testid="select-estado">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auto">Automático</SelectItem>
+                          <SelectItem value="all">Todo o Brasil</SelectItem>
+                          {["AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG",
+                            "MS","MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR",
+                            "RS","SC","SE","SP","TO"].map(uf => (
+                            <SelectItem key={uf} value={uf}>{uf}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1 flex flex-col justify-end">
+                      <label className="flex items-center gap-2 cursor-pointer h-7">
+                        <input
+                          type="checkbox"
+                          checked={ocultarCrm}
+                          onChange={e => setOcultarCrm(e.target.checked)}
+                          className="rounded border-muted-foreground/30 w-3.5 h-3.5"
+                          data-testid="checkbox-ocultar-crm"
+                        />
+                        <span className="text-xs">Ocultar já no CRM</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {!buscaRealizada ? (
                 <div className="text-center py-8 space-y-3">
                   <p className="text-sm text-muted-foreground">Nenhuma busca realizada ainda.</p>
-                  <Button onClick={buscarCompradores} disabled={buscandoCompradores} className="gap-2" data-testid="button-buscar-compradores">
+                  <Button
+                    onClick={buscarCompradores}
+                    disabled={buscandoCompradores}
+                    className="gap-2"
+                    data-testid="button-buscar-compradores"
+                  >
                     {buscandoCompradores
                       ? <><Loader2 className="w-4 h-4 animate-spin" /> Buscando...</>
                       : <><Search className="w-4 h-4" /> Buscar compradores compatíveis</>}
@@ -774,42 +860,101 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs text-muted-foreground" data-testid="text-compradores-count">
-                      {totalEncontrados !== null
-                        ? `${totalEncontrados.toLocaleString("pt-BR")} encontradas — exibindo ${compradores.length}`
-                        : `${compradores.length} encontradas`}
-                    </p>
-                    <Button variant="outline" size="sm" onClick={buscarCompradores} disabled={buscandoCompradores} className="h-7 text-xs gap-1" data-testid="button-refazer-busca">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="space-y-0.5">
+                      <p className="text-xs text-muted-foreground" data-testid="text-compradores-count">
+                        {compradores.length} empresa{compradores.length !== 1 ? "s" : ""} encontrada{compradores.length !== 1 ? "s" : ""}
+                      </p>
+                      {(primaryCount > 0 || secondaryCount > 0) && (
+                        <div className="flex gap-3 text-[11px]">
+                          {primaryCount > 0 && (
+                            <span className="flex items-center gap-1 text-green-700">
+                              <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
+                              {primaryCount} compradores diretos
+                            </span>
+                          )}
+                          {secondaryCount > 0 && (
+                            <span className="flex items-center gap-1 text-blue-700">
+                              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block" />
+                              {secondaryCount} fundos e tradings
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <Button
+                      variant="outline" size="sm"
+                      onClick={buscarCompradores}
+                      disabled={buscandoCompradores}
+                      className="h-7 text-xs gap-1"
+                      data-testid="button-refazer-busca"
+                    >
                       {buscandoCompradores ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Refazer
                     </Button>
                   </div>
+
                   {compradores.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-6">Nenhuma empresa encontrada.</p>
+                    <p className="text-sm text-muted-foreground text-center py-6">
+                      Nenhuma empresa encontrada. Tente ajustar os filtros.
+                    </p>
                   ) : (
                     compradores.map(c => (
-                      <div key={c.taxId} className="flex items-start justify-between gap-3 p-3 rounded-lg border hover:border-primary/30 transition-colors" data-testid={`card-comprador-${c.taxId}`}>
+                      <div
+                        key={c.taxId}
+                        className="flex items-start justify-between gap-3 p-3 rounded-lg border hover:border-primary/30 transition-colors"
+                        data-testid={`card-comprador-${c.taxId}`}
+                      >
                         <div className="flex-1 min-w-0 space-y-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <p className="font-medium text-sm truncate">{c.tradeName || c.legalName}</p>
                             {c.alreadySaved && (
-                              <Badge variant="outline" className="text-xs bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-700">No CRM</Badge>
+                              <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
+                                No CRM
+                              </Badge>
+                            )}
+                            {c.camada === 1 && (
+                              <Badge variant="outline" className="text-[10px] bg-green-50 text-green-700 border-green-200">
+                                Comprador direto
+                              </Badge>
+                            )}
+                            {c.camada === 2 && (
+                              <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">
+                                Fundo / trading
+                              </Badge>
+                            )}
+                            {c.camada === 3 && (
+                              <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
+                                Relacionado
+                              </Badge>
                             )}
                           </div>
                           <p className="text-xs text-muted-foreground font-mono">{c.taxId}</p>
                           <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                            {c.cnaePrincipal && <span>{c.cnaePrincipal}</span>}
-                            {(c.city || c.state) && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{[c.city, c.state].filter(Boolean).join("/")}</span>}
+                            {c.cnaePrincipal && <span className="truncate max-w-[200px]">{c.cnaePrincipal}</span>}
+                            {(c.city || c.state) && (
+                              <span className="flex items-center gap-1">
+                                <MapPin className="w-3 h-3" />
+                                {[c.city, c.state].filter(Boolean).join("/")}
+                              </span>
+                            )}
                             {c.porte && <span>{c.porte}</span>}
                           </div>
                         </div>
                         <div className="shrink-0">
                           {!c.alreadySaved ? (
-                            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => importarComprador(c)} data-testid={`button-importar-${c.taxId}`}>
+                            <Button
+                              size="sm" variant="outline" className="h-7 text-xs"
+                              onClick={() => importarComprador(c)}
+                              data-testid={`button-importar-${c.taxId}`}
+                            >
                               Importar
                             </Button>
                           ) : (
-                            <Button size="sm" variant="ghost" className="h-7 text-xs text-primary" onClick={() => navigate("/empresas")} data-testid={`button-ver-crm-${c.taxId}`}>
+                            <Button
+                              size="sm" variant="ghost" className="h-7 text-xs text-primary"
+                              onClick={() => navigate("/empresas")}
+                              data-testid={`button-ver-crm-${c.taxId}`}
+                            >
                               Ver no CRM
                             </Button>
                           )}

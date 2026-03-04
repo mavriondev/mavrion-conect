@@ -1,13 +1,9 @@
-PROMPT A — SERVIÇO EMBRAPA (BACKEND)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Crie o arquivo server/lib/embrapa.ts com o seguinte conteúdo:
-typescriptimport { db } from "../db";
+import { db } from "../db";
 import { sql } from "drizzle-orm";
 
 const TOKEN_URL = "https://api.cnptia.embrapa.br/token";
 const BASE_URL  = "https://api.cnptia.embrapa.br";
 
-// ── Autenticação OAuth2 Client Credentials ────────────────
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
 async function getToken(): Promise<string> {
@@ -55,7 +51,6 @@ async function get(path: string): Promise<any> {
   return res.json();
 }
 
-// ── Cache por município (30 dias) ─────────────────────────
 async function getCached(namespace: string, key: string): Promise<any | null> {
   try {
     const rows = await db.execute(
@@ -67,7 +62,7 @@ async function getCached(namespace: string, key: string): Promise<any | null> {
     if (rows.rows.length > 0) {
       return JSON.parse(rows.rows[0].value as string);
     }
-  } catch { /* tabela pode não existir ainda */ }
+  } catch { }
   return null;
 }
 
@@ -79,15 +74,9 @@ async function setCached(namespace: string, key: string, value: any): Promise<vo
           ON CONFLICT (namespace, key) DO UPDATE
           SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at`
     );
-  } catch { /* ignora erro de cache */ }
+  } catch { }
 }
 
-// ── APIs Embrapa ──────────────────────────────────────────
-
-/**
- * Agritec — Zoneamento agrícola por município (FREEMIUM)
- * Retorna culturas aptas e época de plantio
- */
 export async function getZoneamentoAgricola(codigoIbge: string): Promise<{
   culturas: Array<{ nome: string; risco: string; epocaPlantio: string }>;
   fonte: "cache" | "api";
@@ -113,9 +102,6 @@ export async function getZoneamentoAgricola(codigoIbge: string): Promise<{
   }
 }
 
-/**
- * SmartSolos — Classificação do solo por coordenadas (FREE)
- */
 export async function getClassificacaoSolo(lat: number, lon: number): Promise<{
   classificacao: string;
   aptidao: string;
@@ -141,9 +127,6 @@ export async function getClassificacaoSolo(lat: number, lon: number): Promise<{
   }
 }
 
-/**
- * ClimAPI — Dados climáticos por coordenadas (FREEMIUM)
- */
 export async function getDadosClimaticos(lat: number, lon: number): Promise<{
   precipitacaoMedia: number;
   temperaturaMedia: number;
@@ -155,7 +138,6 @@ export async function getDadosClimaticos(lat: number, lon: number): Promise<{
   if (cached) return { ...cached, fonte: "cache" };
 
   try {
-    // Busca precipitação
     const dataPrec = await get(
       `/climapi/v1/ncep-gfs/prec/${new Date().toISOString().split("T")[0]}/${lon}/${lat}`
     );
@@ -172,9 +154,6 @@ export async function getDadosClimaticos(lat: number, lon: number): Promise<{
   }
 }
 
-/**
- * SATVeg — Índice de vegetação NDVI por coordenadas (FREEMIUM)
- */
 export async function getNDVI(lat: number, lon: number): Promise<{
   ndvi: number;
   classificacao: string;
@@ -207,9 +186,6 @@ export async function getNDVI(lat: number, lon: number): Promise<{
   }
 }
 
-/**
- * AGROFIT — Culturas e defensivos por cultura (FREE)
- */
 export async function getCulturasAgrofit(cultura: string): Promise<{
   defensivosRegistrados: number;
   fonte: "cache" | "api";
@@ -231,10 +207,6 @@ export async function getCulturasAgrofit(cultura: string): Promise<{
   }
 }
 
-/**
- * Função principal — enriquece um ativo com todos os dados disponíveis
- * Chamada quando ativo TERRA ou AGRO é salvo com coordenadas ou município
- */
 export async function enriquecerAtivoEmbrapa(params: {
   codigoIbge?: string;
   lat?: number;
@@ -269,26 +241,3 @@ export async function enriquecerAtivoEmbrapa(params: {
     enriquecidoEm: new Date().toISOString(),
   };
 }
-Agora crie a tabela de cache. No terminal do Replit, execute:
-bashnpx tsx -e "
-import { db } from './server/db';
-import { sql } from 'drizzle-orm';
-
-async function run() {
-  await db.execute(sql\`
-    CREATE TABLE IF NOT EXISTS cache_embrapa (
-      id SERIAL PRIMARY KEY,
-      namespace VARCHAR(50) NOT NULL,
-      key VARCHAR(200) NOT NULL,
-      value TEXT NOT NULL,
-      expires_at TIMESTAMP NOT NULL,
-      created_at TIMESTAMP DEFAULT NOW(),
-      UNIQUE(namespace, key)
-    )
-  \`);
-  console.log('✓ Tabela cache_embrapa criada');
-  process.exit(0);
-}
-run();
-"
-Salve o arquivo.

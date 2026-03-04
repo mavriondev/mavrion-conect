@@ -1,8 +1,4 @@
-PROMPT B — ROTAS DE DOCUMENTOS (BACKEND)
-Cole após o Prompt A terminar.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Crie o arquivo server/routes/documents.ts com o seguinte conteúdo:
-typescriptimport type { Express } from "express";
+import type { Express } from "express";
 import multer from "multer";
 import {
   getOrCreateAtivoFolder,
@@ -13,10 +9,9 @@ import {
   deletarArquivo,
 } from "../lib/google-drive";
 
-// Multer em memória — arquivo vai direto pro Drive, não fica no servidor
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB máximo
+  limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = [
       "application/pdf",
@@ -37,9 +32,6 @@ const upload = multer({
 
 export function registerDocumentRoutes(app: Express) {
 
-  // ── ATIVOS ──
-
-  // Listar documentos de um ativo
   app.get("/api/documents/ativo/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
@@ -55,7 +47,6 @@ export function registerDocumentRoutes(app: Express) {
     }
   });
 
-  // Upload de documento para um ativo
   app.post("/api/documents/ativo/:id", upload.single("arquivo"), async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
@@ -79,9 +70,6 @@ export function registerDocumentRoutes(app: Express) {
     }
   });
 
-  // ── EMPRESAS ──
-
-  // Listar documentos de uma empresa
   app.get("/api/documents/empresa/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
@@ -97,7 +85,6 @@ export function registerDocumentRoutes(app: Express) {
     }
   });
 
-  // Upload de documento para uma empresa
   app.post("/api/documents/empresa/:id", upload.single("arquivo"), async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
@@ -121,9 +108,6 @@ export function registerDocumentRoutes(app: Express) {
     }
   });
 
-  // ── DEALS ──
-
-  // Listar documentos de um deal
   app.get("/api/documents/deal/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
@@ -139,7 +123,6 @@ export function registerDocumentRoutes(app: Express) {
     }
   });
 
-  // Upload de documento para um deal
   app.post("/api/documents/deal/:id", upload.single("arquivo"), async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
@@ -163,7 +146,6 @@ export function registerDocumentRoutes(app: Express) {
     }
   });
 
-  // ── DELETE (qualquer arquivo) ──
   app.delete("/api/documents/:fileId", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
@@ -175,8 +157,3 @@ export function registerDocumentRoutes(app: Express) {
     }
   });
 }
-Agora registre as rotas. No arquivo server/index.ts (ou onde as outras rotas são registradas), adicione:
-typescriptimport { registerDocumentRoutes } from "./routes/documents";
-// ...dentro da função de setup:
-registerDocumentRoutes(app);
-Salve os arquivos.

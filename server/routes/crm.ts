@@ -12,7 +12,8 @@ import { getOrgId } from "../lib/tenant";
 export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDatabase<any>) {
   app.get(api.crm.deals.list.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
-    const dealsList = await storage.getDeals(req.query.pipelineType as string | undefined);
+    const user = req.user as any;
+    const dealsList = await storage.getDeals(req.query.pipelineType as string | undefined, user?.orgId);
     const commentCounts = await db
       .select({ dealId: dealComments.dealId, count: sql<number>`count(*)::int` })
       .from(dealComments)
@@ -174,7 +175,8 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const id = Number(req.params.id);
-      const allDeals = await storage.getDeals();
+      const user2 = req.user as any;
+      const allDeals = await storage.getDeals(undefined, user2?.orgId);
       const stageDeals = allDeals.filter(d => d.stageId === id);
       if (stageDeals.length > 0) return res.status(409).json({ message: "Remova todos os deals desta coluna antes de excluí-la" });
       await storage.deletePipelineStage(id);

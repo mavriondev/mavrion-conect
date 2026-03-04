@@ -55,6 +55,7 @@ const TIPO_ATIVO: Record<string, { label: string; color: string }> = {
   FII_CRI:         { label: "FII/CRI",   color: "text-purple-600 bg-purple-50 dark:bg-purple-900/20" },
   DESENVOLVIMENTO: { label: "Desenv.",   color: "text-pink-600 bg-pink-50 dark:bg-pink-900/20" },
   AGRO:            { label: "Agro",      color: "text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20" },
+  ENERGIA:         { label: "Energia",   color: "text-cyan-600 bg-cyan-50 dark:bg-cyan-900/20" },
 };
 
 function formatBRL(value: number): string {
@@ -400,24 +401,36 @@ export default function Dashboard() {
         {Object.keys(assetCounts).length > 0 && (
           <Card className="border-border/50 shadow-sm">
             <CardHeader className="flex flex-row items-center justify-between pb-3">
-              <CardTitle className="text-sm font-semibold">Portfólio de Ativos por Tipo</CardTitle>
+              <CardTitle className="text-sm font-semibold">Composição do Portfólio</CardTitle>
               <Link href="/ativos" className="text-xs text-primary hover:underline flex items-center gap-1">
                 Gerenciar <ArrowRight className="w-3 h-3" />
               </Link>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-3 sm:grid-cols-3 gap-3">
+              <div className="flex flex-wrap gap-3">
                 {Object.entries(assetCounts).map(([type, cnt]: [string, any]) => {
                   const cfg = TIPO_ATIVO[type] || { label: type, color: "text-muted-foreground bg-muted" };
+                  const total = (assets as any[]).length;
+                  const pct = Math.round(((cnt as number) / total) * 100);
                   return (
                     <Link key={type} href={`/ativos/tipo/${type}`}>
-                      <div className={cn("rounded-xl p-3 text-center cursor-pointer hover:opacity-80 transition-opacity", cfg.color)} data-testid={`asset-type-${type}`}>
-                        <p className="text-2xl font-bold">{cnt}</p>
-                        <p className="text-xs font-medium mt-0.5">{cfg.label}</p>
+                      <div className={cn("flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer hover:opacity-80 transition-opacity", cfg.color)} data-testid={`asset-type-${type}`}>
+                        <span className="text-sm font-bold">{cnt}</span>
+                        <span className="text-xs font-medium">{cfg.label}</span>
+                        <span className="text-xs opacity-60">{pct}%</span>
                       </div>
                     </Link>
                   );
                 })}
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-muted/50 ml-auto">
+                  <span className="text-sm font-bold">{(assets as any[]).length}</span>
+                  <span className="text-xs text-muted-foreground">total</span>
+                  {(assets as any[]).length > 0 && (
+                    <span className="text-xs font-semibold text-emerald-600 ml-1">
+                      R$ {formatBRL((assets as any[]).reduce((s: number, a: any) => s + (a.priceAsking || 0), 0))}
+                    </span>
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>

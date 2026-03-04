@@ -47,7 +47,7 @@ export interface IStorage {
   getLeadsQueue(): Promise<(Lead & { company: Company })[]>;
   updateLead(id: number, status: string): Promise<Lead>;
 
-  getDeals(pipelineType?: string): Promise<(Deal & { company: Company | null })[]>;
+  getDeals(pipelineType?: string, orgId?: number): Promise<(Deal & { company: Company | null })[]>;
   getDeal(id: number): Promise<(Deal & { company: Company | null }) | undefined>;
   createDeal(deal: InsertDeal): Promise<Deal>;
   updateDeal(id: number, deal: Partial<InsertDeal>): Promise<Deal>;
@@ -61,7 +61,7 @@ export interface IStorage {
   createDealComment(comment: InsertDealComment): Promise<DealComment>;
   deleteDealComment(id: number): Promise<void>;
 
-  getAssets(): Promise<Asset[]>;
+  getAssets(orgId?: number): Promise<Asset[]>;
   getAsset(id: number): Promise<Asset | undefined>;
   createAsset(asset: InsertAsset): Promise<Asset>;
   updateAsset(id: number, data: Partial<InsertAsset>): Promise<Asset>;
@@ -219,13 +219,18 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async getDeals(pipelineType?: string): Promise<(Deal & { company: Company | null })[]> {
+  async getDeals(pipelineType?: string, orgId?: number): Promise<(Deal & { company: Company | null })[]> {
+    const conditions: any[] = [];
+    if (pipelineType) conditions.push(eq(deals.pipelineType, pipelineType));
+    if (orgId) conditions.push(eq(deals.orgId, orgId));
     let query = db.select({ deal: deals, company: companies })
       .from(deals)
       .leftJoin(companies, eq(deals.companyId, companies.id))
       .orderBy(desc(deals.createdAt));
-    if (pipelineType) {
-      query = query.where(eq(deals.pipelineType, pipelineType)) as any;
+    if (conditions.length === 1) {
+      query = query.where(conditions[0]) as any;
+    } else if (conditions.length === 2) {
+      query = query.where(and(conditions[0], conditions[1])) as any;
     }
     const rows = await query;
     return rows.map(r => ({ ...r.deal, company: r.company }));
@@ -251,6 +256,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteDeal(id: number): Promise<void> {
+    await db.delete(matchSuggestions).where(eq(matchSuggestions.dealId, id));
     await db.delete(dealComments).where(eq(dealComments.dealId, id));
     await db.delete(deals).where(eq(deals.id, id));
   }
@@ -286,7 +292,12 @@ export class DatabaseStorage implements IStorage {
     await db.delete(dealComments).where(eq(dealComments.id, id));
   }
 
-  async getAssets(): Promise<Asset[]> {
+  async getAssets(orgId?: number): Promise<Asset[]> {
+    if (orgId) {
+      return await db.select().from(assets)
+        .where(eq(assets.orgId, orgId))
+        .orderBy(desc(assets.createdAt));
+    }
     return await db.select().from(assets).orderBy(desc(assets.createdAt));
   }
 

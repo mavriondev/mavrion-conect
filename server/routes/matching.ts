@@ -189,13 +189,20 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
           const penalties: string[] = [];
 
           const investorTypes = (investor.assetTypes as string[]) || [];
-          if (investorTypes.length === 0) {
-            score += 20;
-            reasons.push("Investidor aceita todos os tipos de ativo");
+          const perfilCompleto = investorTypes.length > 0 ||
+            investor.ticketMin != null || investor.ticketMax != null ||
+            ((investor.regionsOfInterest as string[]) || []).length > 0;
+
+          if (!perfilCompleto) {
+            penalties.push("Perfil do investidor incompleto — sem critérios definidos");
+          } else if (investorTypes.length === 0) {
+            score += 15;
+            reasons.push("Investidor aceita qualquer tipo de ativo");
           } else if (investorTypes.includes(asset.type)) {
-            score += 35;
+            score += 40;
             reasons.push(`Tipo "${asset.type}" está nas preferências do investidor`);
           } else {
+            score -= 20;
             penalties.push(`Tipo "${asset.type}" não está nas preferências do investidor`);
           }
 
@@ -251,6 +258,8 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
             score -= 5;
             penalties.push("Documentação pendente");
           }
+
+          if (!perfilCompleto) continue;
 
           if (score >= 40 && penalties.length <= 1) {
             await db.insert(matchSuggestions).values({

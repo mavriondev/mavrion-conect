@@ -192,6 +192,8 @@ export const assets = pgTable("assets", {
   geoScore: integer("geo_score"),
   geoAnalyzedAt: timestamp("geo_analyzed_at"),
   statusAtivo: text("status_ativo").default("ativo"),
+  exclusivoAte: timestamp("exclusivo_ate"),
+  exclusividadeEmpresaId: integer("exclusividade_empresa_id").references(() => companies.id),
   activityLog: jsonb("activity_log").default([]),
   camposEspecificos: jsonb("campos_especificos").default({}),
   createdAt: timestamp("created_at").defaultNow(),
