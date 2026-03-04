@@ -1,0 +1,420 @@
+# PROMPT — PROSPECÇÃO REVERSA POR ATIVO
+# Implementa /api/prospeccao/reversa com busca em camadas por tipo e substância
+# Cole este prompt no Replit AI
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo `server/routes/prospeccao.ts`, adicione o seguinte endpoint
+ANTES do fechamento da função `registerProspeccaoRoutes`:
+
+```typescript
+// ── Mapa de CNAEs por tipo de ativo e substância ─────────────────────────
+
+const CNAE_MAP: Record<string, { primary: number[]; secondary: number[]; keywords: string[]; useState: boolean }> = {
+
+  // ── MINERAÇÃO por substância ──────────────────────────────────────────
+  "MINA:BAUXITA": {
+    primary:   [2441501, 2441502], // Produção de alumínio / metalurgia não-ferrosa
+    secondary: [4687701, 6470101, 6499301], // Comércio atacado metais, fundos, holdings
+    keywords:  ["alumínio", "aluminum", "bauxita", "metals"],
+    useState:  false,
+  },
+  "MINA:FERRO": {
+    primary:   [2411300, 2412100, 2422901], // Produção ferro/aço, fundição
+    secondary: [4687701, 6470101, 4671100], // Comércio atacado, fundos, combustíveis/siderurgia
+    keywords:  ["siderurgia", "ferro", "aço", "steel", "iron"],
+    useState:  false,
+  },
+  "MINA:OURO": {
+    primary:   [2451000, 6422100, 6431000], // Metalurgia metais preciosos, bancos, crédito
+    secondary: [6470101, 6499301, 6450600], // Holdings, outros intermediários financeiros
+    keywords:  ["ouro", "gold", "metais preciosos", "joalheria"],
+    useState:  false,
+  },
+  "MINA:PRATA": {
+    primary:   [2451000, 3211601, 3211602], // Metalurgia preciosos, joias ouro, joias prata
+    secondary: [6470101, 4649408], // Holdings, comércio atacado bijuterias
+    keywords:  ["prata", "silver", "joalheria", "metais preciosos"],
+    useState:  false,
+  },
+  "MINA:CALCARIO": {
+    primary:   [2320600, 2330301, 2341900], // Cimento, artefatos concreto, cerâmica
+    secondary: [2091600, 4687701], // Fertilizantes, comércio atacado resíduos/metais
+    keywords:  ["cimento", "calcário", "minerais", "construção"],
+    useState:  false,
+  },
+  "MINA:FOSFATO": {
+    primary:   [2091600, 2092401], // Fertilizantes, defensivos agrícolas
+    secondary: [4683400, 6470101], // Comércio atacado defensivos, holdings
+    keywords:  ["fertilizante", "fosfato", "agroquímico", "adubo"],
+    useState:  false,
+  },
+  "MINA:COBRE": {
+    primary:   [2442300, 2733300], // Metalurgia cobre, fios cabos isolados
+    secondary: [2740601, 4687701], // Lâmpadas/equip. elétricos, comércio atacado metais
+    keywords:  ["cobre", "copper", "fio", "elétrico", "telecomunicações"],
+    useState:  false,
+  },
+  "MINA:NIOBIO": {
+    primary:   [2443100, 2441501], // Metalurgia outros não-ferrosos, alumínio
+    secondary: [3011301, 6470101], // Construção embarcações, holdings
+    keywords:  ["nióbio", "niobium", "aços especiais", "liga metálica"],
+    useState:  false,
+  },
+  "MINA:AGUA MINERAL": {
+    primary:   [1121600, 4729699], // Fabricação água mineral, comércio bebidas
+    secondary: [4635499, 5590601], // Atacado bebidas, distribuição
+    keywords:  ["água mineral", "bebidas", "engarrafamento", "distribuidora"],
+    useState:  true,
+  },
+  "MINA:AREIA": {
+    primary:   [2391501, 4120400], // Britamento pedras/areia, construção edifícios
+    secondary: [4330499, 4120400], // Obras instalação, construção
+    keywords:  ["areia", "brita", "construção civil", "mineração"],
+    useState:  true,
+  },
+  "MINA:GRANITO": {
+    primary:   [2391502, 4744001], // Aparelhamento pedras, comércio material construção
+    secondary: [4120400, 4330499],
+    keywords:  ["granito", "mármore", "pedra", "revestimento"],
+    useState:  true,
+  },
+  "MINA:DIAMANTE": {
+    primary:   [2451000, 3211601, 4783101], // Metalurgia preciosos, joias, joalheria varejo
+    secondary: [6470101, 6499301],
+    keywords:  ["diamante", "gema", "joalheria", "pedras preciosas"],
+    useState:  false,
+  },
+  // Fallback genérico para qualquer MINA não mapeada
+  "MINA": {
+    primary:   [700600, 729099, 910600], // Atividades apoio mineração, extração mineral
+    secondary: [6470101, 4687701, 6499301], // Holdings, comércio metais, financeiros
+    keywords:  ["mineração", "minério", "extração", "mining"],
+    useState:  false,
+  },
+
+  // ── TERRA / FAZENDA ───────────────────────────────────────────────────
+  "TERRA": {
+    primary:   [6810201, 6810202, 119900], // Compra venda imóveis rurais, arrendamento, lavouras
+    secondary: [6470101, 6499301, 111399], // Holdings, financeiros, outras lavouras temporárias
+    keywords:  ["fazenda", "terra", "rural", "agropecuária", "fundo terra"],
+    useState:  true,
+  },
+
+  // ── AGRONEGÓCIO ───────────────────────────────────────────────────────
+  "AGRO": {
+    primary:   [111301, 111302, 111303, 115600], // Soja, milho, algodão, fumo
+    secondary: [111399, 1011201, 4623108, 6470101], // Outras lavouras, frigorífico, atacado cereais, holdings
+    keywords:  ["agro", "grãos", "soja", "milho", "cooperativa", "trading"],
+    useState:  true,
+  },
+
+  // ── NEGÓCIO / M&A ─────────────────────────────────────────────────────
+  "NEGOCIO": {
+    primary:   [6420000, 6430200, 6470101], // Intermediação financeira, seguros, holdings
+    secondary: [6499301, 7490199, 6612601], // Financeiros diversos, consultoria, bolsa valores
+    keywords:  ["holding", "investimento", "aquisição", "M&A", "private equity"],
+    useState:  false,
+  },
+
+  // ── FII / CRI / IMÓVEL ────────────────────────────────────────────────
+  "FII_CRI": {
+    primary:   [6630400, 6499301, 6810201], // Gestão fundos, atividades financeiras, imóveis
+    secondary: [6420000, 6470101, 4110700], // Intermediação financeira, holdings, incorporação
+    keywords:  ["fundo imobiliário", "FII", "CRI", "securitizadora", "incorporadora"],
+    useState:  false,
+  },
+
+  // ── DESENVOLVIMENTO IMOBILIÁRIO ───────────────────────────────────────
+  "DESENVOLVIMENTO": {
+    primary:   [4110700, 4120400], // Incorporação, construção edifícios
+    secondary: [4130300, 6630400, 6810201], // Obras infraestrutura, gestão fundos, imóveis
+    keywords:  ["incorporadora", "construtora", "desenvolvimento imobiliário", "loteamento"],
+    useState:  true,
+  },
+};
+
+function getCnaeConfig(tipo: string, substancia?: string) {
+  // Tenta match exato com substância
+  if (substancia) {
+    const substUpper = substancia.toUpperCase().trim();
+    const keyExact = `${tipo}:${substUpper}`;
+    if (CNAE_MAP[keyExact]) return CNAE_MAP[keyExact];
+
+    // Tenta match parcial (ex: "BAUXITA METALURGICA" → "BAUXITA")
+    for (const key of Object.keys(CNAE_MAP)) {
+      if (key.startsWith(`${tipo}:`) && substUpper.includes(key.split(":")[1])) {
+        return CNAE_MAP[key];
+      }
+    }
+  }
+  // Fallback para tipo genérico
+  return CNAE_MAP[tipo] || CNAE_MAP["NEGOCIO"];
+}
+
+// ── Endpoint /api/prospeccao/reversa ─────────────────────────────────────
+
+app.get("/api/prospeccao/reversa", async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+
+  try {
+    const { tipo = "NEGOCIO", estado, substancia } = req.query as Record<string, string>;
+    const config = getCnaeConfig(tipo, substancia);
+
+    const savedCompanies = await db.select({ cnpj: companies.cnpj }).from(companies);
+    const savedCnpjs = new Set(savedCompanies.map((c: any) => c.cnpj).filter(Boolean));
+
+    const fetchCnpja = async (cnaeIds: number[], useState: boolean, limit = 30) => {
+      const params = new URLSearchParams();
+      params.set("limit", String(limit));
+      params.set("status.id.in", "2"); // apenas ativas
+      params.set("head.eq", "true");   // apenas matrizes
+
+      if (cnaeIds.length > 0) {
+        // Busca em CNAE principal E secundário para ampliar resultados
+        params.set("mainActivity.id.in", cnaeIds.join(","));
+      }
+      if (useState && estado) {
+        params.set("address.state.in", estado);
+      }
+
+      const url = `https://api.cnpja.com/office?${params.toString()}`;
+      const r = await fetch(url, { headers: cnpjaHeaders() });
+      if (!r.ok) return [];
+      const data = await r.json() as any;
+      return (data.records || []).map((r: any) => ({
+        taxId: r.taxId,
+        legalName: r.company?.name || "",
+        tradeName: r.alias || null,
+        porte: r.company?.size?.text || null,
+        cnaePrincipal: r.mainActivity?.text || null,
+        cnaeCode: r.mainActivity?.id || null,
+        city: r.address?.city || null,
+        state: r.address?.state || null,
+        alreadySaved: savedCnpjs.has(r.taxId),
+        camada: 0,
+      }));
+    };
+
+    // Busca em paralelo: CNAEs primários + secundários
+    const [primary, secondary] = await Promise.all([
+      fetchCnpja(config.primary, config.useState, 30),
+      fetchCnpja(config.secondary, false, 20), // secundário sempre sem filtro de estado
+    ]);
+
+    // Deduplica por taxId
+    const seen = new Set<string>();
+    const allResults: any[] = [];
+
+    for (const r of primary) {
+      if (!seen.has(r.taxId)) { seen.add(r.taxId); allResults.push({ ...r, camada: 1 }); }
+    }
+    for (const r of secondary) {
+      if (!seen.has(r.taxId)) { seen.add(r.taxId); allResults.push({ ...r, camada: 2 }); }
+    }
+
+    // Fallback por palavras-chave se não trouxe nada
+    if (allResults.length === 0 && config.keywords.length > 0) {
+      const params = new URLSearchParams();
+      params.set("limit", "20");
+      params.set("status.id.in", "2");
+      params.set("head.eq", "true");
+      params.set("names.in", config.keywords.slice(0, 3).join(","));
+
+      const url = `https://api.cnpja.com/office?${params.toString()}`;
+      const r = await fetch(url, { headers: cnpjaHeaders() });
+      if (r.ok) {
+        const data = await r.json() as any;
+        for (const rec of (data.records || [])) {
+          if (!seen.has(rec.taxId)) {
+            seen.add(rec.taxId);
+            allResults.push({
+              taxId: rec.taxId,
+              legalName: rec.company?.name || "",
+              tradeName: rec.alias || null,
+              porte: rec.company?.size?.text || null,
+              cnaePrincipal: rec.mainActivity?.text || null,
+              cnaeCode: rec.mainActivity?.id || null,
+              city: rec.address?.city || null,
+              state: rec.address?.state || null,
+              alreadySaved: savedCnpjs.has(rec.taxId),
+              camada: 3,
+            });
+          }
+        }
+      }
+    }
+
+    res.json({
+      count: allResults.length,
+      primaryCount: allResults.filter(r => r.camada === 1).length,
+      secondaryCount: allResults.filter(r => r.camada === 2).length,
+      fallbackCount: allResults.filter(r => r.camada === 3).length,
+      results: allResults,
+    });
+
+  } catch (err) {
+    console.error("Prospeccao reversa error:", err);
+    res.status(500).json({ message: "Falha na prospecção reversa" });
+  }
+});
+```
+
+---
+
+## Alteração 2 — Frontend: mostrar camadas no resultado
+
+No arquivo `client/src/pages/ativo-detalhe.tsx`, na função `buscarCompradores`,
+substitua o trecho que monta os `params`:
+
+**Substitua:**
+```typescript
+const buscarCompradores = async () => {
+  if (!ativo) return;
+  setBuscandoCompradores(true);
+  try {
+    const params = new URLSearchParams({ tipo: ativo.type });
+    if (ativo.estado) params.set("estado", ativo.estado);
+    const campos = (ativo.camposEspecificos as any) || {};
+    if (ativo.type === "MINA" && campos.substancia) params.set("substancia", campos.substancia);
+    const res = await apiRequest("GET", `/api/prospeccao/reversa?${params.toString()}`);
+    const data = await res.json();
+    setCompradores(data.results || []);
+    setTotalEncontrados(data.count ?? null);
+    setBuscaRealizada(true);
+```
+
+**Por:**
+```typescript
+const buscarCompradores = async () => {
+  if (!ativo) return;
+  setBuscandoCompradores(true);
+  try {
+    const params = new URLSearchParams({ tipo: ativo.type });
+    if (ativo.estado) params.set("estado", ativo.estado);
+    const campos = (ativo.camposEspecificos as any) || {};
+    // Substância para mineração
+    if (ativo.type === "MINA") {
+      const sub = campos.substancia || campos.anmSubstancia ||
+                  (ativo.attributesJson as any)?.anmSubstancia;
+      if (sub) params.set("substancia", sub);
+    }
+    const res = await apiRequest("GET", `/api/prospeccao/reversa?${params.toString()}`);
+    const data = await res.json();
+    setCompradores(data.results || []);
+    setTotalEncontrados(data.count ?? null);
+    setPrimaryCount(data.primaryCount ?? 0);
+    setSecondaryCount(data.secondaryCount ?? 0);
+    setBuscaRealizada(true);
+```
+
+---
+
+## Alteração 3 — Adicionar estados para primaryCount e secondaryCount
+
+No componente `AtivoDetalhePage`, adicione junto aos outros estados:
+
+```typescript
+const [primaryCount, setPrimaryCount] = useState(0);
+const [secondaryCount, setSecondaryCount] = useState(0);
+```
+
+---
+
+## Alteração 4 — UI: mostrar camadas no cabeçalho dos resultados
+
+Substitua o trecho que mostra "X encontradas":
+
+**Substitua:**
+```tsx
+<p className="text-xs text-muted-foreground" data-testid="text-compradores-count">
+  {totalEncontrados !== null
+    ? `${totalEncontrados.toLocaleString("pt-BR")} encontradas — exibindo ${compradores.length}`
+    : `${compradores.length} encontradas`}
+</p>
+```
+
+**Por:**
+```tsx
+<div className="space-y-1">
+  <p className="text-xs text-muted-foreground" data-testid="text-compradores-count">
+    {compradores.length} empresa{compradores.length !== 1 ? "s" : ""} encontrada{compradores.length !== 1 ? "s" : ""}
+  </p>
+  {(primaryCount > 0 || secondaryCount > 0) && (
+    <div className="flex gap-3 text-[11px]">
+      {primaryCount > 0 && (
+        <span className="flex items-center gap-1 text-green-700">
+          <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+          {primaryCount} compradores diretos
+        </span>
+      )}
+      {secondaryCount > 0 && (
+        <span className="flex items-center gap-1 text-blue-700">
+          <span className="w-2 h-2 rounded-full bg-blue-400 inline-block" />
+          {secondaryCount} fundos e tradings
+        </span>
+      )}
+    </div>
+  )}
+</div>
+```
+
+---
+
+## Alteração 5 — UI: badge de camada no card do comprador
+
+No card de cada comprador, adicione um badge indicando a origem.
+Após a linha que mostra o CNAE principal, adicione:
+
+```tsx
+{c.camada === 1 && (
+  <Badge variant="outline" className="text-[10px] bg-green-50 text-green-700 border-green-200">
+    Comprador direto
+  </Badge>
+)}
+{c.camada === 2 && (
+  <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">
+    Fundo / trading
+  </Badge>
+)}
+{c.camada === 3 && (
+  <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
+    Relacionado
+  </Badge>
+)}
+```
+
+Salve os arquivos.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+COMO FUNCIONA A BUSCA EM CAMADAS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Para um ativo MINA de BAUXITA no ES:
+
+  Camada 1 → Metalurgia de alumínio (sem filtro de estado)
+             CNAEs: 2441501, 2441502
+             → Encontra: Novelis, CBA, Hydro Brasil
+
+  Camada 2 → Fundos, holdings, tradings de metais
+             CNAEs: 4687701, 6470101, 6499301
+             → Encontra: fundos de PE, tradings de commodities
+
+  Camada 3 → Fallback por palavras-chave (só se camadas 1+2 = zero)
+             Keywords: "alumínio", "bauxita", "metals"
+             → Encontra: qualquer empresa com esses termos no nome
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+COMO TESTAR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Ativo MINA de BAUXITA → aba Compradores → Buscar
+   Esperado: empresas de metalurgia de alumínio + fundos
+
+2. Ativo MINA de ÁGUA MINERAL → aba Compradores → Buscar
+   Esperado: engarrafadoras e distribuidoras de bebidas
+
+3. Ativo TERRA no MT → aba Compradores → Buscar
+   Esperado: fundos de terra, cooperativas, tradings do MT
+
+4. Qualquer ativo → resultado mostra badges "Comprador direto" / "Fundo & trading"

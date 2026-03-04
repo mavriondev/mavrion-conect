@@ -1,0 +1,602 @@
+# PROMPT — PROSPECÇÃO REVERSA INTELIGENTE (VERSÃO FINAL)
+# Melhora o endpoint /api/prospeccao/reversa já existente
+# e adiciona filtros opcionais na aba Compradores do ativo
+# Cole A → B em ordem
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT A — BACKEND: substituir /api/prospeccao/reversa
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo `server/routes/prospeccao.ts`, localize o endpoint
+`app.get("/api/prospeccao/reversa", ...)` e substitua por completo:
+
+```typescript
+// ── Helpers de filtro inteligente ─────────────────────────────────────────
+
+function getPorteIds(tipo: string, preco: number | null): number[] {
+  // 1=MEI, 2=ME, 3=EPP, 4=Médio, 5=Grande — MEI nunca incluído
+  if (tipo === "MINA" || tipo === "DESENVOLVIMENTO") return [4, 5];
+  if (tipo === "FII_CRI") return [3, 4, 5]; // fundos podem ser pequenos
+  if (tipo === "NEGOCIO") {
+    if (!preco || preco < 2_000_000)  return [3, 4, 5];
+    if (preco < 10_000_000)           return [4, 5];
+    return [5];
+  }
+  if (tipo === "TERRA" || tipo === "AGRO") return [2, 3, 4, 5];
+  return [3, 4, 5];
+}
+
+function getEquityMin(tipo: string, preco: number | null): number | null {
+  if (!preco) return null;
+  if (tipo === "FII_CRI") return null; // fundos não têm capital social proporcional
+  if (preco < 1_000_000)         return null;
+  if (preco < 5_000_000)         return 500_000;
+  if (preco < 20_000_000)        return 2_000_000;
+  if (preco < 100_000_000)       return 10_000_000;
+  return 50_000_000;
+}
+
+function getFoundedBefore(tipo: string): string | null {
+  const now = new Date();
+  if (["MINA", "NEGOCIO", "FII_CRI"].includes(tipo)) {
+    now.setFullYear(now.getFullYear() - 2);
+    return now.toISOString().split("T")[0];
+  }
+  if (tipo === "DESENVOLVIMENTO") {
+    now.setFullYear(now.getFullYear() - 1);
+    return now.toISOString().split("T")[0];
+  }
+  return null;
+}
+
+function shouldFilterState(tipo: string): boolean {
+  return tipo === "TERRA" || tipo === "DESENVOLVIMENTO";
+}
+
+function getNaturezas(tipo: string): number[] {
+  if (tipo === "FII_CRI") return [206, 216, 305, 306];
+  return [];
+}
+
+function shouldExcludeSimples(tipo: string, preco: number | null): boolean {
+  if (["MINA", "FII_CRI"].includes(tipo)) return true;
+  if (tipo === "NEGOCIO" && preco && preco > 5_000_000) return true;
+  return false;
+}
+
+// ── Mapa de CNAEs por tipo e substância ──────────────────────────────────
+
+const CNAE_MAP: Record<string, { primary: number[]; secondary: number[]; keywords: string[] }> = {
+  // MINA por substância
+  "MINA:BAUXITA":      { primary: [2441501, 2441502], secondary: [4687701, 6470101, 6499301], keywords: ["alumínio", "aluminum", "bauxita", "metals"] },
+  "MINA:FERRO":        { primary: [2411300, 2412100, 2422901], secondary: [4687701, 6470101], keywords: ["siderurgia", "ferro", "aço", "steel"] },
+  "MINA:OURO":         { primary: [2451000, 6422100, 6431000], secondary: [6470101, 6499301], keywords: ["ouro", "gold", "metais preciosos"] },
+  "MINA:PRATA":        { primary: [2451000, 3211601, 3211602], secondary: [6470101, 4649408], keywords: ["prata", "silver", "joalheria"] },
+  "MINA:CALCARIO":     { primary: [2320600, 2330301, 2341900], secondary: [2091600, 4687701], keywords: ["cimento", "calcário", "construção"] },
+  "MINA:FOSFATO":      { primary: [2091600, 2092401], secondary: [4683400, 6470101], keywords: ["fertilizante", "fosfato", "agroquímico"] },
+  "MINA:COBRE":        { primary: [2442300, 2733300], secondary: [2740601, 4687701], keywords: ["cobre", "copper", "elétrico"] },
+  "MINA:NIOBIO":       { primary: [2443100, 2441501], secondary: [3011301, 6470101], keywords: ["nióbio", "aços especiais", "liga metálica"] },
+  "MINA:AGUA MINERAL": { primary: [1121600, 4729699], secondary: [4635499, 5590601], keywords: ["água mineral", "bebidas", "engarrafamento"] },
+  "MINA:AREIA":        { primary: [2391501, 4120400], secondary: [4330499], keywords: ["areia", "brita", "construção civil"] },
+  "MINA:GRANITO":      { primary: [2391502, 4744001], secondary: [4120400], keywords: ["granito", "mármore", "pedra"] },
+  "MINA:DIAMANTE":     { primary: [2451000, 3211601, 4783101], secondary: [6470101], keywords: ["diamante", "joalheria", "gema"] },
+  "MINA:CAULIM":       { primary: [2319200, 2342701], secondary: [4687701], keywords: ["caulim", "cerâmica", "porcelana"] },
+  "MINA:MAGNESITA":    { primary: [2319200, 2399101], secondary: [4687701], keywords: ["magnesita", "refratário"] },
+  "MINA:ZINCO":        { primary: [2443100, 2442300], secondary: [4687701, 6470101], keywords: ["zinco", "galvanização"] },
+  "MINA:CHUMBO":       { primary: [2443100], secondary: [4687701, 2740601], keywords: ["chumbo", "bateria", "acumulador"] },
+  "MINA:CROMO":        { primary: [2443100, 2411300], secondary: [4687701], keywords: ["cromo", "inox", "aços especiais"] },
+  "MINA":              { primary: [700600, 729099, 910600], secondary: [6470101, 4687701, 6499301], keywords: ["mineração", "minério", "mining"] },
+  // Outros tipos
+  "TERRA":             { primary: [6810201, 6810202, 119900], secondary: [6470101, 6499301, 111399], keywords: ["fazenda", "terra", "rural", "fundo terra"] },
+  "AGRO":              { primary: [111301, 111302, 111303, 115600], secondary: [111399, 1011201, 4623108, 6470101], keywords: ["agro", "grãos", "soja", "cooperativa", "trading"] },
+  "NEGOCIO":           { primary: [6420000, 6430200, 6470101], secondary: [6499301, 7490199, 6612601], keywords: ["holding", "investimento", "private equity", "M&A"] },
+  "FII_CRI":           { primary: [6630400, 6499301, 6810201], secondary: [6420000, 6470101, 4110700], keywords: ["fundo imobiliário", "FII", "CRI", "securitizadora"] },
+  "DESENVOLVIMENTO":   { primary: [4110700, 4120400], secondary: [4130300, 6630400, 6810201], keywords: ["incorporadora", "construtora", "loteamento"] },
+};
+
+function getCnaeConfig(tipo: string, substancia?: string) {
+  if (substancia) {
+    const sub = substancia.toUpperCase().trim();
+    const exact = `${tipo}:${sub}`;
+    if (CNAE_MAP[exact]) return CNAE_MAP[exact];
+    // match parcial
+    for (const key of Object.keys(CNAE_MAP)) {
+      if (key.startsWith(`${tipo}:`) && sub.includes(key.split(":")[1])) {
+        return CNAE_MAP[key];
+      }
+    }
+  }
+  return CNAE_MAP[tipo] || CNAE_MAP["NEGOCIO"];
+}
+
+// ── Endpoint principal ────────────────────────────────────────────────────
+
+app.get("/api/prospeccao/reversa", async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+
+  try {
+    const {
+      tipo = "NEGOCIO",
+      estado,
+      substancia,
+      preco,
+      // filtros manuais opcionais vindos do frontend
+      porteOverride,    // "all" | "medio" | "grande"
+      estadoOverride,   // "all" | estado específico
+      ocultarCrm,       // "true" | "false"
+    } = req.query as Record<string, string>;
+
+    const precoNum = preco ? parseFloat(preco) : null;
+    const config = getCnaeConfig(tipo, substancia);
+
+    // ── Monta filtros base ────────────────────────────────────────────────
+    const baseParams: Record<string, string> = {
+      "status.id.in": "2",      // apenas ativas
+      "head.eq":      "true",   // apenas matrizes
+    };
+
+    // Porte
+    let porteIds = getPorteIds(tipo, precoNum);
+    if (porteOverride === "medio")  porteIds = [4, 5];
+    if (porteOverride === "grande") porteIds = [5];
+    if (porteOverride !== "all")    baseParams["company.size.id.in"] = porteIds.join(",");
+
+    // Capital mínimo
+    const equity = getEquityMin(tipo, precoNum);
+    if (equity) baseParams["company.equity.gte"] = String(equity);
+
+    // Excluir Simples
+    if (shouldExcludeSimples(tipo, precoNum)) {
+      baseParams["company.simples.optant.eq"] = "false";
+      baseParams["company.simei.optant.eq"]   = "false";
+    }
+
+    // Data de fundação mínima
+    const foundedBefore = getFoundedBefore(tipo);
+    if (foundedBefore) baseParams["founded.lte"] = foundedBefore;
+
+    // Natureza jurídica
+    const naturezas = getNaturezas(tipo);
+    if (naturezas.length > 0) baseParams["company.nature.id.in"] = naturezas.join(",");
+
+    // Estado — respeita override manual do usuário
+    const useState = estadoOverride
+      ? estadoOverride !== "all"
+      : shouldFilterState(tipo);
+    const estadoFinal = estadoOverride && estadoOverride !== "all"
+      ? estadoOverride
+      : estado;
+    if (useState && estadoFinal) baseParams["address.state.in"] = estadoFinal;
+
+    // ── Empresas já no CRM ────────────────────────────────────────────────
+    const savedCompanies = await db.select({ cnpj: companies.cnpj }).from(companies);
+    const savedCnpjs = new Set(savedCompanies.map((c: any) => c.cnpj).filter(Boolean));
+
+    // ── Função de busca no CNPJA ──────────────────────────────────────────
+    const fetchCnpja = async (cnaeIds: number[], extraParams: Record<string, string> = {}, limit = 35) => {
+      const params = new URLSearchParams({ ...baseParams, ...extraParams });
+      params.set("limit", String(limit));
+      if (cnaeIds.length > 0) params.set("mainActivity.id.in", cnaeIds.join(","));
+
+      const r = await fetch(`https://api.cnpja.com/office?${params.toString()}`, {
+        headers: cnpjaHeaders(),
+      });
+      if (!r.ok) return [];
+      const data = await r.json() as any;
+      return (data.records || []).map((rec: any) => ({
+        taxId:         rec.taxId,
+        legalName:     rec.company?.name || "",
+        tradeName:     rec.alias || null,
+        porte:         rec.company?.size?.text || null,
+        cnaePrincipal: rec.mainActivity?.text || null,
+        cnaeCode:      rec.mainActivity?.id || null,
+        city:          rec.address?.city || null,
+        state:         rec.address?.state || null,
+        equity:        rec.company?.equity || null,
+        founded:       rec.founded || null,
+        alreadySaved:  savedCnpjs.has(rec.taxId),
+        camada:        0,
+      }));
+    };
+
+    // ── Busca em paralelo: camada 1 + camada 2 ───────────────────────────
+    const [primary, secondary] = await Promise.all([
+      fetchCnpja(config.primary, {}, 40),
+      fetchCnpja(config.secondary, {
+        // secundário: sempre sem filtro de estado para ampliar
+        "address.state.in": "",
+      }, 25),
+    ]);
+
+    // ── Deduplica ─────────────────────────────────────────────────────────
+    const seen = new Set<string>();
+    const allResults: any[] = [];
+
+    for (const r of primary) {
+      if (!seen.has(r.taxId)) { seen.add(r.taxId); allResults.push({ ...r, camada: 1 }); }
+    }
+    for (const r of secondary) {
+      if (!seen.has(r.taxId)) { seen.add(r.taxId); allResults.push({ ...r, camada: 2 }); }
+    }
+
+    // ── Camada 3: fallback por keywords se resultado muito baixo ─────────
+    if (allResults.length < 5 && config.keywords.length > 0) {
+      const kwParams = new URLSearchParams({
+        "status.id.in": "2",
+        "head.eq": "true",
+        "limit": "20",
+        "names.in": config.keywords.slice(0, 3).join(","),
+      });
+      const r = await fetch(`https://api.cnpja.com/office?${kwParams.toString()}`, {
+        headers: cnpjaHeaders(),
+      });
+      if (r.ok) {
+        const data = await r.json() as any;
+        for (const rec of (data.records || [])) {
+          if (!seen.has(rec.taxId)) {
+            seen.add(rec.taxId);
+            allResults.push({
+              taxId:         rec.taxId,
+              legalName:     rec.company?.name || "",
+              tradeName:     rec.alias || null,
+              porte:         rec.company?.size?.text || null,
+              cnaePrincipal: rec.mainActivity?.text || null,
+              cnaeCode:      rec.mainActivity?.id || null,
+              city:          rec.address?.city || null,
+              state:         rec.address?.state || null,
+              equity:        rec.company?.equity || null,
+              founded:       rec.founded || null,
+              alreadySaved:  savedCnpjs.has(rec.taxId),
+              camada:        3,
+            });
+          }
+        }
+      }
+    }
+
+    // ── Ocultar já no CRM se solicitado ──────────────────────────────────
+    const finalResults = ocultarCrm === "true"
+      ? allResults.filter(r => !r.alreadySaved)
+      : allResults;
+
+    res.json({
+      count:          finalResults.length,
+      primaryCount:   finalResults.filter(r => r.camada === 1).length,
+      secondaryCount: finalResults.filter(r => r.camada === 2).length,
+      fallbackCount:  finalResults.filter(r => r.camada === 3).length,
+      results:        finalResults,
+    });
+
+  } catch (err) {
+    console.error("Prospeccao reversa error:", err);
+    res.status(500).json({ message: "Falha na prospecção reversa" });
+  }
+});
+```
+
+Salve o arquivo.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT B — FRONTEND: aba Compradores com filtros opcionais
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo `client/src/pages/ativo-detalhe.tsx`, faça as seguintes alterações:
+
+---
+
+### Alteração 1 — novos estados no componente AtivoDetalhePage
+
+Adicione junto aos estados existentes de compradores:
+
+```typescript
+const [primaryCount,   setPrimaryCount]   = useState(0);
+const [secondaryCount, setSecondaryCount] = useState(0);
+const [showFiltros,    setShowFiltros]    = useState(false);
+const [filtroPorte,    setFiltroPorte]    = useState("auto");   // "auto" | "medio" | "grande"
+const [filtroEstado,   setFiltroEstado]   = useState("auto");   // "auto" | "all" | UF
+const [ocultarCrm,     setOcultarCrm]     = useState(false);
+```
+
+---
+
+### Alteração 2 — função buscarCompradores
+
+Substitua a função `buscarCompradores` por:
+
+```typescript
+const buscarCompradores = async () => {
+  if (!ativo) return;
+  setBuscandoCompradores(true);
+  try {
+    const params = new URLSearchParams({ tipo: ativo.type });
+    if (ativo.estado) params.set("estado", ativo.estado);
+    if (ativo.priceAsking) params.set("preco", String(ativo.priceAsking));
+
+    // Substância para mineração — busca em múltiplos campos
+    if (ativo.type === "MINA") {
+      const campos = (ativo.camposEspecificos as any) || {};
+      const attrs  = (ativo.attributesJson as any) || {};
+      const sub = campos.substancia || attrs.anmSubstancia || campos.anmSubstancia;
+      if (sub) params.set("substancia", sub);
+    }
+
+    // Filtros manuais
+    if (filtroPorte  !== "auto") params.set("porteOverride",  filtroPorte);
+    if (filtroEstado !== "auto") params.set("estadoOverride", filtroEstado);
+    if (ocultarCrm)              params.set("ocultarCrm",     "true");
+
+    const res  = await apiRequest("GET", `/api/prospeccao/reversa?${params.toString()}`);
+    const data = await res.json();
+
+    setCompradores(data.results || []);
+    setTotalEncontrados(data.count ?? null);
+    setPrimaryCount(data.primaryCount ?? 0);
+    setSecondaryCount(data.secondaryCount ?? 0);
+    setBuscaRealizada(true);
+  } catch {
+    toast({ title: "Erro ao buscar compradores", variant: "destructive" });
+  } finally {
+    setBuscandoCompradores(false);
+  }
+};
+```
+
+---
+
+### Alteração 3 — substituir o conteúdo da TabsContent value="compradores"
+
+Substitua o conteúdo do Card de Prospecção Reversa (mantendo apenas o Card externo) por:
+
+```tsx
+<Card>
+  <CardHeader className="pb-3">
+    <CardTitle className="text-sm flex items-center gap-2">
+      <Search className="w-4 h-4 text-muted-foreground" />
+      Prospecção Reversa
+    </CardTitle>
+    <p className="text-xs text-muted-foreground mt-1">
+      Empresas compradoras compatíveis com este ativo via CNPJA
+      {ativo.estado ? ` — ${ativo.estado}` : ""}.
+    </p>
+  </CardHeader>
+  <CardContent className="space-y-4">
+
+    {/* Painel de filtros opcionais */}
+    <div className="space-y-2">
+      <button
+        type="button"
+        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors"
+        onClick={() => setShowFiltros(f => !f)}
+      >
+        <Filter className="w-3.5 h-3.5" />
+        Ajustar filtros
+        <ChevronRight className={cn("w-3 h-3 transition-transform", showFiltros && "rotate-90")} />
+      </button>
+
+      {showFiltros && (
+        <div className="flex flex-wrap gap-2 p-3 rounded-lg bg-muted/30 border">
+          {/* Porte */}
+          <div className="space-y-1">
+            <p className="text-[10px] text-muted-foreground font-medium uppercase">Porte mínimo</p>
+            <Select value={filtroPorte} onValueChange={setFiltroPorte}>
+              <SelectTrigger className="h-7 text-xs w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Automático</SelectItem>
+                <SelectItem value="all">Todos os portes</SelectItem>
+                <SelectItem value="medio">Médio ou maior</SelectItem>
+                <SelectItem value="grande">Apenas grande</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Estado */}
+          <div className="space-y-1">
+            <p className="text-[10px] text-muted-foreground font-medium uppercase">Estado</p>
+            <Select value={filtroEstado} onValueChange={setFiltroEstado}>
+              <SelectTrigger className="h-7 text-xs w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Automático</SelectItem>
+                <SelectItem value="all">Todo o Brasil</SelectItem>
+                {["AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG",
+                  "MS","MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR",
+                  "RS","SC","SE","SP","TO"].map(uf => (
+                  <SelectItem key={uf} value={uf}>{uf}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Ocultar CRM */}
+          <div className="space-y-1 flex flex-col justify-end">
+            <label className="flex items-center gap-2 cursor-pointer h-7">
+              <input
+                type="checkbox"
+                checked={ocultarCrm}
+                onChange={e => setOcultarCrm(e.target.checked)}
+                className="rounded border-muted-foreground/30 w-3.5 h-3.5"
+              />
+              <span className="text-xs">Ocultar já no CRM</span>
+            </label>
+          </div>
+        </div>
+      )}
+    </div>
+
+    {/* Conteúdo principal */}
+    {!buscaRealizada ? (
+      <div className="text-center py-8 space-y-3">
+        <p className="text-sm text-muted-foreground">Nenhuma busca realizada ainda.</p>
+        <Button
+          onClick={buscarCompradores}
+          disabled={buscandoCompradores}
+          className="gap-2"
+          data-testid="button-buscar-compradores"
+        >
+          {buscandoCompradores
+            ? <><Loader2 className="w-4 h-4 animate-spin" /> Buscando...</>
+            : <><Search className="w-4 h-4" /> Buscar compradores compatíveis</>}
+        </Button>
+      </div>
+    ) : (
+      <div className="space-y-3">
+        {/* Cabeçalho de resultados */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="space-y-0.5">
+            <p className="text-xs text-muted-foreground" data-testid="text-compradores-count">
+              {compradores.length} empresa{compradores.length !== 1 ? "s" : ""} encontrada{compradores.length !== 1 ? "s" : ""}
+            </p>
+            {(primaryCount > 0 || secondaryCount > 0) && (
+              <div className="flex gap-3 text-[11px]">
+                {primaryCount > 0 && (
+                  <span className="flex items-center gap-1 text-green-700">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
+                    {primaryCount} compradores diretos
+                  </span>
+                )}
+                {secondaryCount > 0 && (
+                  <span className="flex items-center gap-1 text-blue-700">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block" />
+                    {secondaryCount} fundos e tradings
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+          <Button
+            variant="outline" size="sm"
+            onClick={buscarCompradores}
+            disabled={buscandoCompradores}
+            className="h-7 text-xs gap-1"
+            data-testid="button-refazer-busca"
+          >
+            {buscandoCompradores ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Refazer
+          </Button>
+        </div>
+
+        {/* Lista de compradores */}
+        {compradores.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-6">
+            Nenhuma empresa encontrada. Tente ajustar os filtros.
+          </p>
+        ) : (
+          compradores.map(c => (
+            <div
+              key={c.taxId}
+              className="flex items-start justify-between gap-3 p-3 rounded-lg border hover:border-primary/30 transition-colors"
+              data-testid={`card-comprador-${c.taxId}`}
+            >
+              <div className="flex-1 min-w-0 space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="font-medium text-sm truncate">{c.tradeName || c.legalName}</p>
+                  {c.alreadySaved && (
+                    <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
+                      No CRM
+                    </Badge>
+                  )}
+                  {c.camada === 1 && (
+                    <Badge variant="outline" className="text-[10px] bg-green-50 text-green-700 border-green-200">
+                      Comprador direto
+                    </Badge>
+                  )}
+                  {c.camada === 2 && (
+                    <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">
+                      Fundo / trading
+                    </Badge>
+                  )}
+                  {c.camada === 3 && (
+                    <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
+                      Relacionado
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground font-mono">{c.taxId}</p>
+                <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                  {c.cnaePrincipal && <span className="truncate max-w-[200px]">{c.cnaePrincipal}</span>}
+                  {(c.city || c.state) && (
+                    <span className="flex items-center gap-1">
+                      <MapPin className="w-3 h-3" />
+                      {[c.city, c.state].filter(Boolean).join("/")}
+                    </span>
+                  )}
+                  {c.porte && <span>{c.porte}</span>}
+                </div>
+              </div>
+              <div className="shrink-0">
+                {!c.alreadySaved ? (
+                  <Button
+                    size="sm" variant="outline" className="h-7 text-xs"
+                    onClick={() => importarComprador(c)}
+                    data-testid={`button-importar-${c.taxId}`}
+                  >
+                    Importar
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm" variant="ghost" className="h-7 text-xs text-primary"
+                    onClick={() => navigate("/empresas")}
+                    data-testid={`button-ver-crm-${c.taxId}`}
+                  >
+                    Ver no CRM
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    )}
+  </CardContent>
+</Card>
+```
+
+Certifique-se de que os imports incluem `Filter`, `Select`, `SelectContent`, `SelectItem`, `SelectTrigger`, `SelectValue`.
+Se algum não estiver importado, adicione nos imports existentes do arquivo.
+
+Salve o arquivo.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RESUMO DA LÓGICA INTELIGENTE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Filtros automáticos por tipo e valor do ativo:
+
+  Status         → sempre apenas ativas
+  Matriz         → sempre apenas matrizes
+  Simples/MEI    → excluído para MINA, FII, NEGOCIO > R$5M
+  Porte          → proporcional ao tipo e valor
+  Capital mínimo → proporcional ao valor do ativo
+  Fundação       → mín. 2 anos para MINA/NEGOCIO/FII
+  Estado         → nacional para MINA/NEGOCIO/FII/AGRO
+                   regional para TERRA/DESENVOLVIMENTO
+  CNAEs          → mapeados por substância para MINA
+                   por perfil de comprador para demais tipos
+
+Filtros manuais (expansíveis na tela):
+  Porte mínimo   → Automático / Médio+ / Apenas grande
+  Estado         → Automático / Todo Brasil / UF específica
+  Ocultar CRM    → esconde empresas já importadas
+
+Busca em camadas:
+  Camada 1 → CNAEs de compradores diretos (limit 40)
+  Camada 2 → CNAEs secundários: fundos, tradings (limit 25)
+  Camada 3 → fallback por keywords (só se resultado < 5)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+COMO TESTAR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Ativo MINA BAUXITA → Compradores → Buscar
+   Esperado: metalurgia alumínio + fundos, sem filtro de estado
+
+2. Ativo TERRA MT → Compradores → Buscar
+   Esperado: fundos de terra + cooperativas do MT
+
+3. Qualquer ativo → Ajustar filtros → mudar Porte para "Apenas grande" → Refazer
+   Esperado: menos resultados, só empresas grandes
+
+4. Marcar "Ocultar já no CRM" → Refazer
+   Esperado: empresas já importadas somem da lista

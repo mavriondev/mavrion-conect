@@ -1,0 +1,351 @@
+# AUDITORIA COMPLETA — MAVRION CONECT
+# Gerado em 04/03/2026 — Preparação para apresentação de sexta-feira
+# Baseado em análise direta de: schema.ts, routes.ts, storage.ts,
+# dashboard.tsx, ativos.tsx, ativo-detalhe.tsx, matching.ts, assets.ts, prospeccao.ts
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PARTE 1 — O QUE O SISTEMA TEM E ESTÁ BOM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Schema completo e bem modelado
+   - 18 tabelas com relações corretas
+   - Multi-tenant (orgId em todas as tabelas)
+   - Proposals + Contracts completamente modelados
+   - Portal com inquiries (leads de interesse)
+   - Audit logs e error reports
+   - Pipeline stages configuráveis
+
+✅ Storage layer sólido
+   - Todas as operações CRUD implementadas
+   - Joins corretos (deals + company, assets + linkedCompany)
+   - getDashboardStats existe com métricas reais
+
+✅ Dashboard com métricas reais
+   - Valor do pipeline
+   - Forecast ponderado
+   - Taxa de conversão Lead → Deal
+   - Ticket médio
+   - Alertas de deals vencidos/vencendo
+   - Gráficos de atividade semanal
+
+✅ Fluxo principal existe de ponta a ponta
+   Prospecção → SDR → Empresa → Deal → Proposta → Contrato
+
+✅ Portal Investidor modelado
+   - portalListings com visibilityLevel (teaser/full)
+   - portalInquiries captura leads de interesse
+   - assetLandingPages com slug único
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PARTE 2 — BUGS CRÍTICOS (CORRIGIR ANTES DE SEXTA)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔴 BUG 1 — camposEspecificos não existe no banco de dados
+   IMPACTO: CRÍTICO — silencioso e perigoso
+
+   O código em ativo-detalhe.tsx salva dados em `camposEspecificos`:
+     - Checklist de due diligence
+     - Dados Embrapa (solo, NDVI, clima)
+     - Coordenadas GPS (quando implementadas)
+
+   Mas o schema.ts não tem a coluna `camposEspecificos` na tabela assets.
+   O Drizzle ignora silenciosamente campos desconhecidos no update().
+   Resultado: todos esses dados somem ao recarregar a página.
+
+   Para a apresentação: ao clicar num checkbox da due diligence e recarregar,
+   o checkbox vai desaparecer. Isso é fatal numa demo ao vivo.
+
+   A tabela tem `attributesJson` mas o código usa `camposEspecificos`.
+   Solução: renomear/mapear ou adicionar a coluna.
+
+🔴 BUG 2 — Matching Engine: investidor vazio pontua quase igual a match perfeito
+   IMPACTO: CRÍTICO para credibilidade da demo
+
+   Código atual:
+     if (investorTypes.length === 0) score += 20  // investidor sem preferência
+     else if (investorTypes.includes(asset.type)) score += 35  // match perfeito
+
+   Investidor sem nenhum critério preenchido pode atingir score 65+
+   e aparecer como "match" para qualquer ativo.
+   Na apresentação vai mostrar matches absurdos e sem sentido.
+
+🟡 BUG 3 — camposEspecificos nos campos específicos do formulário
+   Os campos CAR, CCIR, ITR, substância mineral etc são salvos em
+   `camposEspecificos` no frontend mas não chegam ao banco pelo mesmo motivo do Bug 1.
+   O formulário parece funcionar mas os dados são perdidos.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PARTE 3 — PROBLEMAS MÉDIOS (CORRIGIR SE DER TEMPO)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🟡 Schema de assets sem campo `status`
+   O cadastro tem status (ativo/rascunho/negociação) mas a tabela não tem
+   coluna dedicada. Está provavelmente indo para attributesJson, o que
+   impede filtros por status no banco.
+
+🟡 getAssets() sem filtro de orgId
+   storage.getAssets() retorna TODOS os ativos sem filtrar por orgId.
+   Se um dia houver mais de uma organização, os dados vazam entre tenants.
+   Para demo com 1 org não é problema, mas é uma falha de arquitetura.
+
+🟡 Prospecção reversa não passava o preço do ativo
+   O endpoint /api/prospeccao/reversa recebia tipo e estado mas não recebia
+   o priceAsking para calibrar os filtros de porte/capital.
+   Corrigido no prompt gerado hoje.
+
+🟡 Dashboard não mostra ativos por tipo (gráfico)
+   O dashboard tem `assetCounts` calculado mas não renderiza o gráfico.
+   A variável é calculada e nunca usada na UI.
+   Para a demo seria um diferencial visual mostrar distribuição do portfólio.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PARTE 4 — O QUE NÃO FOI CONFIRMADO (APLICADO NO REPLIT?)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️  Menu reorganizado          — sidebar.tsx retornou 404
+⚠️  Embrapa backend + rotas    — não confirmado
+⚠️  Inteligência Agro          — não confirmado
+⚠️  Mapa de Conexões           — não confirmado
+⚠️  Coordenadas no formulário  — prompt gerado hoje, não aplicado
+⚠️  Google Drive docs          — prompt Rodada 3, não confirmado
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PARTE 5 — AVALIAÇÃO DE VIABILIDADE PARA A APRESENTAÇÃO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+POSITIVO — O que impressiona:
+  + Plataforma com escopo real e completo (não é um MVP raso)
+  + Multi-tenant desde o início (pensamento enterprise)
+  + Pipeline completo: prospecção → deal → proposta → contrato
+  + Inteligência de dados: ANM, CNPJA, Embrapa, CAR integrados
+  + Portal Investidor com landing pages de ativos
+  + Dashboard com métricas financeiras reais (pipeline, forecast, conversão)
+  + Auditoria de ações e relatório de erros
+
+NEGATIVO — O que preocupa para a demo:
+  - Bug 1 (camposEspecificos) pode travar ao vivo qualquer demonstração
+    de checklist ou análise Embrapa
+  - Matching com matches sem sentido destrói a credibilidade do diferencial
+  - Se Embrapa não foi aplicado, a aba Análise Agro fica vazia
+  - Se menu não foi reorganizado, a navegação parece desorganizada
+
+VEREDICTO: Sistema viável e impressionante se os 2 bugs críticos forem
+corrigidos. Com eles presentes, a demo pode falhar ao vivo de forma visível.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 1 — CORREÇÃO CRÍTICA: camposEspecificos no schema
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo `shared/schema.ts`, localize a tabela `assets` e adicione
+a coluna `camposEspecificos` logo após `attributesJson`:
+
+```typescript
+camposEspecificos: jsonb("campos_especificos").default({}),
+```
+
+Depois, crie a migration rodando no terminal do Replit:
+```bash
+npm run db:push
+```
+
+Isso vai criar a coluna no banco sem perder dados existentes.
+
+Salve o arquivo e rode o comando.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 2 — CORREÇÃO CRÍTICA: Matching Engine score justo
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo `server/routes/matching.ts`, dentro da função de matching,
+localize o bloco de score de tipo de ativo e substitua por completo:
+
+SUBSTITUA:
+```typescript
+const investorTypes = (investor.assetTypes as string[]) || [];
+if (investorTypes.length === 0) {
+  score += 20;
+  reasons.push("Investidor aceita todos os tipos de ativo");
+} else if (investorTypes.includes(asset.type)) {
+  score += 35;
+  reasons.push(`Tipo "${asset.type}" está nas preferências do investidor`);
+} else {
+  penalties.push(`Tipo "${asset.type}" não está nas preferências do investidor`);
+}
+```
+
+POR:
+```typescript
+const investorTypes = (investor.assetTypes as string[]) || [];
+
+// Verifica se o investidor tem perfil minimamente preenchido
+const perfilCompleto = investorTypes.length > 0 ||
+  investor.ticketMin != null || investor.ticketMax != null ||
+  ((investor.regionsOfInterest as string[]) || []).length > 0;
+
+if (!perfilCompleto) {
+  // Investidor sem nenhum critério → não gera match
+  // Não adiciona pontos mas também não penaliza (skip completo)
+  penalties.push("Perfil do investidor incompleto — sem critérios definidos");
+} else if (investorTypes.length === 0) {
+  // Investidor tem outros critérios mas aceita qualquer tipo
+  score += 15;
+  reasons.push("Investidor aceita qualquer tipo de ativo");
+} else if (investorTypes.includes(asset.type)) {
+  score += 40;
+  reasons.push(`Tipo "${asset.type}" está nas preferências do investidor`);
+} else {
+  score -= 20; // penalidade forte por tipo errado
+  penalties.push(`Tipo "${asset.type}" não está nas preferências do investidor`);
+}
+```
+
+E logo antes do `if (score >= 40 && penalties.length <= 1)`, adicione:
+
+```typescript
+// Investidor sem perfil não deve gerar match
+if (!perfilCompleto) continue;
+```
+
+Salve o arquivo.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 3 — MELHORIA: campo status no schema de assets
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo `shared/schema.ts`, na tabela `assets`, adicione após `docsStatus`:
+
+```typescript
+status: text("status").default("ativo"),
+// valores: rascunho | validacao | ativo | negociacao | fechado | arquivado
+exclusivoAte: timestamp("exclusivo_ate"),
+exclusividadeEmpresaId: integer("exclusividade_empresa_id").references(() => companies.id),
+```
+
+Rode no terminal:
+```bash
+npm run db:push
+```
+
+Salve o arquivo.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 4 — MELHORIA: gráfico de portfólio por tipo no dashboard
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo `client/src/pages/dashboard.tsx`, após o grid de StatCards,
+adicione um novo Card com o gráfico de distribuição do portfólio.
+
+Localize o bloco onde `assetCounts` é calculado:
+```typescript
+const assetCounts = (assets as any[]).reduce((acc: any, a: any) => {
+  acc[a.type] = (acc[a.type] || 0) + 1;
+  return acc;
+}, {} as Record<string, number>);
+```
+
+Logo após os grids de StatCards e ANTES do grid de gráficos, adicione:
+
+```tsx
+{/* Portfólio por tipo */}
+{(assets as any[]).length > 0 && (
+  <Card className="border-border/50 shadow-sm">
+    <CardHeader className="pb-3">
+      <CardTitle className="text-sm font-semibold flex items-center gap-2">
+        <Layers className="w-4 h-4 text-muted-foreground" />
+        Composição do Portfólio
+      </CardTitle>
+    </CardHeader>
+    <CardContent>
+      <div className="flex flex-wrap gap-3">
+        {Object.entries(assetCounts).map(([tipo, count]) => {
+          const cfg = TIPO_ATIVO[tipo];
+          if (!cfg) return null;
+          const total = (assets as any[]).length;
+          const pct = Math.round(((count as number) / total) * 100);
+          return (
+            <div key={tipo} className={cn("flex items-center gap-2 px-3 py-2 rounded-xl", cfg.color)}>
+              <span className="text-sm font-bold">{count as number}</span>
+              <span className="text-xs font-medium">{cfg.label}</span>
+              <span className="text-xs opacity-60">{pct}%</span>
+            </div>
+          );
+        })}
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-muted/50 ml-auto">
+          <span className="text-sm font-bold">{(assets as any[]).length}</span>
+          <span className="text-xs text-muted-foreground">total</span>
+          {(assets as any[]).length > 0 && (
+            <span className="text-xs font-semibold text-emerald-600 ml-1">
+              R$ {formatBRL((assets as any[]).reduce((s: number, a: any) => s + (a.priceAsking || 0), 0))}
+            </span>
+          )}
+        </div>
+      </div>
+    </CardContent>
+  </Card>
+)}
+```
+
+Salve o arquivo.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 5 — SEGURANÇA: filtrar getAssets por orgId
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo `server/storage.ts`, localize o método `getAssets()`:
+
+SUBSTITUA:
+```typescript
+async getAssets(): Promise<Asset[]> {
+  return await db.select().from(assets).orderBy(desc(assets.createdAt));
+}
+```
+
+POR:
+```typescript
+async getAssets(orgId?: number): Promise<Asset[]> {
+  if (orgId) {
+    return await db.select().from(assets)
+      .where(eq(assets.orgId, orgId))
+      .orderBy(desc(assets.createdAt));
+  }
+  return await db.select().from(assets).orderBy(desc(assets.createdAt));
+}
+```
+
+E no arquivo `server/routes/assets.ts`, atualize a chamada:
+
+SUBSTITUA:
+```typescript
+const assetsList = await storage.getAssets();
+```
+
+POR:
+```typescript
+const user = req.user as any;
+const assetsList = await storage.getAssets(user?.orgId);
+```
+
+Salve os arquivos.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ORDEM DE EXECUÇÃO RECOMENDADA ANTES DE SEXTA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+HOJE (obrigatório):
+  1. PROMPT 1 — camposEspecificos no schema + npm run db:push
+  2. PROMPT 2 — Matching Engine score justo
+  3. PROMPT_PROSPECCAO_REVERSA_FINAL (gerado antes)
+  4. PROMPT_COORDENADAS_ATIVO_FORM (gerado antes)
+
+AMANHÃ (se der):
+  5. PROMPT 3 — status + exclusividade no schema
+  6. PROMPT 4 — gráfico portfólio no dashboard
+  7. PROMPT 5 — segurança orgId em getAssets
+  8. Confirmar se Embrapa, Menu, Mapa de Conexões foram aplicados
+
+ANTES DA DEMO:
+  - Cadastrar 3-5 ativos de exemplo com tipos variados
+  - Cadastrar 2-3 perfis de investidor COM critérios preenchidos
+  - Rodar matching manualmente para gerar sugestões
+  - Testar prospecção reversa em pelo menos 2 ativos
+  - Verificar que checklist persiste após reload (valida Bug 1 corrigido)

@@ -1,0 +1,913 @@
+# PROMPTS MAVRION — Prontos para colar no Replit AI
+# Cole um prompt por vez. Espere terminar antes de colar o próximo.
+# Ordem obrigatória: 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 0 — REESTRUTURAÇÃO DO MENU LATERAL
+Cole este primeiro. Não depende de nenhum outro.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo `client/src/components/layout-sidebar.tsx`, substitua todo o bloco `<div className="flex-1 py-3 px-3 overflow-y-auto space-y-0.5">` e seu conteúdo interno (até o `</div>` que fecha esse bloco) pelo seguinte:
+
+```tsx
+<div className="flex-1 py-3 px-3 overflow-y-auto space-y-0.5">
+
+  {hasPermission(user, "dashboard") && (
+    <NavLink href="/" icon={LayoutDashboard} label="Dashboard" exact />
+  )}
+
+  {/* ── FLUXO 1: CLIENTES & INVESTIDORES ── */}
+  <SectionLabel label="Clientes & Investidores" />
+  {hasPermission(user, "prospeccao") && (
+    <NavLink href="/prospeccao" icon={Telescope} label="Prospecção CNPJ" />
+  )}
+  {hasPermission(user, "prospeccao") && (
+    <NavLink href="/ma" icon={Handshake} label="M&A — Fusões & Aquisições" />
+  )}
+  {hasPermission(user, "sdr") && (
+    <NavLink href="/sdr" icon={Magnet} label="Fila SDR" />
+  )}
+  {hasPermission(user, "empresas") && (
+    <ExpandableNav href="/empresas" icon={Building2} label="Empresas">
+      <SubLink href="/empresas" icon={Download} label="Todas as Empresas" exact />
+      <SubLink href="/empresas/leads" icon={BadgeCheck} label="Leads Ativas" />
+      <SubLink href="/empresas/desqualificadas" icon={XCircle} label="Desqualificadas" />
+    </ExpandableNav>
+  )}
+  {hasPermission(user, "crm") && (
+    <NavLink href="/crm" icon={KanbanSquare} label="Pipeline de Deals" />
+  )}
+  {hasPermission(user, "propostas") && (
+    <NavLink href="/propostas" icon={FileText} label="Propostas" />
+  )}
+  {hasPermission(user, "propostas") && (
+    <NavLink href="/contratos" icon={FileSignature} label="Contratos" />
+  )}
+  {hasPermission(user, "crm") && (
+    <NavLink href="/portal-admin" icon={Globe} label="Portal Investidor" />
+  )}
+
+  {/* ── FLUXO 2: ATIVOS & OPORTUNIDADES ── */}
+  <SectionLabel label="Ativos & Oportunidades" />
+  {hasPermission(user, "ativos") && (
+    <ExpandableNav href="/ativos" icon={Layers} label="Portfólio de Ativos">
+      <SubLink href="/ativos" icon={Layers} label="Todos os Ativos" exact />
+      <SubLink href="/ativos/tipo/TERRA" icon={TreePine} label="Terras & Fazendas" />
+      <SubLink href="/ativos/tipo/MINA" icon={Pickaxe} label="Mineração" />
+      <SubLink href="/ativos/tipo/NEGOCIO" icon={Briefcase} label="Negócios M&A" />
+      <SubLink href="/ativos/tipo/FII_CRI" icon={Home} label="FII / CRI / Imóveis" />
+      <SubLink href="/ativos/tipo/DESENVOLVIMENTO" icon={Factory} label="Desenvolvimento" />
+      <SubLink href="/ativos/tipo/AGRO" icon={Wheat} label="Agronegócio" />
+    </ExpandableNav>
+  )}
+  {hasPermission(user, "ativos") && (
+    <NavLink href="/geo-rural" icon={TreePine} label="Prospecção Rural (SICAR)" status={serviceStatus?.sicar} />
+  )}
+  {hasPermission(user, "ativos") && (
+    <NavLink href="/anm" icon={Map} label="Portal ANM" status={serviceStatus?.anm} />
+  )}
+  {hasPermission(user, "matching") && (
+    <NavLink href="/matching" icon={Target} label="Matching" />
+  )}
+
+  {/* ── RESULTADOS ── */}
+  <SectionLabel label="Resultados" />
+  <NavLink href="/relatorios" icon={BarChart3} label="Relatórios" />
+
+  {/* ── SISTEMA — apenas admin/manager ── */}
+  {(user?.role === "admin" || user?.role === "manager") && (
+    <>
+      <SectionLabel label="Sistema" />
+      {hasPermission(user, "connectors") && (
+        <NavLink href="/connectors" icon={Plug} label="Connectors" />
+      )}
+      {hasPermission(user, "users") && (
+        <NavLink href="/users" icon={Users} label="Usuários" />
+      )}
+      <NavLink href="/error-reports" icon={Bug} label="Erros & Relatórios" />
+      <NavLink href="/configuracoes" icon={Settings2} label="Configurações" />
+    </>
+  )}
+
+  {/* Manual — visível para todos */}
+  <SectionLabel label="Ajuda" />
+  <NavLink href="/manual" icon={BookOpen} label="Manual do Sistema" />
+
+</div>
+```
+
+Não altere nada fora desse bloco. Não remova nenhum import existente. Salve o arquivo.
+
+O que foi mudado:
+- Menu organizado em 2 fluxos claros: "Clientes & Investidores" e "Ativos & Oportunidades"
+- "Arquitetura" removida do menu (é documentação de desenvolvimento, não funcionalidade)
+- "Erros & Relatórios", "Connectors" e "Usuários" movidos para seção "Sistema" visível apenas para admin e manager
+- CAF removido do menu (módulo desativado temporariamente)
+- M&A movido para "Clientes & Investidores" onde faz sentido
+- Matching movido para "Ativos & Oportunidades" onde é usado
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 1 — SCHEMA: NOVOS CAMPOS NO BANCO DE DADOS
+Cole após o Prompt 0 terminar.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo `shared/schema.ts`, faça as seguintes 3 alterações:
+
+**Alteração 1** — Na tabela `assets`, localize o campo `createdAt` e adicione estes campos ANTES dele:
+
+```typescript
+statusAtivo: text("status_ativo").default("ativo"),
+activityLog: jsonb("activity_log").default([]),
+camposEspecificos: jsonb("campos_especificos").default({}),
+```
+
+**Alteração 2** — Na tabela `investorProfiles`, localize o campo `createdAt` e adicione estes campos ANTES dele:
+
+```typescript
+buyerType: text("buyer_type").default("financeiro"),
+cnaeInteresse: jsonb("cnae_interesse").default([]),
+prazoDecisao: text("prazo_decisao"),
+dealsAnteriores: boolean("deals_anteriores").default(false),
+capacidadeAquisicao: doublePrecision("capacidade_aquisicao"),
+```
+
+**Alteração 3** — Na tabela `deals`, localize o campo `createdAt` e adicione estes campos ANTES dele:
+
+```typescript
+feeType: text("fee_type"),
+feePercent: doublePrecision("fee_percent"),
+feeValue: doublePrecision("fee_value"),
+feeStatus: text("fee_status").default("a_receber"),
+feeNotes: text("fee_notes"),
+```
+
+Após salvar o arquivo, execute no terminal:
+```bash
+npx drizzle-kit push
+```
+Confirme com `yes` se solicitado.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 2 — ATIVOS: CAMPOS ESPECÍFICOS POR TIPO + STATUS + ORIGEM
+Cole após o Prompt 1 terminar.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo `client/src/pages/ativos.tsx`, aplique as seguintes alterações:
+
+**Alteração 1** — Logo após a constante `DOCS_STATUS_OPTIONS`, adicione estas novas constantes:
+
+```typescript
+const STATUS_ATIVO_OPTIONS = [
+  { value: "rascunho",      label: "Rascunho" },
+  { value: "em_validacao",  label: "Em validação" },
+  { value: "ativo",         label: "Ativo" },
+  { value: "em_negociacao", label: "Em negociação" },
+  { value: "fechado",       label: "Fechado" },
+  { value: "arquivado",     label: "Arquivado" },
+];
+
+const STATUS_BADGE_CONFIG: Record<string, { label: string; class: string }> = {
+  rascunho:      { label: "Rascunho",      class: "bg-gray-100 text-gray-600" },
+  em_validacao:  { label: "Em validação",  class: "bg-yellow-100 text-yellow-700" },
+  ativo:         { label: "Ativo",         class: "bg-green-100 text-green-700" },
+  em_negociacao: { label: "Em negociação", class: "bg-blue-100 text-blue-700" },
+  fechado:       { label: "Fechado",       class: "bg-purple-100 text-purple-700" },
+  arquivado:     { label: "Arquivado",     class: "bg-red-100 text-red-600" },
+};
+
+const ORIGEM_ATIVO_OPTIONS = [
+  { value: "prospeccao_interna", label: "Prospecção interna (ANM, SICAR, CNPJA)" },
+  { value: "oferta_recebida",    label: "Oferta recebida (proprietário entrou em contato)" },
+  { value: "indicacao",          label: "Indicação de parceiro" },
+  { value: "portal_publico",     label: "Portal público" },
+];
+
+const ORIGEM_BADGE_CONFIG: Record<string, { label: string; class: string }> = {
+  oferta_recebida:     { label: "Oferta recebida", class: "bg-amber-100 text-amber-700" },
+  indicacao:           { label: "Indicação",        class: "bg-blue-100 text-blue-700" },
+  prospeccao_interna:  { label: "Prospecção",       class: "bg-gray-100 text-gray-600" },
+  portal_publico:      { label: "Portal público",   class: "bg-purple-100 text-purple-700" },
+};
+
+const CAMPOS_ESPECIFICOS: Record<string, Array<{ key: string; label: string; placeholder: string; type?: string }>> = {
+  MINA: [
+    { key: "processoAnm",     label: "Nº Processo ANM",      placeholder: "ex: 800.123/2020" },
+    { key: "substancia",      label: "Substância principal", placeholder: "ex: Ferro, Ouro, Calcário" },
+    { key: "faseAnm",         label: "Fase do processo",     placeholder: "ex: Concessão de Lavra" },
+    { key: "situacaoAnm",     label: "Situação jurídica",    placeholder: "ex: Ativo, Suspenso" },
+    { key: "validadeAnm",     label: "Validade da licença",  placeholder: "ex: 2027-12-31", type: "date" },
+    { key: "ultimoEventoAnm", label: "Último evento ANM",    placeholder: "ex: Relatório anual enviado" },
+  ],
+  TERRA: [
+    { key: "codigoCar",          label: "Código CAR",           placeholder: "ex: MT-5107800-ABC123" },
+    { key: "validadeCar",        label: "Validade do CAR",      placeholder: "ex: 2026-06-30", type: "date" },
+    { key: "ccir",               label: "CCIR",                 placeholder: "Nº do CCIR" },
+    { key: "itrEmDia",           label: "ITR em dia?",          placeholder: "Sim / Não / Pendente" },
+    { key: "aptidaoAgricola",    label: "Aptidão agrícola",     placeholder: "ex: Soja, Milho, Pecuária" },
+    { key: "certificacaoSigef",  label: "Certificação SIGEF",   placeholder: "ex: Certificado, Pendente" },
+  ],
+  AGRO: [
+    { key: "codigoCar",             label: "Código CAR",           placeholder: "ex: MT-5107800-ABC123" },
+    { key: "culturas",              label: "Culturas produzidas",  placeholder: "ex: Soja, Milho, Algodão" },
+    { key: "capacidadeArmazenagem", label: "Armazenagem (ton)",    placeholder: "ex: 5000" },
+    { key: "possuiSilos",           label: "Possui silos?",        placeholder: "Sim / Não" },
+  ],
+  FII_CRI: [
+    { key: "registroCvm", label: "Registro CVM",    placeholder: "ex: FII 123.456/2020" },
+    { key: "gestora",     label: "Gestora",          placeholder: "ex: XP Gestão" },
+    { key: "dy12m",       label: "DY 12 meses (%)", placeholder: "ex: 8.5", type: "number" },
+    { key: "pvp",         label: "P/VP",             placeholder: "ex: 0.95", type: "number" },
+  ],
+  DESENVOLVIMENTO: [
+    { key: "alvara",         label: "Nº Alvará",           placeholder: "ex: 2024/1234" },
+    { key: "validadeAlvara", label: "Validade Alvará",      placeholder: "ex: 2026-12-31", type: "date" },
+    { key: "vgv",            label: "VGV estimado (R$)",    placeholder: "ex: 15000000", type: "number" },
+    { key: "estagioObra",    label: "Estágio da obra",      placeholder: "ex: Terreno, 30%" },
+  ],
+  NEGOCIO: [
+    { key: "cnpj",             label: "CNPJ da empresa",       placeholder: "ex: 00.000.000/0001-00" },
+    { key: "faturamentoAnual", label: "Faturamento anual (R$)", placeholder: "ex: 5000000", type: "number" },
+    { key: "ebitda",           label: "EBITDA (R$)",           placeholder: "ex: 800000", type: "number" },
+    { key: "multiplo",         label: "Múltiplo pedido (x)",   placeholder: "ex: 6x EBITDA" },
+    { key: "motivoVenda",      label: "Motivo da venda",       placeholder: "ex: Sucessão, Expansão" },
+  ],
+};
+
+function verificarUrgenciaDocumental(ativo: any): { urgente: boolean; diasRestantes: number | null; campo: string } {
+  const campos = (ativo.camposEspecificos as any) || {};
+  const datas = [
+    { key: "validadeCar",    label: "CAR" },
+    { key: "validadeAnm",    label: "ANM" },
+    { key: "validadeAlvara", label: "Alvará" },
+  ];
+  for (const { key, label } of datas) {
+    if (campos[key]) {
+      const dias = Math.floor((new Date(campos[key]).getTime() - Date.now()) / 86400000);
+      if (dias <= 90) return { urgente: true, diasRestantes: dias, campo: label };
+    }
+  }
+  return { urgente: false, diasRestantes: null, campo: "" };
+}
+```
+
+**Alteração 2** — No objeto `EMPTY_FORM`, adicione estes campos aos já existentes:
+
+```typescript
+statusAtivo: "ativo",
+origemAtivo: "prospeccao_interna",
+ofertanteNome: "",
+ofertanteTelefone: "",
+ofertanteEmail: "",
+ofertanteObservacoes: "",
+camposEspecificos: {} as Record<string, string>,
+```
+
+**Alteração 3** — No componente `AtivoFormDialog`, no bloco onde o `form` é inicializado com `initial` (o trecho que começa com `initial ? {`), adicione estes campos junto aos outros:
+
+```typescript
+statusAtivo: initial.statusAtivo || "ativo",
+origemAtivo: (initial.camposEspecificos as any)?.origemAtivo || "prospeccao_interna",
+ofertanteNome: (initial.camposEspecificos as any)?.ofertanteNome || "",
+ofertanteTelefone: (initial.camposEspecificos as any)?.ofertanteTelefone || "",
+ofertanteEmail: (initial.camposEspecificos as any)?.ofertanteEmail || "",
+ofertanteObservacoes: (initial.camposEspecificos as any)?.ofertanteObservacoes || "",
+camposEspecificos: (initial.camposEspecificos as any) || {},
+```
+
+**Alteração 4** — No formulário dentro de `AtivoFormDialog`, logo ANTES do bloco `{/* Descrição */}`, adicione:
+
+```tsx
+{/* Status do ativo */}
+<div className="space-y-2">
+  <Label>Status do ativo</Label>
+  <Select value={form.statusAtivo || "ativo"} onValueChange={v => set("statusAtivo", v)}>
+    <SelectTrigger><SelectValue /></SelectTrigger>
+    <SelectContent>
+      {STATUS_ATIVO_OPTIONS.map(o => (
+        <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+      ))}
+    </SelectContent>
+  </Select>
+</div>
+
+{/* Origem do ativo */}
+<div className="space-y-2">
+  <Label>Origem do ativo</Label>
+  <Select value={form.origemAtivo || "prospeccao_interna"} onValueChange={v => set("origemAtivo", v)}>
+    <SelectTrigger><SelectValue /></SelectTrigger>
+    <SelectContent>
+      {ORIGEM_ATIVO_OPTIONS.map(o => (
+        <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+      ))}
+    </SelectContent>
+  </Select>
+</div>
+
+{/* Dados do ofertante */}
+{(form.origemAtivo === "oferta_recebida" || form.origemAtivo === "indicacao") && (
+  <div className="space-y-3 p-4 rounded-lg border bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800">
+    <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+      {form.origemAtivo === "oferta_recebida" ? "Dados do ofertante" : "Dados de quem indicou"}
+    </p>
+    <div className="grid sm:grid-cols-2 gap-4">
+      <div className="space-y-2">
+        <Label className="text-xs">Nome completo</Label>
+        <Input value={form.ofertanteNome} onChange={e => set("ofertanteNome", e.target.value)} placeholder="ex: João da Silva" />
+      </div>
+      <div className="space-y-2">
+        <Label className="text-xs">Telefone / WhatsApp</Label>
+        <Input value={form.ofertanteTelefone} onChange={e => set("ofertanteTelefone", e.target.value)} placeholder="ex: (65) 99999-0000" />
+      </div>
+    </div>
+    <div className="space-y-2">
+      <Label className="text-xs">E-mail</Label>
+      <Input type="email" value={form.ofertanteEmail} onChange={e => set("ofertanteEmail", e.target.value)} placeholder="ex: joao@fazenda.com" />
+    </div>
+    <div className="space-y-2">
+      <Label className="text-xs">Observações sobre o contato</Label>
+      <Textarea rows={2} value={form.ofertanteObservacoes} onChange={e => set("ofertanteObservacoes", e.target.value)} placeholder="ex: Quer vender urgente, documentação em ordem..." />
+    </div>
+  </div>
+)}
+
+{/* Campos específicos por tipo */}
+{CAMPOS_ESPECIFICOS[form.type] && (
+  <div className="space-y-3 p-4 rounded-lg border bg-muted/30">
+    <p className="text-sm font-medium text-muted-foreground">
+      Dados específicos — {TIPO_CONFIG[form.type]?.label}
+    </p>
+    <div className="grid sm:grid-cols-2 gap-4">
+      {CAMPOS_ESPECIFICOS[form.type].map(campo => (
+        <div key={campo.key} className="space-y-2">
+          <Label className="text-xs">{campo.label}</Label>
+          <Input
+            type={campo.type || "text"}
+            value={(form.camposEspecificos as any)?.[campo.key] || ""}
+            onChange={e => setForm(f => ({
+              ...f,
+              camposEspecificos: { ...(f.camposEspecificos as any), [campo.key]: e.target.value },
+            }))}
+            placeholder={campo.placeholder}
+          />
+        </div>
+      ))}
+    </div>
+  </div>
+)}
+```
+
+**Alteração 5** — Dentro da função `save`, no objeto `payload`, adicione:
+
+```typescript
+statusAtivo: form.statusAtivo || "ativo",
+camposEspecificos: {
+  ...(form.camposEspecificos as any || {}),
+  origemAtivo: form.origemAtivo || "prospeccao_interna",
+  ...(form.origemAtivo === "oferta_recebida" || form.origemAtivo === "indicacao" ? {
+    ofertanteNome: form.ofertanteNome || null,
+    ofertanteTelefone: form.ofertanteTelefone || null,
+    ofertanteEmail: form.ofertanteEmail || null,
+    ofertanteObservacoes: form.ofertanteObservacoes || null,
+  } : {}),
+},
+```
+
+**Alteração 6** — No componente `AtivoCard`, dentro do `<div>` que contém os badges (logo após o `<Badge>` do tipo de ativo), adicione:
+
+```tsx
+{ativo.statusAtivo && ativo.statusAtivo !== "ativo" && (
+  <Badge variant="outline" className={cn("text-xs mt-1 border-0 font-medium", STATUS_BADGE_CONFIG[ativo.statusAtivo]?.class)}>
+    {STATUS_BADGE_CONFIG[ativo.statusAtivo]?.label}
+  </Badge>
+)}
+{(() => {
+  const u = verificarUrgenciaDocumental(ativo);
+  if (!u.urgente) return null;
+  return (
+    <Badge variant="outline" className="text-xs mt-1 border-0 font-medium bg-red-100 text-red-700">
+      ⚠️ {u.campo} vence em {u.diasRestantes}d
+    </Badge>
+  );
+})()}
+{(() => {
+  const origem = (ativo.camposEspecificos as any)?.origemAtivo;
+  if (!origem || origem === "prospeccao_interna") return null;
+  const cfg = ORIGEM_BADGE_CONFIG[origem];
+  if (!cfg) return null;
+  return (
+    <Badge variant="outline" className={cn("text-xs mt-1 border-0 font-medium", cfg.class)}>
+      {cfg.label}
+    </Badge>
+  );
+})()}
+```
+
+Salve o arquivo.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 3 — MATCHING: ALGORITMO + COMPRADOR ESTRATÉGICO
+Cole após o Prompt 2 terminar.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo `server/routes/matching.ts`, aplique estas alterações:
+
+**Alteração 1** — Substitua TODAS as ocorrências de `getOrgId()` (sem argumentos) por `getOrgId(req)`.
+
+**Alteração 2** — No final da rota `app.post(api.matching.suggestions.run.path, ...)`, logo ANTES do bloco `if (matchesFound > 0)`, adicione este novo loop de matching com compradores estratégicos:
+
+```typescript
+// ── MATCHING COM COMPRADORES ESTRATÉGICOS ──
+const orgId = getOrgId(req);
+const allCompanies = await storage.getCompanies?.() ?? [];
+const compradores = allCompanies.filter((c: any) => {
+  const prefs = (c.enrichmentData as any) || {};
+  return prefs.buyerType === "estrategico" || ((prefs.cnaeInteresse || []).length > 0);
+});
+
+const CNAE_POR_TIPO: Record<string, string[]> = {
+  MINA:    ["0710", "0890", "0810", "0600"],
+  TERRA:   ["0111", "0112", "0113", "0114", "0115", "0116", "0119", "0121", "0151"],
+  AGRO:    ["0111", "0112", "1011", "1012", "1031", "1061", "1065"],
+  FII_CRI: ["6422", "6423", "6431", "6432", "6450", "6630"],
+  DESENVOLVIMENTO: ["4110", "4120", "4211", "6810", "6821"],
+  NEGOCIO: [],
+};
+
+for (const asset of allAssets) {
+  for (const comprador of compradores) {
+    const enrichment = (comprador.enrichmentData as any) || {};
+    const cnaeInteresse: string[] = enrichment.cnaeInteresse || [];
+    const regioesInteresse: string[] = enrichment.regioesInteresse || [];
+    const cnaesEsperados = CNAE_POR_TIPO[asset.type] || [];
+
+    let score = 0;
+    const reasons: string[] = [];
+    const penalties: string[] = [];
+
+    const cnaeMatch = cnaeInteresse.length === 0
+      ? asset.type === "NEGOCIO"
+      : cnaeInteresse.some(cnae => cnaesEsperados.some(esp => cnae.startsWith(esp)));
+
+    if (cnaeMatch) {
+      score += 40;
+      reasons.push(`CNAE compatível com tipo ${asset.type}`);
+    } else if (asset.type === "NEGOCIO") {
+      score += 20;
+      reasons.push("Negócio — comprador estratégico genérico");
+    } else {
+      penalties.push(`CNAE não compatível com ${asset.type}`);
+    }
+
+    if (regioesInteresse.length === 0) {
+      score += 15;
+      reasons.push("Comprador opera em qualquer região");
+    } else if (matchesRegion(asset.location || asset.estado, regioesInteresse)) {
+      score += 25;
+      reasons.push("Região compatível");
+    } else {
+      penalties.push("Região fora do interesse");
+    }
+
+    if (asset.docsStatus === "completo") { score += 10; reasons.push("Documentação completa"); }
+
+    if (score >= 40 && penalties.length <= 1) {
+      const existingComp = await db.select().from(matchSuggestions).where(
+        and(eq(matchSuggestions.assetId, asset.id), eq(matchSuggestions.orgId, orgId))
+      );
+      const jaExiste = existingComp.some(e => (e.reasonsJson as any)?.compradorId === comprador.id);
+      if (!jaExiste) {
+        await db.insert(matchSuggestions).values({
+          orgId,
+          assetId: asset.id,
+          investorProfileId: null,
+          score: Math.min(score, 100),
+          reasonsJson: { reasons, penalties, tipo: "estrategico", compradorId: comprador.id, compradorNome: comprador.tradeName || comprador.legalName },
+          status: "new",
+        });
+        matchesFound++;
+      }
+    }
+  }
+}
+```
+
+Salve o arquivo.
+
+No arquivo `client/src/pages/matching.tsx`, no componente `AddInvestorDialog`, adicione estes campos no `form` state inicial:
+```typescript
+buyerType: "financeiro",
+cnaeInteresse: "",
+prazoDecisao: "",
+```
+
+E no JSX do formulário, após o campo "Regiões de Interesse", adicione:
+
+```tsx
+<div className="space-y-2">
+  <Label>Tipo de comprador</Label>
+  <Select value={form.buyerType || "financeiro"} onValueChange={v => setForm({ ...form, buyerType: v })}>
+    <SelectTrigger><SelectValue /></SelectTrigger>
+    <SelectContent>
+      <SelectItem value="financeiro">Investidor financeiro (fundo, family office)</SelectItem>
+      <SelectItem value="estrategico">Comprador estratégico (empresa operacional)</SelectItem>
+    </SelectContent>
+  </Select>
+</div>
+{form.buyerType === "estrategico" && (
+  <div className="space-y-2">
+    <Label>CNAEs de interesse (separar por vírgula)</Label>
+    <Input value={form.cnaeInteresse || ""} onChange={e => setForm({ ...form, cnaeInteresse: e.target.value })} placeholder="ex: 0710-1, 0890-0" />
+  </div>
+)}
+<div className="space-y-2">
+  <Label>Prazo de decisão</Label>
+  <Select value={form.prazoDecisao || ""} onValueChange={v => setForm({ ...form, prazoDecisao: v })}>
+    <SelectTrigger><SelectValue placeholder="Selecionar..." /></SelectTrigger>
+    <SelectContent>
+      <SelectItem value="imediato">Imediato (até 30 dias)</SelectItem>
+      <SelectItem value="3_meses">Até 3 meses</SelectItem>
+      <SelectItem value="6_meses">Até 6 meses</SelectItem>
+      <SelectItem value="12_meses">Até 12 meses</SelectItem>
+    </SelectContent>
+  </Select>
+</div>
+```
+
+Salve o arquivo.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 4 — CRM: CONTROLE DE COMISSÃO NO DEAL
+Cole após o Prompt 3 terminar.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Localize o arquivo do CRM onde fica o sheet/drawer lateral de detalhes do deal. Esse arquivo provavelmente está em `client/src/pages/crm/` ou similar.
+
+No componente que exibe os detalhes do deal (o painel lateral que abre ao clicar em um card do Kanban), adicione esta seção após o bloco de "Descrição" ou "Observações":
+
+```tsx
+{/* ── CONTROLE DE COMISSÃO ── */}
+<div className="space-y-3 pt-4 border-t">
+  <h4 className="text-sm font-semibold flex items-center gap-2">
+    <DollarSign className="w-4 h-4 text-muted-foreground" />
+    Comissão / Fee
+  </h4>
+  <div className="grid grid-cols-2 gap-3">
+    <div className="space-y-1">
+      <label className="text-xs text-muted-foreground">Tipo de fee</label>
+      <Select value={deal.feeType || ""} onValueChange={v => updateDeal({ feeType: v })}>
+        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecionar..." /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="success_fee">Success Fee</SelectItem>
+          <SelectItem value="retainer">Retainer</SelectItem>
+          <SelectItem value="misto">Misto</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+    <div className="space-y-1">
+      <label className="text-xs text-muted-foreground">Percentual (%)</label>
+      <Input
+        className="h-8 text-xs" type="number" step="0.1"
+        placeholder="ex: 1.5" value={deal.feePercent || ""}
+        onChange={e => {
+          const pct = parseFloat(e.target.value) || 0;
+          const base = deal.value || deal.amountEstimate || 0;
+          updateDeal({ feePercent: pct, feeValue: base * pct / 100 });
+        }}
+      />
+    </div>
+  </div>
+  {(deal.feeValue > 0) && (
+    <div className="p-2 rounded bg-muted/50 text-xs flex justify-between items-center">
+      <span className="text-muted-foreground">Fee calculado:</span>
+      <span className="font-semibold text-green-700">
+        R$ {Number(deal.feeValue).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+      </span>
+    </div>
+  )}
+  <div className="space-y-1">
+    <label className="text-xs text-muted-foreground">Status do pagamento</label>
+    <Select value={deal.feeStatus || "a_receber"} onValueChange={v => updateDeal({ feeStatus: v })}>
+      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="a_receber">A receber</SelectItem>
+        <SelectItem value="parcial">Parcialmente recebido</SelectItem>
+        <SelectItem value="recebido">Recebido ✓</SelectItem>
+        <SelectItem value="cancelado">Cancelado</SelectItem>
+      </SelectContent>
+    </Select>
+  </div>
+  <Textarea
+    className="text-xs min-h-[60px]"
+    placeholder="Notas sobre a comissão (ex: pagamento em 2x, NF pendente...)"
+    value={deal.feeNotes || ""}
+    onChange={e => updateDeal({ feeNotes: e.target.value })}
+  />
+</div>
+```
+
+Certifique-se que `DollarSign` está importado de `lucide-react`. Se a função `updateDeal` ainda não aceitar os campos `feeType`, `feePercent`, `feeValue`, `feeStatus` e `feeNotes`, adicione-os como campos opcionais no schema Zod da rota PATCH de deals.
+
+Salve o arquivo.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 5 — PROSPECÇÃO REVERSA: ATIVO → EMPRESAS COMPRADORAS
+Cole após o Prompt 4 terminar.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**Arquivo 1:** `server/routes/prospeccao.ts`
+
+Dentro da função `registerProspeccaoRoutes`, logo antes do fechamento `}` da função, adicione esta nova rota:
+
+```typescript
+app.get("/api/prospeccao/reversa", async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+  try {
+    const { tipo, estado, substancia } = req.query as Record<string, string>;
+
+    const CNAE_POR_TIPO: Record<string, number[]> = {
+      MINA:            [710, 890, 810, 600],
+      TERRA:           [111, 112, 113, 114, 115, 116, 119, 121, 151],
+      AGRO:            [111, 112, 1011, 1012, 1031, 1061, 1065],
+      FII_CRI:         [6422, 6423, 6431, 6432, 6450, 6630],
+      DESENVOLVIMENTO: [4110, 4120, 4211, 6810, 6821],
+      NEGOCIO:         [],
+    };
+
+    const cnaesCodes = CNAE_POR_TIPO[tipo] || [];
+    const params = new URLSearchParams();
+    params.set("limit", "20");
+    params.set("head.eq", "true");
+    params.set("status.id.in", "2");
+    if (cnaesCodes.length > 0) params.set("mainActivity.id.in", cnaesCodes.join(","));
+    if (estado) params.set("address.state.in", estado.toUpperCase());
+    if (tipo === "MINA" && substancia) params.set("names.in", substancia);
+
+    const response = await fetch(`https://api.cnpja.com/office?${params.toString()}`, { headers: cnpjaHeaders() });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({})) as any;
+      return res.status(response.status).json({ message: err.message || "Erro na busca reversa" });
+    }
+
+    const data = await response.json() as any;
+    const saved = await db.select({ cnpj: companies.cnpj }).from(companies);
+    const savedSet = new Set(saved.map((c: any) => c.cnpj).filter(Boolean));
+
+    const results = (data.records || []).map((r: any) => ({
+      taxId: r.taxId,
+      legalName: r.company?.name || "",
+      tradeName: r.alias || null,
+      porte: r.company?.size?.text || null,
+      cnaePrincipal: r.mainActivity?.text || null,
+      cnaeCode: r.mainActivity?.id || null,
+      city: r.address?.city || null,
+      state: r.address?.state || null,
+      equity: r.company?.equity || null,
+      phones: (r.phones || []).map((p: any) => p.number),
+      emails: (r.emails || []).map((e: any) => e.address),
+      alreadySaved: savedSet.has(r.taxId),
+    }));
+
+    res.json({ count: data.count, results });
+  } catch (err) {
+    console.error("Prospecção reversa error:", err);
+    res.status(500).json({ message: "Falha na prospecção reversa" });
+  }
+});
+```
+
+Salve o arquivo.
+
+---
+
+**Arquivo 2:** `client/src/pages/ativo-detalhe.tsx`
+
+**Alteração 1** — No componente `AtivoDetalhePage`, após as queries existentes (`useQuery` de `deals`), adicione:
+
+```typescript
+const [buscandoCompradores, setBuscandoCompradores] = useState(false);
+const [compradores, setCompradores] = useState<any[]>([]);
+const [totalEncontrados, setTotalEncontrados] = useState<number | null>(null);
+const [buscaRealizada, setBuscaRealizada] = useState(false);
+
+const buscarCompradores = async () => {
+  setBuscandoCompradores(true);
+  try {
+    const params = new URLSearchParams({ tipo: ativo.type });
+    if (ativo.estado) params.set("estado", ativo.estado);
+    const campos = (ativo.camposEspecificos as any) || {};
+    if (ativo.type === "MINA" && campos.substancia) params.set("substancia", campos.substancia);
+    const res = await apiRequest("GET", `/api/prospeccao/reversa?${params.toString()}`);
+    const data = await res.json();
+    setCompradores(data.results || []);
+    setTotalEncontrados(data.count ?? null);
+    setBuscaRealizada(true);
+  } catch {
+    toast({ title: "Erro ao buscar compradores", variant: "destructive" });
+  } finally {
+    setBuscandoCompradores(false);
+  }
+};
+
+const importarComprador = async (comprador: any) => {
+  try {
+    await apiRequest("POST", "/api/prospeccao/import", { cnpjs: [comprador.taxId] });
+    toast({ title: "Empresa importada", description: `${comprador.tradeName || comprador.legalName} adicionada ao CRM` });
+    setCompradores(prev => prev.map(c => c.taxId === comprador.taxId ? { ...c, alreadySaved: true } : c));
+  } catch {
+    toast({ title: "Erro ao importar empresa", variant: "destructive" });
+  }
+};
+```
+
+**Alteração 2** — Na `<TabsList>`, adicione este item antes do fechamento:
+
+```tsx
+<TabsTrigger value="compradores">Compradores</TabsTrigger>
+```
+
+**Alteração 3** — Após o último `</TabsContent>` existente, adicione:
+
+```tsx
+<TabsContent value="compradores" className="mt-4 space-y-4">
+  <Card>
+    <CardHeader className="pb-3">
+      <CardTitle className="text-sm flex items-center gap-2">
+        <Search className="w-4 h-4 text-muted-foreground" />
+        Prospecção Reversa
+      </CardTitle>
+      <p className="text-xs text-muted-foreground mt-1">
+        Empresas compradoras compatíveis com este ativo via CNPJA
+        {ativo.estado ? ` em ${ativo.estado}` : ""}.
+      </p>
+    </CardHeader>
+    <CardContent>
+      {!buscaRealizada ? (
+        <div className="text-center py-8 space-y-3">
+          <p className="text-sm text-muted-foreground">Nenhuma busca realizada ainda.</p>
+          <Button onClick={buscarCompradores} disabled={buscandoCompradores} className="gap-2">
+            {buscandoCompradores
+              ? <><Loader2 className="w-4 h-4 animate-spin" /> Buscando...</>
+              : <><Search className="w-4 h-4" /> Buscar compradores compatíveis</>}
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">
+              {totalEncontrados !== null
+                ? `${totalEncontrados.toLocaleString("pt-BR")} encontradas — exibindo ${compradores.length}`
+                : `${compradores.length} encontradas`}
+            </p>
+            <Button variant="outline" size="sm" onClick={buscarCompradores} disabled={buscandoCompradores} className="h-7 text-xs gap-1">
+              {buscandoCompradores ? <Loader2 className="w-3 h-3 animate-spin" /> : "↺"} Refazer
+            </Button>
+          </div>
+          {compradores.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-6">Nenhuma empresa encontrada.</p>
+          ) : (
+            compradores.map(c => (
+              <div key={c.taxId} className="flex items-start justify-between gap-3 p-3 rounded-lg border hover:border-primary/30 transition-colors">
+                <div className="flex-1 min-w-0 space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-medium text-sm truncate">{c.tradeName || c.legalName}</p>
+                    {c.alreadySaved && (
+                      <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">No CRM</Badge>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground font-mono">{c.taxId}</p>
+                  <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                    {c.cnaePrincipal && <span>{c.cnaePrincipal}</span>}
+                    {(c.city || c.state) && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{[c.city, c.state].filter(Boolean).join("/")}</span>}
+                    {c.porte && <span>{c.porte}</span>}
+                  </div>
+                </div>
+                <div className="shrink-0">
+                  {!c.alreadySaved ? (
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => importarComprador(c)}>
+                      Importar
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="ghost" className="h-7 text-xs text-primary" onClick={() => navigate("/empresas")}>
+                      Ver no CRM
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </CardContent>
+  </Card>
+</TabsContent>
+```
+
+Adicione `Search` aos imports do `lucide-react` se ainda não estiver. Salve o arquivo.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 6 — OFERTA RECEBIDA: MATCHING AUTOMÁTICO + DETALHE
+Cole após o Prompt 5 terminar.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**Arquivo 1:** `server/routes/matching.ts`
+
+Na rota `POST /api/matching/assets` (a rota que cria um novo ativo), certifique-se que o ativo criado é salvo em uma variável. Depois do `await storage.createAsset(...)`, adicione:
+
+```typescript
+const novoAtivo = await storage.createAsset(payload);
+
+// Matching automático para ativos de oferta recebida
+const camposEsp = (novoAtivo.camposEspecificos as any) || {};
+if (camposEsp.origemAtivo === "oferta_recebida" || camposEsp.origemAtivo === "indicacao") {
+  setImmediate(async () => {
+    try {
+      const allInvestors = await storage.getInvestors();
+      let autoMatches = 0;
+      for (const investor of allInvestors) {
+        const tipos = (investor.assetTypes as string[]) || [];
+        const regioes = (investor.regionsOfInterest as string[]) || [];
+        const tipoOk = tipos.length === 0 || tipos.includes(novoAtivo.type);
+        const regiaoOk = matchesRegion(novoAtivo.location || novoAtivo.estado, regioes);
+        if (tipoOk && regiaoOk) {
+          await db.insert(matchSuggestions).values({
+            orgId: novoAtivo.orgId,
+            assetId: novoAtivo.id,
+            investorProfileId: investor.id,
+            score: 60,
+            reasonsJson: { reasons: ["Ativo recebido por oferta — match prioritário"], penalties: [], origem: "oferta_automatica" },
+            status: "new",
+          });
+          autoMatches++;
+        }
+      }
+      if (autoMatches > 0) {
+        sendNotification({
+          id: notifId(),
+          type: "new_match",
+          orgId: novoAtivo.orgId,
+          title: "Novo ativo por oferta",
+          message: `"${novoAtivo.title}" foi cadastrado e ${autoMatches} match(es) gerados automaticamente`,
+          link: `/ativos/${novoAtivo.id}`,
+          createdAt: new Date().toISOString(),
+        });
+      }
+    } catch (err) { console.error("Auto-matching oferta error:", err); }
+  });
+}
+
+return res.status(201).json(novoAtivo);
+```
+
+Se a rota já tinha um `res.status(201).json(...)`, substitua pelo trecho acima (mantendo o `novoAtivo` como variável).
+
+---
+
+**Arquivo 2:** `client/src/pages/ativo-detalhe.tsx`
+
+Na aba `info`, dentro do `<TabsContent value="info">`, após o card de "Empresa vinculada", adicione:
+
+```tsx
+{((ativo.camposEspecificos as any)?.origemAtivo === "oferta_recebida" ||
+  (ativo.camposEspecificos as any)?.origemAtivo === "indicacao") && (
+  <Card className="border-amber-200 dark:border-amber-800">
+    <CardHeader className="pb-3">
+      <CardTitle className="text-sm flex items-center gap-2">
+        <Building2 className="w-4 h-4 text-amber-600" />
+        {(ativo.camposEspecificos as any)?.origemAtivo === "oferta_recebida" ? "Ofertante — proprietário do ativo" : "Indicação"}
+        <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200 ml-auto">
+          Oferta recebida
+        </Badge>
+      </CardTitle>
+    </CardHeader>
+    <CardContent className="space-y-3">
+      <InfoRow label="Nome" value={(ativo.camposEspecificos as any)?.ofertanteNome} />
+      <InfoRow label="Telefone" value={(ativo.camposEspecificos as any)?.ofertanteTelefone} />
+      <InfoRow label="E-mail" value={(ativo.camposEspecificos as any)?.ofertanteEmail} />
+      <InfoRow label="Observações" value={(ativo.camposEspecificos as any)?.ofertanteObservacoes} />
+    </CardContent>
+  </Card>
+)}
+```
+
+Salve o arquivo.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RESUMO — ORDEM E O QUE CADA PROMPT RESOLVE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+| # | Arquivo | O que resolve |
+|---|---------|---------------|
+| 0 | layout-sidebar.tsx | Menu reorganizado em 2 fluxos, itens técnicos restritos a admin |
+| 1 | shared/schema.ts | Novos campos no banco (base para tudo) |
+| 2 | ativos.tsx | Campos por tipo, status, origem, ofertante, badges de urgência |
+| 3 | matching.ts + matching.tsx | Algoritmo com comprador estratégico, qualificação de investidor |
+| 4 | crm/index.tsx | Controle de comissão no deal |
+| 5 | prospeccao.ts + ativo-detalhe.tsx | Prospecção reversa: ativo → busca empresas compradoras |
+| 6 | matching.ts + ativo-detalhe.tsx | Matching automático ao receber oferta + exibe dados do ofertante |

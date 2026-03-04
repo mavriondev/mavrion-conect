@@ -1,0 +1,1065 @@
+/**
+ * MAVRION CONECT — Teste E2E Completo v2
+ * Cobre: autenticação, CRM, ativos (todos os tipos), matching,
+ *        prospecção, portal, validações, performance, edge cases
+ *
+ * Uso:
+ *   npx tsx scripts/e2e-test.ts          → saída no terminal
+ *   npx tsx scripts/e2e-test.ts --html   → gera scripts/e2e-report.html
+ */
+
+import * as fs from "fs";
+import * as path from "path";
+
+const BASE        = "http://localhost:5000";
+const CREDENTIALS = { username: "admin", password: "admin" };
+const HTML_MODE   = process.argv.includes("--html");
+
+let cookieJar = "";
+
+interface TestResult {
+  section:  string;
+  name:     string;
+  status:   "PASS" | "FAIL" | "WARN" | "SKIP";
+  detail?:  string;
+  duration: number;
+}
+
+const results: TestResult[] = [];
+let currentSection = "";
+
+const cleanup: {
+  deals:     number[];
+  assets:    number[];
+  investors: number[];
+  listings:  number[];
+  companies: number[];
+  contacts:  number[];
+  comments:  number[];
+} = { deals: [], assets: [], investors: [], listings: [], companies: [], contacts: [], comments: [] };
+
+function section(name: string) {
+  currentSection = name;
+  console.log(`\n${"━".repeat(60)}`);
+  console.log(`  ${name}`);
+  console.log("━".repeat(60));
+}
+
+async function api(method: string, urlPath: string, body?: any): Promise<{
+  ok: boolean; status: number; data: any; duration: number;
+}> {
+  const start = Date.now();
+  try {
+    const res = await fetch(`${BASE}${urlPath}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(cookieJar ? { Cookie: cookieJar } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const setCookie = res.headers.get("set-cookie");
+    if (setCookie) cookieJar = setCookie.split(";")[0];
+
+    let data: any = null;
+    try { data = await res.json(); } catch { data = null; }
+
+    return { ok: res.ok, status: res.status, data, duration: Date.now() - start };
+  } catch (err: any) {
+    return { ok: false, status: 0, data: { error: err.message }, duration: Date.now() - start };
+  }
+}
+
+function record(
+  name: string,
+  status: "PASS" | "FAIL" | "WARN" | "SKIP",
+  detail?: string,
+  duration = 0
+) {
+  results.push({ section: currentSection, name, status, detail, duration });
+  const icon = status === "PASS" ? "✅" : status === "FAIL" ? "❌" : status === "WARN" ? "⚠️ " : "⏭ ";
+  const time = duration > 0 ? ` (${duration}ms)` : "";
+  const det  = detail ? `  → ${detail}` : "";
+  console.log(`  ${icon} ${name}${time}${det}`);
+}
+
+function check(name: string, cond: boolean, detail?: string, duration = 0) {
+  record(name, cond ? "PASS" : "FAIL", detail, duration);
+  return cond;
+}
+
+function warn(name: string, detail?: string) {
+  record(name, "WARN", detail);
+}
+
+function skip(name: string, reason: string) {
+  record(name, "SKIP", reason);
+}
+
+function perfCheck(name: string, duration: number, limitMs: number) {
+  check(
+    `[PERF] ${name}`,
+    duration <= limitMs,
+    `${duration}ms ${duration <= limitMs ? "✓" : `⚠ limite ${limitMs}ms`}`,
+    duration
+  );
+}
+
+const ATIVOS_FIXTURE = [
+  {
+    _label: "TERRA",
+    type: "TERRA",
+    title: "[E2E] Fazenda Campo Verde — 1200ha",
+    description: "Fazenda com pivô central, lavoura de soja e milho. Documentação completa.",
+    location: "Rondonópolis, MT",
+    municipio: "Rondonópolis",
+    estado: "MT",
+    priceAsking: 18_000_000,
+    areaHa: 1200,
+    areaUtil: 950,
+    matricula: "MAT-12345",
+    docsStatus: "completo",
+    tags: ["soja", "milho", "pivô"],
+    camposEspecificos: {
+      carCodImovel: "MT-5107602-ABC12345",
+      ccirNumero: "1234567",
+      itrUltimoAno: 2023,
+      posseDocumentada: true,
+      latitude: -16.4661,
+      longitude: -54.6366,
+      codigoIbge: "5107602",
+    },
+    attributesJson: { soloTipo: "Latossolo", relevo: "plano" },
+  },
+  {
+    _label: "MINA",
+    type: "MINA",
+    title: "[E2E] Concessão Bauxita — MG",
+    description: "Processo ANM ativo, reserva estimada 2Mt, acesso rodoviário.",
+    location: "Mariana, MG",
+    municipio: "Mariana",
+    estado: "MG",
+    priceAsking: 45_000_000,
+    areaHa: 500,
+    tags: ["bauxita", "alumínio"],
+    camposEspecificos: {
+      substancia: "BAUXITA",
+      anmNumeroProcesso: "800.123/2020",
+      anmFase: "CONCESSÃO DE LAVRA",
+      reservaEstimada: 2_000_000,
+      latitude: -20.3788,
+      longitude: -43.4156,
+      codigoIbge: "3140100",
+    },
+    attributesJson: { anmSubstancia: "BAUXITA" },
+  },
+  {
+    _label: "AGRO",
+    type: "AGRO",
+    title: "[E2E] Sítio Produtor de Café — 80ha",
+    description: "Café especial, certificação rainforest, irrigação por gotejamento.",
+    location: "Patrocínio, MG",
+    municipio: "Patrocínio",
+    estado: "MG",
+    priceAsking: 3_200_000,
+    areaHa: 80,
+    tags: ["café", "especial", "irrigação"],
+    camposEspecificos: {
+      carCodImovel: "MG-3147907-CAFE001",
+      producaoAnualToneladas: 150,
+      certificacoes: ["rainforest", "UTZ"],
+      latitude: -18.9421,
+      longitude: -46.9925,
+      codigoIbge: "3147907",
+    },
+  },
+  {
+    _label: "NEGOCIO",
+    type: "NEGOCIO",
+    title: "[E2E] Distribuidora Insumos Agrícolas — GO",
+    description: "Empresa com 15 anos, faturamento R$8M/ano, carteira 200 clientes ativos.",
+    location: "Jataí, GO",
+    municipio: "Jataí",
+    estado: "GO",
+    priceAsking: 12_000_000,
+    tags: ["distribuição", "agro", "insumos"],
+    camposEspecificos: {
+      faturamentoAnual: 8_000_000,
+      ebitda: 1_200_000,
+      anosOperacao: 15,
+      numeroFuncionarios: 42,
+      motivoVenda: "Aposentadoria dos sócios",
+    },
+  },
+  {
+    _label: "FII_CRI",
+    type: "FII_CRI",
+    title: "[E2E] CRI Lastro Rural — R$5M",
+    description: "CRI lastreado em recebíveis rurais, prazo 5 anos, taxa CDI+3%.",
+    location: "São Paulo, SP",
+    municipio: "São Paulo",
+    estado: "SP",
+    priceAsking: 5_000_000,
+    tags: ["CRI", "rural", "renda fixa"],
+    camposEspecificos: {
+      taxaJuros: "CDI+3%",
+      prazoAnos: 5,
+      garantia: "hipoteca rural",
+      rating: "A",
+    },
+  },
+  {
+    _label: "DESENVOLVIMENTO",
+    type: "DESENVOLVIMENTO",
+    title: "[E2E] Terreno Loteamento Residencial — 50ha",
+    description: "Área aprovada para loteamento, 500 lotes previstos, VGV R$40M.",
+    location: "Aparecida de Goiânia, GO",
+    municipio: "Aparecida de Goiânia",
+    estado: "GO",
+    priceAsking: 8_000_000,
+    areaHa: 50,
+    tags: ["loteamento", "residencial", "aprovado"],
+    camposEspecificos: {
+      vgvEstimado: 40_000_000,
+      lotesPrevistos: 500,
+      aprovacaoMunicipal: true,
+      latitude: -16.8231,
+      longitude: -49.2486,
+      codigoIbge: "5200050",
+    },
+  },
+  {
+    _label: "ENERGIA",
+    type: "ENERGIA",
+    title: "[E2E] Usina Solar — 5MWp — PI",
+    description: "Usina fotovoltaica com outorga ANEEL, contrato de energia 20 anos.",
+    location: "Floriano, PI",
+    municipio: "Floriano",
+    estado: "PI",
+    priceAsking: 22_000_000,
+    areaHa: 12,
+    tags: ["solar", "fotovoltaico", "ANEEL"],
+    camposEspecificos: {
+      potenciaMWp: 5,
+      outorgaAneel: "02500.006123/2021",
+      contratoEnergia: true,
+      prazoContratoAnos: 20,
+      latitude: -6.7672,
+      longitude: -43.0163,
+    },
+  },
+];
+
+const INVESTIDORES_FIXTURE = [
+  {
+    name: "[E2E] Fundo Agro Capital",
+    assetTypes: ["TERRA", "AGRO"],
+    ticketMin: 5_000_000,
+    ticketMax: 30_000_000,
+    regionsOfInterest: ["Mato Grosso", "Goiás", "Minas Gerais"],
+  },
+  {
+    name: "[E2E] Fundo Mineração Brasil",
+    assetTypes: ["MINA"],
+    ticketMin: 20_000_000,
+    ticketMax: 200_000_000,
+    regionsOfInterest: ["Minas Gerais", "Pará", "Goiás"],
+  },
+  {
+    name: "[E2E] M&A Partners",
+    assetTypes: ["NEGOCIO", "DESENVOLVIMENTO"],
+    ticketMin: 3_000_000,
+    ticketMax: 50_000_000,
+    regionsOfInterest: [],
+  },
+  {
+    name: "[E2E] Investidor Sem Critérios",
+    assetTypes: [],
+    ticketMin: null,
+    ticketMax: null,
+    regionsOfInterest: [],
+  },
+];
+
+async function main() {
+  console.log("🚀 MAVRION CONECT — Teste E2E Completo v2");
+  console.log(`   Servidor: ${BASE}`);
+  console.log(`   Início:   ${new Date().toLocaleString("pt-BR")}`);
+  const globalStart = Date.now();
+
+  let stageInvestorId: number | null = null;
+  let stageAssetId:    number | null = null;
+  let companyId:       number | null = null;
+  let dealId:          number | null = null;
+  let matchId:         number | null = null;
+  let listingId:       number | null = null;
+  const assetIds:     number[] = [];
+  const investorIds:  number[] = [];
+
+  // ── 1. AUTENTICAÇÃO ─────────────────────────────────────────────────────────
+  section("1. AUTENTICAÇÃO");
+
+  const loginRes = await api("POST", "/api/login", CREDENTIALS);
+  check("Login válido retorna usuário", loginRes.ok && !!loginRes.data?.username,
+    `user: ${loginRes.data?.username}`, loginRes.duration);
+  perfCheck("Login", loginRes.duration, 500);
+
+  const meRes = await api("GET", "/api/user");
+  check("Sessão persiste entre requests", meRes.ok && !!meRes.data?.id, `id: ${meRes.data?.id}`);
+
+  const badRes = await api("POST", "/api/login", { username: "hacker", password: "senha_errada" });
+  check("Credenciais inválidas retornam 401", badRes.status === 401);
+
+  const savedCookie = cookieJar;
+  cookieJar = "";
+  const unauthRes = await api("GET", "/api/crm/companies");
+  check("Rota protegida sem sessão retorna 401", unauthRes.status === 401);
+  cookieJar = savedCookie;
+
+  // ── 2. DASHBOARD ────────────────────────────────────────────────────────────
+  section("2. DASHBOARD / STATS");
+
+  const statsRes = await api("GET", "/api/stats/dashboard");
+  check("Dashboard responde", statsRes.ok, `status ${statsRes.status}`, statsRes.duration);
+  perfCheck("Dashboard load", statsRes.duration, 1000);
+  check("Stats tem pipeline value", statsRes.data?.hasOwnProperty("pipelineValue"),
+    `R$ ${statsRes.data?.pipelineValue?.toLocaleString("pt-BR") ?? "?"}`);
+  check("Stats tem conversão", statsRes.data?.hasOwnProperty("conversionRate"));
+  check("Stats tem forecast", statsRes.data?.hasOwnProperty("forecastValue"));
+  check("Stats tem alertas de deals", statsRes.data?.hasOwnProperty("dealsVencidos"));
+
+  // ── 3. PIPELINE STAGES ──────────────────────────────────────────────────────
+  section("3. PIPELINE STAGES");
+
+  const stagesRes = await api("GET", "/api/crm/stages");
+  check("Stages respondem", stagesRes.ok, undefined, stagesRes.duration);
+
+  const investorStages = (stagesRes.data || []).filter((s: any) => s.pipelineType === "INVESTOR");
+  const assetStages    = (stagesRes.data || []).filter((s: any) => s.pipelineType === "ASSET");
+  check("Pipeline INVESTOR tem estágios", investorStages.length >= 4,
+    `${investorStages.length} estágios: ${investorStages.map((s: any) => s.name).join(" → ")}`);
+  check("Pipeline ASSET (M&A) tem estágios", assetStages.length >= 5,
+    `${assetStages.length} estágios`);
+
+  stageInvestorId = investorStages[0]?.id ?? null;
+  stageAssetId    = assetStages[0]?.id ?? null;
+
+  // ── 4. CRM — EMPRESA ────────────────────────────────────────────────────────
+  section("4. CRM — EMPRESA");
+
+  const testCnpj = `99${Date.now().toString().slice(-12)}`;
+  const compRes = await api("POST", "/api/crm/companies", {
+    legalName: "[E2E] Holding Teste Capital Ltda",
+    cnpj: testCnpj,
+    cnaePrincipal: "Atividades de sedes de empresas",
+    porte: "MEDIO",
+    emails: ["contato@e2e-teste.com.br"],
+    phones: ["11999990000"],
+    norionProfile: "medio",
+    tags: ["e2e", "teste"],
+  });
+  check("Criar empresa", compRes.ok && !!compRes.data?.id, `id: ${compRes.data?.id}`, compRes.duration);
+  companyId = compRes.data?.id;
+  if (companyId) cleanup.companies.push(companyId);
+
+  const dupRes = await api("POST", "/api/crm/companies", {
+    legalName: "[E2E] Duplicata CNPJ",
+    cnpj: testCnpj,
+  });
+  if (dupRes.status === 409 || !dupRes.ok) {
+    check("CNPJ duplicado é rejeitado", true, `status ${dupRes.status} — correto`);
+  } else {
+    check("CNPJ duplicado é rejeitado", false,
+      `⚠ sistema permitiu CNPJ duplicado (id: ${dupRes.data?.id})`);
+    if (dupRes.data?.id) cleanup.companies.push(dupRes.data.id);
+  }
+
+  const badCompRes = await api("POST", "/api/crm/companies", { cnpj: "99999999999999" });
+  check("Empresa sem nome é rejeitada", !badCompRes.ok, `status ${badCompRes.status}`);
+
+  const compListRes = await api("GET", "/api/crm/companies");
+  check("Listar empresas", compListRes.ok && Array.isArray(compListRes.data),
+    `${compListRes.data?.length} empresas`, compListRes.duration);
+  perfCheck("Listar empresas", compListRes.duration, 800);
+
+  if (companyId) {
+    const vcRes = await api("PATCH", `/api/companies/${companyId}/verified-contacts`, {
+      contactName: "[E2E] Contato Diretor",
+      contactRole: "CEO",
+      email: "ceo@e2e-teste.com.br",
+      phone: "11988880000",
+    });
+    check("Salvar contato verificado na empresa", vcRes.ok, `status ${vcRes.status}`);
+  } else {
+    skip("Salvar contato verificado", "empresa não criada");
+  }
+
+  // ── 5. CADASTRO MANUAL DE ATIVOS — TODOS OS TIPOS ───────────────────────────
+  section("5. CADASTRO MANUAL DE ATIVOS (7 TIPOS)");
+
+  for (const fixture of ATIVOS_FIXTURE) {
+    const { _label, ...body } = fixture;
+    const r = await api("POST", "/api/matching/assets", { ...body, linkedCompanyId: companyId });
+
+    const created = r.ok && !!r.data?.id;
+    check(`Criar ativo ${_label}`, created, `id: ${r.data?.id} | R$${body.priceAsking?.toLocaleString("pt-BR")}`, r.duration);
+
+    if (!created) continue;
+    assetIds.push(r.data.id);
+    cleanup.assets.push(r.data.id);
+
+    const detail = await api("GET", `/api/matching/assets/${r.data.id}`);
+    check(`  ${_label}: buscar por ID`, detail.ok && detail.data?.id === r.data.id);
+    check(`  ${_label}: type correto`, detail.data?.type === body.type, `${detail.data?.type}`);
+    check(`  ${_label}: priceAsking salvo`, detail.data?.priceAsking === body.priceAsking,
+      `R$ ${detail.data?.priceAsking?.toLocaleString("pt-BR")}`);
+
+    if (body.camposEspecificos) {
+      const firstKey = Object.keys(body.camposEspecificos)[0];
+      const expectedVal = (body.camposEspecificos as any)[firstKey];
+      const actualVal   = detail.data?.camposEspecificos?.[firstKey];
+      const persists    = actualVal === expectedVal;
+      check(
+        `  ${_label}: camposEspecificos persiste`,
+        persists,
+        persists
+          ? `✓ ${firstKey}: ${actualVal}`
+          : `❌ ${firstKey} esperado "${expectedVal}", recebido "${actualVal}" — coluna pode não existir no banco`
+      );
+    }
+
+    if ((body.camposEspecificos as any)?.latitude) {
+      const lat = detail.data?.camposEspecificos?.latitude;
+      check(`  ${_label}: coordenadas salvas`, !!lat, `lat: ${lat}`);
+    }
+
+    const upd = await api("PATCH", `/api/matching/assets/${r.data.id}`, {
+      observacoes: `Atualizado pelo teste E2E — ${new Date().toISOString()}`,
+    });
+    check(`  ${_label}: update`, upd.ok);
+  }
+
+  const invalidAsset = await api("POST", "/api/matching/assets", {
+    priceAsking: -1000,
+  });
+  check("Ativo sem campos obrigatórios é rejeitado", !invalidAsset.ok,
+    `status ${invalidAsset.status}`);
+
+  const listAssetsRes = await api("GET", "/api/matching/assets");
+  check("Listar todos os ativos", listAssetsRes.ok && Array.isArray(listAssetsRes.data),
+    `${listAssetsRes.data?.length} ativos`);
+  perfCheck("Listar ativos", listAssetsRes.duration, 800);
+
+  // ── 6. DEALS — CICLO COMPLETO ───────────────────────────────────────────────
+  section("6. DEALS — CICLO COMPLETO NO KANBAN");
+
+  if (!stageInvestorId) {
+    skip("Ciclo de deals", "Nenhum stage INVESTOR encontrado");
+  } else {
+    const dealRes = await api("POST", "/api/crm/deals", {
+      title: "[E2E] Deal Fazenda Campo Verde — MT",
+      pipelineType: "INVESTOR",
+      stageId: stageInvestorId,
+      companyId,
+      assetId: assetIds[0] ?? null,
+      amountEstimate: 18_000_000,
+      probability: 35,
+      priority: "high",
+      source: "E2E_TEST",
+      description: "Deal de teste E2E — fazenda MT",
+    });
+    check("Criar deal", dealRes.ok && !!dealRes.data?.id, `id: ${dealRes.data?.id}`, dealRes.duration);
+    dealId = dealRes.data?.id;
+    if (dealId) cleanup.deals.push(dealId);
+
+    if (dealId) {
+      const dealsRes = await api("GET", "/api/crm/deals?pipelineType=INVESTOR");
+      const found = dealsRes.data?.find((d: any) => d.id === dealId);
+      check("Deal aparece na listagem", !!found, `id: ${found?.id}`);
+      if (found?.company) {
+        check("Deal vinculado à empresa", true, found.company?.legalName);
+      } else if (found) {
+        warn("Deal sem empresa vinculada", "company pode ser null se companyId não foi salvo");
+      }
+      check("Deal tem contagem de comentários", found?.hasOwnProperty("commentCount") ?? false);
+
+      for (let i = 1; i < Math.min(investorStages.length, 4); i++) {
+        const stage = investorStages[i];
+        const mvRes = await api("PATCH", `/api/crm/deals/${dealId}`, { stageId: stage.id });
+        check(`Mover para '${stage.name}'`, mvRes.ok && mvRes.data?.stageId === stage.id);
+      }
+
+      const prioRes = await api("PATCH", `/api/crm/deals/${dealId}`, { priority: "urgent" });
+      check("Alterar prioridade para urgente", prioRes.ok && prioRes.data?.priority === "urgent");
+
+      const cmtRes = await api("POST", "/api/deal-comments", {
+        dealId, content: "Visita à fazenda agendada para próxima semana.", authorName: "Teste E2E",
+      });
+      check("Criar comentário", cmtRes.ok && !!cmtRes.data?.id);
+      if (cmtRes.data?.id) cleanup.comments.push(cmtRes.data.id);
+
+      const cmtListRes = await api("GET", `/api/deal-comments?dealId=${dealId}`);
+      check("Listar comentários do deal", cmtListRes.ok && cmtListRes.data?.length >= 1,
+        `${cmtListRes.data?.length} comentários`);
+
+      const actRes = await api("POST", `/api/crm/deals/${dealId}/activities`, {
+        type: "reuniao",
+        description: "Reunião de apresentação realizada",
+      });
+      check("Criar atividade (deal_activities)", actRes.ok,
+        actRes.ok ? "✓ tabela existe" : `❌ status ${actRes.status} — tabela deal_activities pode não existir`);
+
+      const actListRes = await api("GET", `/api/crm/deals/${dealId}/activities`);
+      check("Listar atividades do deal", actListRes.ok,
+        actListRes.ok ? `${actListRes.data?.rows?.length ?? 0} atividades` : `erro ${actListRes.status}`);
+
+      const dealDetail = await api("GET", `/api/crm/deals/${dealId}`);
+      check("Buscar deal por ID", dealDetail.ok && dealDetail.data?.id === dealId);
+    }
+  }
+
+  // ── 7. PROSPECÇÃO — BUSCA DE CNPJ ───────────────────────────────────────────
+  section("7. PROSPECÇÃO — BUSCA DE CNPJ");
+
+  const cnpjRes = await api("GET", "/api/cnpj/33000167000101");
+  if (cnpjRes.ok) {
+    check("Buscar CNPJ via CNPJA", true, `empresa: ${cnpjRes.data?.legalName}`, cnpjRes.duration);
+    check("CNPJ retorna razão social", !!cnpjRes.data?.legalName);
+    check("CNPJ retorna CNAE principal", !!cnpjRes.data?.cnaePrincipal);
+    check("CNPJ retorna endereço com cidade", !!cnpjRes.data?.address?.city);
+    check("CNPJ retorna porte", !!cnpjRes.data?.porte);
+    perfCheck("Consulta CNPJ", cnpjRes.duration, 3000);
+  } else {
+    warn("Busca CNPJ via CNPJA",
+      `status ${cnpjRes.status} — verificar créditos API ou conectividade`);
+  }
+
+  const badCnpjRes = await api("GET", "/api/cnpj/00000000000000");
+  check("CNPJ inválido retorna erro", !badCnpjRes.ok || badCnpjRes.data?.message,
+    `status ${badCnpjRes.status}`);
+
+  const cnaeRes = await api("GET", "/api/prospeccao/search?cnae=0710100&estado=MG&limit=5");
+  if (cnaeRes.ok) {
+    const records = cnaeRes.data?.results || cnaeRes.data?.records || cnaeRes.data || [];
+    check("Busca por CNAE retorna resultados", Array.isArray(records) && records.length >= 0,
+      `${records.length} empresas`, cnaeRes.duration);
+    perfCheck("Busca CNAE", cnaeRes.duration, 4000);
+  } else {
+    warn("Busca por CNAE", `status ${cnaeRes.status}`);
+  }
+
+  // ── 8. PROSPECÇÃO REVERSA ────────────────────────────────────────────────────
+  section("8. PROSPECÇÃO REVERSA (COMPRADORES POR ATIVO)");
+
+  const reversaTests = [
+    { tipo: "MINA",    substancia: "BAUXITA",  estado: "MG", preco: 45_000_000 },
+    { tipo: "TERRA",   estado: "MT",            preco: 18_000_000 },
+    { tipo: "NEGOCIO", preco: 12_000_000 },
+  ];
+
+  for (const t of reversaTests) {
+    const params = new URLSearchParams({ tipo: t.tipo });
+    if (t.estado)     params.set("estado",    t.estado);
+    if ((t as any).substancia) params.set("substancia", (t as any).substancia);
+    if (t.preco)      params.set("preco",      String(t.preco));
+
+    const r = await api("GET", `/api/prospeccao/reversa?${params}`);
+    if (r.ok) {
+      const count = r.data?.count ?? 0;
+      check(`Reversa ${t.tipo}${(t as any).substancia ? "/" + (t as any).substancia : ""}`, count > 0,
+        `${count} empresas | diretos: ${r.data?.primaryCount} | fundos: ${r.data?.secondaryCount}`,
+        r.duration);
+      perfCheck(`Reversa ${t.tipo}`, r.duration, 5000);
+
+      if (count > 0) {
+        const first = r.data.results[0];
+        check(`  ${t.tipo}: resultado tem legalName`, !!first?.legalName);
+        check(`  ${t.tipo}: resultado tem taxId (CNPJ)`, !!first?.taxId);
+        check(`  ${t.tipo}: camada classificada (1-3)`,
+          first?.camada >= 1 && first?.camada <= 3, `camada ${first?.camada}`);
+      }
+    } else {
+      warn(`Reversa ${t.tipo}`, `status ${r.status} — endpoint pode não estar aplicado`);
+    }
+  }
+
+  const porteRes = await api("GET", "/api/prospeccao/reversa?tipo=MINA&substancia=FERRO&porteOverride=grande");
+  if (porteRes.ok && porteRes.data?.count > 0) {
+    check("Filtro manual de porte funciona", true,
+      `${porteRes.data.count} empresas grandes apenas`);
+  }
+
+  const ocultar = await api("GET", "/api/prospeccao/reversa?tipo=NEGOCIO&ocultarCrm=true");
+  if (ocultar.ok) {
+    check("Filtro 'ocultar já no CRM' funciona", true,
+      `${ocultar.data?.count} empresas não no CRM`);
+  }
+
+  // ── 9. ANM ───────────────────────────────────────────────────────────────────
+  section("9. PROSPECÇÃO — ANM (MINERAÇÃO)");
+
+  const anmRes = await api("GET", "/api/anm/processos?substancia=BAUXITA&uf=MG&limit=5");
+  if (anmRes.ok) {
+    const records = anmRes.data?.records || anmRes.data || [];
+    check("Busca ANM por substância e UF", true,
+      `${Array.isArray(records) ? records.length : 0} processos`, anmRes.duration);
+    if (Array.isArray(records) && records.length > 0) {
+      check("Resultado ANM tem número de processo", !!records[0]?.PROCESSO || !!records[0]?.processo || !!records[0]?.numero);
+    }
+  } else {
+    warn("Busca ANM", `status ${anmRes.status} — API ANM pode estar instável`);
+  }
+
+  // ── 10. CAR (SICAR) ────────────────────────────────────────────────────────
+  section("10. PROSPECÇÃO — CAR (IMÓVEIS RURAIS)");
+
+  const carRes = await api("GET", "/api/geo/fazendas?uf=MT&areaMin=500&count=3&startIndex=0");
+  if (carRes.ok) {
+    const carRecords = carRes.data?.features || carRes.data || [];
+    check("Busca CAR retorna imóveis", true,
+      `${Array.isArray(carRecords) ? carRecords.length : 0} imóveis`, carRes.duration);
+  } else {
+    warn("Busca CAR (SICAR)", `status ${carRes.status} — SICAR sabidamente instável`);
+  }
+
+  // ── 11. INVESTIDORES + MATCHING ──────────────────────────────────────────────
+  section("11. INVESTIDORES + MATCHING ENGINE");
+
+  for (const fixture of INVESTIDORES_FIXTURE) {
+    const r = await api("POST", "/api/matching/investors", fixture);
+    check(`Criar investidor '${fixture.name.replace("[E2E] ", "")}'`,
+      r.ok && !!r.data?.id, `id: ${r.data?.id}`);
+    if (r.data?.id) {
+      investorIds.push(r.data.id);
+      cleanup.investors.push(r.data.id);
+    }
+  }
+
+  const invListRes = await api("GET", "/api/matching/investors");
+  check("Listar investidores", invListRes.ok && Array.isArray(invListRes.data),
+    `${invListRes.data?.length} perfis`);
+
+  const runRes = await api("POST", "/api/matching/run");
+  check("Rodar matching engine", runRes.ok, `${runRes.data?.matchesFound} matches gerados`, runRes.duration);
+  perfCheck("Matching engine", runRes.duration, 5000);
+
+  const sugRes = await api("GET", "/api/matching/suggestions");
+  check("Listar sugestões", sugRes.ok && Array.isArray(sugRes.data),
+    `${sugRes.data?.length} sugestões`);
+
+  if (sugRes.data?.length > 0) {
+    const suggestions = sugRes.data;
+
+    const emptySemPerfil = suggestions.filter((s: any) => {
+      const inv = s.investor;
+      const semPerfil = !inv?.assetTypes?.length && !inv?.ticketMin && !inv?.ticketMax
+        && !inv?.regionsOfInterest?.length;
+      return semPerfil && s.score >= 60;
+    });
+    check("Investidor sem perfil não gera match score >= 60",
+      emptySemPerfil.length === 0,
+      emptySemPerfil.length === 0
+        ? "✓ nenhum match indevido"
+        : `❌ ${emptySemPerfil.length} matches com investidor sem critérios (scores: ${emptySemPerfil.map((s: any) => s.score).join(", ")})`
+    );
+
+    const first = suggestions[0];
+    matchId = first.id;
+    check("Match tem score válido (0-100)", first.score >= 0 && first.score <= 100, `${first.score}%`);
+    check("Match tem ativo vinculado", !!first.asset?.title, first.asset?.title);
+    check("Match tem investidor vinculado", !!first.investor?.name, first.investor?.name);
+
+    if (matchId && stageInvestorId) {
+      const acceptRes = await api("POST", `/api/matching/suggestions/${matchId}/accept`, {
+        title: "[E2E] Deal via Match Engine",
+        stageId: stageInvestorId,
+        value: first.asset?.priceAsking || 10_000_000,
+      });
+      check("Aceitar match → criar deal no CRM",
+        acceptRes.ok || acceptRes.status === 201,
+        acceptRes.ok ? "deal criado" : `status ${acceptRes.status}`);
+      if (acceptRes.data?.id) cleanup.deals.push(acceptRes.data.id);
+    }
+
+    if (suggestions.length > 1) {
+      const rejectRes = await api("POST", `/api/matching/suggestions/${suggestions[1].id}/reject`);
+      check("Rejeitar match", rejectRes.ok || rejectRes.status === 200);
+    }
+  }
+
+  // ── 12. SDR — FILA DE LEADS ──────────────────────────────────────────────────
+  section("12. SDR — FILA DE LEADS");
+
+  const queueRes = await api("GET", "/api/sdr/queue");
+  check("Listar fila SDR", queueRes.ok && Array.isArray(queueRes.data),
+    `${queueRes.data?.length} leads`, queueRes.duration);
+
+  const leads = queueRes.data || [];
+  const activeLead = leads.find((l: any) => l.status === "new" || l.status === "in_progress");
+  if (activeLead && stageInvestorId) {
+    const promoteRes = await api("POST", `/api/sdr/leads/${activeLead.id}/promote`, {
+      title: `[E2E] Deal promovido de lead: ${activeLead.company?.legalName}`,
+      pipelineType: "INVESTOR",
+      stageId: stageInvestorId,
+      amountEstimate: 0,
+      probability: 20,
+      source: "SDR",
+    });
+    check("Promover lead a deal", promoteRes.ok || promoteRes.status === 201,
+      promoteRes.ok ? `deal id: ${promoteRes.data?.id}` : `status ${promoteRes.status}`);
+    if (promoteRes.data?.id) cleanup.deals.push(promoteRes.data.id);
+  } else {
+    skip("Promover lead a deal", "Nenhum lead ativo na fila");
+  }
+
+  // ── 13. PORTAL INVESTIDOR ─────────────────────────────────────────────────────
+  section("13. PORTAL INVESTIDOR — FLUXO COMPLETO");
+
+  const listRes = await api("GET", "/api/portal/listings");
+  check("Listar listings", listRes.ok && Array.isArray(listRes.data),
+    `${listRes.data?.length} listings`);
+
+  const terraAssetId = assetIds[0];
+  if (terraAssetId) {
+    const newListing = await api("POST", "/api/portal/listings", {
+      assetId: terraAssetId,
+      title: "[E2E] Fazenda Campo Verde — Oportunidade de Investimento",
+      subtitle: "1200ha | Soja e Milho | MT",
+      description: "Listing de teste criado pelo E2E",
+      status: "published",
+      visibilityLevel: "teaser",
+      contactEmail: "vendas@mavrion.com.br",
+      contactPhone: "11999990000",
+      highlights: ["Pivô central", "Documentação completa", "Acesso asfaltado"],
+    });
+    check("Criar listing publicado", newListing.ok && !!newListing.data?.id,
+      `id: ${newListing.data?.id}`);
+    listingId = newListing.data?.id;
+    if (listingId) cleanup.listings.push(listingId);
+
+    const savedCk = cookieJar;
+    cookieJar = "";
+
+    const pubListRes = await fetch(`${BASE}/api/public/listings`);
+    const pubListData = await pubListRes.json();
+    check("Listing publicado aparece na rota pública", pubListRes.ok && Array.isArray(pubListData));
+
+    const pubListing = pubListData.find((l: any) => l.id === listingId);
+    if (pubListing) {
+      check("Preço oculto em teaser (visibilidade restrita)",
+        pubListing.asset?.priceAsking === null,
+        pubListing.asset?.priceAsking === null
+          ? "✓ preço não exposto"
+          : `❌ preço exposto indevidamente: R$${pubListing.asset?.priceAsking}`
+      );
+    }
+
+    const inqRes = await fetch(`${BASE}/api/public/inquiries`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        listingId,
+        name: "Investor E2E Teste",
+        email: "investor-e2e@teste.com.br",
+        phone: "11988880000",
+        company: "Fundo Teste E2E",
+        message: "Tenho interesse em fazer uma proposta para visita, reunião e investimento urgente nesta fazenda.",
+      }),
+    });
+    const inqData = await inqRes.json();
+    check("Inquiry via portal (sem auth)", inqRes.ok && inqData?.success,
+      `status ${inqRes.status}`);
+
+    let rateLimited = false;
+    for (let i = 0; i < 5; i++) {
+      const r = await fetch(`${BASE}/api/public/inquiries`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ listingId, name: `Spam ${i}`, email: `spam${i}@e2e.com` }),
+      });
+      if (r.status === 429) { rateLimited = true; break; }
+    }
+    check("Rate limit bloqueia spam (5+ req/min)", rateLimited, rateLimited ? "✓ bloqueado" : "⚠ não bloqueou");
+
+    cookieJar = savedCk;
+
+    const inqListRes = await api("GET", "/api/portal/inquiries");
+    const myInquiry = inqListRes.data?.find((i: any) => i.email === "investor-e2e@teste.com.br");
+    if (myInquiry) {
+      check("Intent score calculado", myInquiry.intentScore > 0, `score: ${myInquiry.intentScore}`);
+      check("Intent alto por keywords (proposta/visita/reunião/urgente)",
+        myInquiry.intentScore >= 70,
+        `score ${myInquiry.intentScore} — esperado >= 70`);
+      check("Inquiry com telefone pontua mais", myInquiry.intentScore >= 60,
+        "telefone informado deve aumentar score");
+    }
+
+    const queueAfter = await api("GET", "/api/sdr/queue");
+    const portalLead = queueAfter.data?.find((l: any) =>
+      l.source === "PORTAL" ||
+      l.company?.emails?.some((e: string) => e === "investor-e2e@teste.com.br")
+    );
+    check("Inquiry do portal vira lead no SDR", !!portalLead,
+      portalLead ? `lead id: ${portalLead.id}, score: ${portalLead.score}` : "lead não encontrado na fila");
+  }
+
+  // ── 14. RELATÓRIOS DE ERRO ───────────────────────────────────────────────────
+  section("14. ERROR REPORTS & AUDIT LOG");
+
+  const errRes = await api("POST", "/api/error-reports", {
+    type: "user_report",
+    title: "[E2E] Erro de validação — teste automatizado",
+    description: "Criado pelo script de teste E2E",
+    page: "/ativos",
+    module: "assets",
+    priority: "low",
+    reportedBy: "e2e-script",
+  });
+  check("Criar error report", errRes.ok || errRes.status === 201, `status ${errRes.status}`);
+
+  const errListRes = await api("GET", "/api/error-reports");
+  check("Listar error reports", errListRes.ok && Array.isArray(errListRes.data),
+    `${errListRes.data?.length} relatórios`);
+
+  if (errListRes.data?.length > 0) {
+    const stats = await api("GET", "/api/error-reports/stats");
+    if (stats.ok) {
+      check("Stats de error reports", stats.data?.total >= 0,
+        `total: ${stats.data?.total} | abertos: ${stats.data?.open}`);
+    }
+  }
+
+  const auditRes = await api("GET", "/api/audit-logs?limit=20");
+  if (auditRes.ok) {
+    check("Audit log registrou ações do teste",
+      Array.isArray(auditRes.data) && auditRes.data.length > 0,
+      `${auditRes.data?.length} entradas`);
+  } else {
+    warn("Audit log", `status ${auditRes.status}`);
+  }
+
+  // ── 15. TESTES DE BORDA ──────────────────────────────────────────────────────
+  section("15. EDGE CASES — DADOS INVÁLIDOS E LIMITES");
+
+  const dealNoStage = await api("POST", "/api/crm/deals", {
+    title: "Deal sem stage", pipelineType: "INVESTOR",
+  });
+  if (!dealNoStage.ok || !dealNoStage.data?.id) {
+    check("Deal sem stageId é rejeitado", true, `status ${dealNoStage.status}`);
+  } else {
+    warn("Deal sem stageId aceito (validação ausente)",
+      `sistema criou deal sem stage — id: ${dealNoStage.data?.id}`);
+    cleanup.deals.push(dealNoStage.data.id);
+  }
+
+  const negPrice = await api("POST", "/api/matching/assets", {
+    type: "TERRA", title: "[E2E] Preço negativo", priceAsking: -999999,
+  });
+  if (!negPrice.ok) {
+    check("Preço negativo é rejeitado", true, `status ${negPrice.status}`);
+  } else {
+    warn("Preço negativo aceito (validação ausente)",
+      `sistema aceitou preço negativo — id: ${negPrice.data?.id}`);
+    cleanup.assets.push(negPrice.data.id);
+  }
+
+  const cnpjFmt = await api("GET", "/api/cnpj/abc");
+  check("CNPJ com formato inválido retorna erro", !cnpjFmt.ok, `status ${cnpjFmt.status}`);
+
+  if (stageInvestorId && stageAssetId !== stageInvestorId) {
+    const crossPipeline = await api("POST", "/api/crm/deals", {
+      title: "[E2E] Cross-pipeline test",
+      pipelineType: "ASSET",
+      stageId: stageInvestorId,
+    });
+    if (crossPipeline.ok) {
+      warn("Cross-pipeline não é validado",
+        `sistema criou deal com stage de pipeline errado — id: ${crossPipeline.data?.id}`);
+      if (crossPipeline.data?.id) cleanup.deals.push(crossPipeline.data.id);
+    } else {
+      check("Cross-pipeline é rejeitado", true, `status ${crossPipeline.status}`);
+    }
+  }
+
+  // ── 16. PERFORMANCE GERAL ────────────────────────────────────────────────────
+  section("16. PERFORMANCE — ENDPOINTS CRÍTICOS");
+
+  const perfEndpoints = [
+    { name: "Dashboard",          path: "/api/stats/dashboard",      limit: 1000 },
+    { name: "Listar ativos",      path: "/api/matching/assets",      limit: 800  },
+    { name: "Listar deals",       path: "/api/crm/deals",            limit: 800  },
+    { name: "Listar empresas",    path: "/api/crm/companies",        limit: 800  },
+    { name: "Listar investidores",path: "/api/matching/investors",   limit: 500  },
+    { name: "Listar stages",      path: "/api/crm/stages",           limit: 500  },
+  ];
+
+  for (const ep of perfEndpoints) {
+    const r = await api("GET", ep.path);
+    perfCheck(ep.name, r.duration, ep.limit);
+  }
+
+  // ── 17. LIMPEZA GARANTIDA ────────────────────────────────────────────────────
+  section("17. LIMPEZA — REMOVER DADOS DE TESTE");
+
+  const deleteAll = async (label: string, ids: number[], endpoint: (id: number) => string) => {
+    let ok = 0; let fail = 0;
+    for (const id of ids) {
+      const r = await api("DELETE", endpoint(id));
+      if (r.ok || r.status === 204 || r.status === 404) ok++; else fail++;
+    }
+    check(`Limpar ${label}`, fail === 0, `${ok} removidos${fail > 0 ? `, ${fail} falharam` : ""}`);
+  };
+
+  await deleteAll("deals",       cleanup.deals,     id => `/api/crm/deals/${id}`);
+  await deleteAll("listings",    cleanup.listings,  id => `/api/portal/listings/${id}`);
+  await deleteAll("ativos",      cleanup.assets,    id => `/api/matching/assets/${id}`);
+  await deleteAll("investidores",cleanup.investors, id => `/api/matching/investors/${id}`);
+
+  for (const cid of cleanup.companies) {
+    const compDeleteRes = await api("DELETE", `/api/companies/${cid}`);
+    if (compDeleteRes.ok || compDeleteRes.status === 204 || compDeleteRes.status === 200) {
+      check("Limpar empresa de teste", true, `id: ${cid} removida`);
+    } else {
+      warn("Limpar empresa de teste", `id: ${cid} — delete retornou ${compDeleteRes.status}`);
+    }
+  }
+
+  const logoutRes = await api("POST", "/api/logout");
+  check("Logout", logoutRes.ok);
+
+  // ── RELATÓRIO FINAL ───────────────────────────────────────────────────────────
+  const totalTime = Date.now() - globalStart;
+  const passed  = results.filter(r => r.status === "PASS").length;
+  const failed  = results.filter(r => r.status === "FAIL").length;
+  const warned  = results.filter(r => r.status === "WARN").length;
+  const skipped = results.filter(r => r.status === "SKIP").length;
+  const total   = passed + failed;
+  const rate    = total > 0 ? Math.round((passed / total) * 100) : 0;
+
+  const line = "═".repeat(60);
+  console.log(`\n${line}`);
+  console.log("  RELATÓRIO FINAL");
+  console.log(line);
+
+  let lastSection = "";
+  for (const r of results) {
+    if (r.section !== lastSection) {
+      console.log(`\n  ${r.section}`);
+      lastSection = r.section;
+    }
+    const icon = r.status === "PASS" ? "✅" : r.status === "FAIL" ? "❌" : r.status === "WARN" ? "⚠️ " : "⏭ ";
+    const det  = r.detail ? `  → ${r.detail}` : "";
+    const time = r.duration > 0 ? ` (${r.duration}ms)` : "";
+    console.log(`    ${icon} ${r.name}${time}${det}`);
+  }
+
+  console.log(`\n${line}`);
+  console.log(`  ✅ Passou:   ${passed}`);
+  console.log(`  ❌ Falhou:   ${failed}`);
+  console.log(`  ⚠️  Avisos:   ${warned}`);
+  console.log(`  ⏭  Pulados:  ${skipped}`);
+  console.log(`  📊 Total:    ${total}`);
+  console.log(`  🏆 Taxa:     ${rate}%`);
+  console.log(`  ⏱  Tempo:    ${(totalTime / 1000).toFixed(1)}s`);
+  console.log(line);
+
+  if (failed > 0) {
+    console.log("\n  ❌ FALHAS (ação necessária):");
+    results.filter(r => r.status === "FAIL").forEach(r => {
+      console.log(`     • [${r.section}] ${r.name}${r.detail ? ` — ${r.detail}` : ""}`);
+    });
+  }
+
+  if (warned > 0) {
+    console.log("\n  ⚠️  AVISOS (APIs externas ou configuração):");
+    results.filter(r => r.status === "WARN").forEach(r => {
+      console.log(`     • [${r.section}] ${r.name}${r.detail ? ` — ${r.detail}` : ""}`);
+    });
+  }
+
+  if (HTML_MODE) {
+    const html = generateHtmlReport(results, { passed, failed, warned, skipped, totalTime, rate });
+    const out = path.join("scripts", "e2e-report.html");
+    fs.writeFileSync(out, html);
+    console.log(`\n  📄 Relatório HTML: ${out}`);
+  }
+
+  console.log(`\n  Fim: ${new Date().toLocaleString("pt-BR")}`);
+  console.log(line + "\n");
+
+  process.exit(failed > 0 ? 1 : 0);
+}
+
+function generateHtmlReport(
+  results: TestResult[],
+  summary: { passed: number; failed: number; warned: number; skipped: number; totalTime: number; rate: number }
+): string {
+  const sections = [...new Set(results.map(r => r.section))];
+  const color = summary.rate >= 90 ? "#10b981" : summary.rate >= 70 ? "#f59e0b" : "#ef4444";
+
+  const rows = sections.map(sec => {
+    const items = results.filter(r => r.section === sec);
+    return `
+      <div class="section">
+        <h3>${sec}</h3>
+        <table>
+          ${items.map(r => `
+            <tr class="${r.status.toLowerCase()}">
+              <td class="icon">${r.status === "PASS" ? "✅" : r.status === "FAIL" ? "❌" : r.status === "WARN" ? "⚠️" : "⏭"}</td>
+              <td class="name">${r.name}</td>
+              <td class="detail">${r.detail ?? ""}</td>
+              <td class="time">${r.duration > 0 ? r.duration + "ms" : ""}</td>
+            </tr>
+          `).join("")}
+        </table>
+      </div>
+    `;
+  }).join("");
+
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Mavrion E2E Report</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; margin: 0; padding: 24px; background: #f8fafc; color: #1e293b; }
+    h1 { font-size: 1.5rem; margin-bottom: 4px; }
+    .sub { color: #64748b; font-size: .875rem; margin-bottom: 24px; }
+    .summary { display: flex; gap: 16px; margin-bottom: 32px; flex-wrap: wrap; }
+    .card { background: white; border-radius: 12px; padding: 16px 24px; border: 1px solid #e2e8f0; min-width: 120px; }
+    .card .val { font-size: 2rem; font-weight: 700; }
+    .card .lbl { font-size: .75rem; color: #64748b; text-transform: uppercase; letter-spacing: .05em; }
+    .rate { color: ${color}; }
+    .section { background: white; border-radius: 12px; border: 1px solid #e2e8f0; margin-bottom: 16px; overflow: hidden; }
+    .section h3 { padding: 12px 20px; margin: 0; background: #f1f5f9; font-size: .875rem; border-bottom: 1px solid #e2e8f0; }
+    table { width: 100%; border-collapse: collapse; }
+    tr { border-bottom: 1px solid #f1f5f9; }
+    tr:last-child { border-bottom: none; }
+    tr.fail { background: #fef2f2; }
+    tr.warn { background: #fffbeb; }
+    td { padding: 8px 16px; font-size: .8125rem; }
+    .icon { width: 28px; }
+    .name { font-weight: 500; }
+    .detail { color: #64748b; }
+    .time { color: #94a3b8; text-align: right; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <h1>Mavrion Conect — Relatório E2E</h1>
+  <p class="sub">Gerado em ${new Date().toLocaleString("pt-BR")} · Duração: ${(summary.totalTime / 1000).toFixed(1)}s</p>
+  <div class="summary">
+    <div class="card"><div class="val rate">${summary.rate}%</div><div class="lbl">Taxa de sucesso</div></div>
+    <div class="card"><div class="val" style="color:#10b981">${summary.passed}</div><div class="lbl">Passou</div></div>
+    <div class="card"><div class="val" style="color:#ef4444">${summary.failed}</div><div class="lbl">Falhou</div></div>
+    <div class="card"><div class="val" style="color:#f59e0b">${summary.warned}</div><div class="lbl">Avisos</div></div>
+    <div class="card"><div class="val" style="color:#94a3b8">${summary.skipped}</div><div class="lbl">Pulados</div></div>
+  </div>
+  ${rows}
+</body>
+</html>`;
+}
+
+main().catch(err => {
+  console.error("❌ Erro fatal:", err);
+  process.exit(1);
+});

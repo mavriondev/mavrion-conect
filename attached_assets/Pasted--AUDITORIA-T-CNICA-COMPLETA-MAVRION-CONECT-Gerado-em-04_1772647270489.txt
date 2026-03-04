@@ -1,0 +1,415 @@
+# AUDITORIA TÉCNICA COMPLETA — MAVRION CONECT
+# Gerado em 04/03/2026
+# Arquivos analisados: schema.ts, routes.ts, storage.ts, server/index.ts,
+# crm.ts, portal.ts, matching.tsx, sdr.tsx, dashboard.tsx,
+# ativos.tsx, ativo-detalhe.tsx, matching.ts (engine), assets.ts, prospeccao.ts
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MÓDULO 1 — BANCO DE DADOS / SCHEMA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ 18 tabelas bem modeladas com relações corretas
+✅ Multi-tenant com orgId em todas as tabelas
+✅ Audit logs, error reports, pipeline stages configuráveis
+✅ Portal, proposals, contracts totalmente modelados
+
+🔴 BUG CRÍTICO — deal_activities não existe no schema
+   O arquivo crm.ts usa raw SQL:
+     INSERT INTO deal_activities (deal_id, type, description, ...)
+     SELECT * FROM deal_activities WHERE deal_id = ...
+   Mas a tabela deal_activities NÃO está definida em schema.ts.
+   Todo endpoint de atividades de deal lança erro 500 silencioso.
+   Para a demo: qualquer log de atividade em deal vai quebrar.
+
+🔴 BUG CONFIRMADO — camposEspecificos não existe no schema
+   (já documentado, correção em andamento)
+
+🟡 assets sem campo status dedicado
+   Impede filtros por status no banco (rascunho/ativo/negociação)
+
+🟡 assets sem coordenadas (latitude, longitude, codigoIbge)
+   Impede análise precisa via Embrapa
+   (prompt gerado hoje, não aplicado)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MÓDULO 2 — AUTENTICAÇÃO / MULTI-TENANT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Autenticação com session + PostgreSQL (connect-pg-simple)
+✅ req.isAuthenticated() em todas as rotas protegidas
+✅ Roles por usuário (sdr, admin, etc.)
+
+🟡 getOrgId() é uma função estática sem parâmetros
+   Em todo o backend (crm.ts, portal.ts, assets.ts) o orgId é obtido
+   via getOrgId() sem passar req.user. Isso funciona com 1 organização
+   mas quebra completamente com múltiplos tenants.
+   Para a demo não é problema. Para produto SaaS real, é bloqueante.
+
+🟡 storage.getAssets() sem filtro por orgId
+   Retorna todos os ativos de todas as orgs.
+   (correção documentada na auditoria anterior)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MÓDULO 3 — CRM / PIPELINE / DEALS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Kanban com 2 pipelines: INVESTOR e ASSET (M&A)
+✅ Stages auto-seeded no primeiro acesso — inteligente
+✅ Audit trail completo em todas as operações de deal
+✅ Notificação quando deal chega ao Fechamento
+✅ Comentários por deal (createDealComment, getDealComments)
+✅ Contagem de comentários e anexos no list de deals
+✅ Deals com prioridade (urgent/high/medium/low)
+✅ Due date com alertas no dashboard (vencidos/vencendo 7 dias)
+✅ Attachments no deal (Google Drive) modelados
+
+🔴 deal_activities usa tabela inexistente
+   GET/POST /api/crm/deals/:id/activities lança erro 500
+   O frontend provavelmente tenta carregar atividades ao abrir um deal
+
+🟡 deleteDeal sem cascata para matchSuggestions
+   Se deletar um deal que veio de um match, a suggestion fica órfã
+   com dealId apontando para deal inexistente
+
+🟡 getDeals() sem filtro por orgId na query
+   O leftJoin com companies está correto, mas deals não filtra por orgId
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MÓDULO 4 — SDR / FILA DE LEADS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Fila SDR com filtros avançados (status, UF, porte, score mínimo, verificado)
+✅ Busca por CNPJ inline com importação direta
+✅ Promoção de lead para deal com form completo
+✅ Contatos verificados aparecem no form de promoção
+✅ Seleção de pipeline (INVESTOR/ASSET) na promoção
+
+🔴 server/routes/sdr.ts retornou 404
+   Significa que as rotas SDR estão em outro arquivo ou o path está diferente.
+   O endpoint /api/sdr/leads/:id/promote é chamado em sdr.tsx mas
+   pode não estar registrado — verificar onde estão as rotas SDR no servidor.
+
+🟡 Endpoint /api/sdr/leads/:id/promote não está no shared/routes.ts
+   Está sendo chamado como endpoint informal. Se o servidor não o registrar,
+   o botão "Promover a Deal" retorna 404 silencioso.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MÓDULO 5 — MATCHING ENGINE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Score com múltiplos critérios (tipo, ticket, região)
+✅ Aceitar match → cria deal no pipeline INVESTOR automaticamente
+✅ Rejeitar match com feedback
+✅ ScoreBar visual com categorias (Excelente/Bom/Regular)
+✅ Dialog de criação de deal pré-preenchido com dados do match
+
+🔴 BUG CRÍTICO — investidor sem perfil gera matches falsos
+   (já documentado, correção em andamento)
+
+🟡 Tipo ENERGIA existe no formulário de matching.tsx
+   mas não está mapeado em TIPO_ATIVO do dashboard.tsx
+   Ativos ENERGIA aparecem sem label/cor no dashboard
+
+🟡 Matching precisa ser rodado manualmente
+   Não há trigger automático quando um novo ativo é cadastrado.
+   Para a demo: se nenhum matching foi rodado, a tela fica vazia.
+
+🟡 /api/matching/suggestions/:id/accept não está no shared/routes.ts
+   Endpoint informal — se o servidor não o registrar, "Aceitar Match" quebra
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MÓDULO 6 — PORTAL INVESTIDOR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Rate limiting por IP (5 req/min) — proteção contra spam
+✅ Intent scoring automático (telefone, mensagem, palavras-chave)
+✅ Lead criado automaticamente a partir do inquiry
+✅ Deal criado automaticamente se intent >= 70
+✅ Notificação em tempo real quando inquiry chega
+✅ visibilityLevel (teaser/full) — preço ocultado no teaser
+✅ viewCount incrementado a cada visualização
+✅ Dados sensíveis ocultados na rota pública (/api/public/listings)
+✅ Landing pages com slug único por ativo
+
+🟡 Email de busca de empresa existente usa loop em memória
+   allCompanies traz TODAS as empresas, depois filtra em JS por email.
+   Com muitas empresas isso fica lento. Deveria filtrar no banco.
+
+🟡 Não há validação de email real (formato apenas)
+   Um lead com email falso/digitado errado entra no sistema normalmente.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MÓDULO 7 — DASHBOARD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Métricas financeiras reais: pipeline value, forecast ponderado,
+   taxa de conversão, ticket médio
+✅ Alertas de deals vencidos e vencendo em 7 dias
+✅ Gráficos de atividade semanal (empresas e deals)
+✅ Lista de últimas empresas importadas
+✅ Lista de últimos deals
+
+🟡 assetCounts calculado mas gráfico de portfólio nunca renderizado
+   A variável existe mas não tem nenhum JSX que a use.
+   (prompt de correção gerado na auditoria anterior)
+
+🟡 Stats vêm de getDashboardStats mas não vimos a implementação
+   Se a query for lenta, o dashboard demora para carregar na demo.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MÓDULO 8 — SERVER STARTUP / SCHEDULER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Express bem estruturado com log de todas as requests
+✅ Error handler global captura e loga erros
+✅ Scheduler inicializado (tarefas recorrentes)
+✅ Vite só em desenvolvimento (produção serve estático)
+
+🟡 /api/norion/seed-demo chamado automaticamente no startup em dev
+   "Norion" aparece no index.ts como dados de demonstração.
+   O produto parece ter uma marca interna diferente ("Norion") que
+   popula dados de demo. Isso pode causar confusão se alguém ver
+   "Norion" aparecer na tela durante a demo do Mavrion.
+
+🟡 Scheduler não foi analisado (arquivo não acessível)
+   Não sabemos se há tarefas recorrentes que podem causar lentidão
+   ou erros durante a apresentação.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MÓDULO 9 — PROSPECÇÃO (ANM / CNPJA / CAR)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ ANM: busca de processos minerários funcionando
+✅ CNPJA: busca e importação de empresas por CNPJ/CNAE
+✅ Prospecção reversa: novo endpoint com lógica inteligente (sendo aplicado)
+✅ CAR: integrado (instável por natureza da API externa)
+
+🟡 CAR sabidamente instável — ter plano B na demo
+🟡 CNPJA tem limite de créditos — verificar saldo antes de sexta
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MÓDULO 10 — ATIVOS / PORTFÓLIO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Formulário completo com campos por tipo
+✅ Detalhe com abas (Visão Geral, Docs, Matching, Compradores, Análise Agro)
+✅ Due diligence checklist por ativo
+✅ Ativo vinculável a empresa do CRM (linkedCompanyId)
+✅ Google Drive upload de documentos (Rodada 3)
+
+🔴 camposEspecificos não persiste (já corrigindo)
+🟡 Sem coordenadas GPS (prompt gerado, não aplicado)
+🟡 Embrapa backend não confirmado como aplicado
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RESUMO EXECUTIVO — NOTA POR MÓDULO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Schema/Banco         7/10  (2 tabelas faltando, campos ausentes)
+  Auth/Multi-tenant    6/10  (funciona mas getOrgId estático)
+  CRM/Pipeline         8/10  (sólido, deal_activities quebrado)
+  SDR/Leads            7/10  (rotas SDR não confirmadas)
+  Matching Engine      6/10  (bugs de score, trigger manual)
+  Portal Investidor    9/10  (ponto forte — automação excelente)
+  Dashboard            7/10  (boas métricas, gráfico portfólio faltando)
+  Prospecção           8/10  (forte, CAR instável)
+  Ativos               6/10  (camposEspecificos crítico)
+  Infraestrutura       8/10  (bem estruturado, Norion seed preocupa)
+
+  MÉDIA GERAL:         7.2/10
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BUGS PRIORITÁRIOS — ORDEM DE CORREÇÃO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+HOJE (obrigatório antes da demo):
+
+  1. camposEspecificos no schema + db:push         ← EM ANDAMENTO
+  2. deal_activities: criar tabela no schema
+  3. Matching score: investidor vazio              ← EM ANDAMENTO
+  4. Prospecção reversa com lógica inteligente     ← EM ANDAMENTO
+  5. Verificar rotas SDR (sdr.ts retornou 404)
+  6. Remover ou renomear seed "Norion" no startup
+
+AMANHÃ:
+  7. Tipo ENERGIA no TIPO_ATIVO do dashboard
+  8. status no schema de assets + db:push
+  9. Gráfico de portfólio no dashboard
+  10. Verificar saldo CNPJA
+  11. Confirmar Embrapa aplicado
+  12. Confirmar menu reorganizado
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 6 — CRÍTICO: criar tabela deal_activities
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo `shared/schema.ts`, adicione antes das linhas de SCHEMAS:
+
+```typescript
+// === DEAL ACTIVITIES ===
+export const dealActivities = pgTable("deal_activities", {
+  id: serial("id").primaryKey(),
+  dealId: integer("deal_id").references(() => deals.id).notNull(),
+  type: text("type").notNull().default("nota"),
+  // tipos: nota | ligacao | email | reuniao | visita | proposta | contrato
+  description: text("description"),
+  createdBy: text("created_by").notNull().default("Sistema"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type DealActivity = typeof dealActivities.$inferSelect;
+export type InsertDealActivity = typeof dealActivities.$inferInsert;
+```
+
+E no mesmo arquivo, adicione ao bloco de relations (se existir) ou ao final:
+
+```typescript
+export const dealActivitiesRelations = relations(dealActivities, ({ one }) => ({
+  deal: one(deals, { fields: [dealActivities.dealId], references: [deals.id] }),
+}));
+```
+
+Depois rode no terminal:
+```bash
+npm run db:push
+```
+
+Salve o arquivo.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 7 — CRÍTICO: verificar e corrigir rotas SDR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+O arquivo server/routes/sdr.ts retornou 404 — as rotas SDR estão
+em outro arquivo. Localize o arquivo que contém o endpoint
+`/api/sdr/leads/:id/promote` rodando no terminal do Replit:
+
+```bash
+grep -r "promote" server/ --include="*.ts" -l
+grep -r "sdr" server/ --include="*.ts" -l
+```
+
+Se o endpoint não existir em nenhum arquivo, adicione-o ao arquivo
+de rotas que contém `/api/sdr/queue` (provavelmente server/routes/index.ts
+ou server/routes/leads.ts). Adicione:
+
+```typescript
+app.post("/api/sdr/leads/:id/promote", async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+  try {
+    const leadId = Number(req.params.id);
+    const { title, pipelineType, stageId, amountEstimate, probability, source, description } = req.body;
+
+    if (!title || !pipelineType || !stageId) {
+      return res.status(400).json({ message: "title, pipelineType e stageId são obrigatórios" });
+    }
+
+    // Busca lead para pegar o companyId
+    const leads = await db.select().from(leadsTable).where(eq(leadsTable.id, leadId));
+    if (!leads[0]) return res.status(404).json({ message: "Lead não encontrado" });
+    const lead = leads[0];
+
+    // Cria o deal
+    const deal = await storage.createDeal({
+      orgId: lead.orgId!,
+      pipelineType,
+      stageId,
+      title,
+      amountEstimate: amountEstimate || null,
+      probability: probability || 50,
+      source: source || "SDR",
+      description: description || null,
+      companyId: lead.companyId || null,
+    });
+
+    // Marca lead como convertido
+    await storage.updateLead(leadId, "converted");
+
+    res.status(201).json(deal);
+  } catch (err) {
+    console.error("Promote lead error:", err);
+    res.status(500).json({ message: "Erro ao promover lead" });
+  }
+});
+```
+
+Salve o arquivo.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 8 — DEMO: remover seed "Norion" do startup
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo `server/index.ts`, localize e REMOVA ou COMENTE este bloco:
+
+```typescript
+if (process.env.NODE_ENV !== "production") {
+  setTimeout(async () => {
+    try {
+      await fetch(`http://localhost:${port}/api/norion/seed-demo`, { method: "POST" });
+      console.log("[Demo] Dados Norion carregados para demonstração");
+    } catch {}
+  }, 3000);
+}
+```
+
+Substitua por:
+
+```typescript
+// Seed de demo comentado — descomentar apenas para demonstração interna
+// if (process.env.NODE_ENV !== "production") {
+//   setTimeout(async () => {
+//     try {
+//       await fetch(`http://localhost:${port}/api/mavrion/seed-demo`, { method: "POST" });
+//     } catch {}
+//   }, 3000);
+// }
+```
+
+Salve o arquivo.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 9 — MELHORIA: tipo ENERGIA no dashboard
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo `client/src/pages/dashboard.tsx`, localize o objeto TIPO_ATIVO
+e adicione a entrada ENERGIA:
+
+```typescript
+const TIPO_ATIVO: Record<string, { label: string; color: string }> = {
+  TERRA:           { label: "Terras",    color: "text-green-600 bg-green-50 dark:bg-green-900/20" },
+  MINA:            { label: "Mineração", color: "text-orange-600 bg-orange-50 dark:bg-orange-900/20" },
+  NEGOCIO:         { label: "M&A",       color: "text-blue-600 bg-blue-50 dark:bg-blue-900/20" },
+  FII_CRI:         { label: "FII/CRI",   color: "text-purple-600 bg-purple-50 dark:bg-purple-900/20" },
+  DESENVOLVIMENTO: { label: "Desenv.",   color: "text-pink-600 bg-pink-50 dark:bg-pink-900/20" },
+  AGRO:            { label: "Agro",      color: "text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20" },
+  ENERGIA:         { label: "Energia",   color: "text-cyan-600 bg-cyan-50 dark:bg-cyan-900/20" },
+};
+```
+
+Salve o arquivo.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CHECKLIST FINAL — DIA DA DEMO (SEXTA)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Antes de entrar na sala:
+  □ Abrir o sistema no browser, deixar logado
+  □ Dashboard carregado com dados visíveis
+  □ 3-5 ativos cadastrados (tipos variados: TERRA, MINA, NEGOCIO)
+  □ 2-3 investidores com perfil completo
+  □ Rodar matching manualmente → confirmar resultados fazem sentido
+  □ 1 deal no pipeline em cada estágio (visual do Kanban)
+  □ 1 listing no portal publicado
+  □ Testar prospecção reversa em 1 ativo → confirmar resultados
+  □ Abrir ativo → checklist → marcar item → recarregar → confirmar persiste
+  □ CAR: testar 1 busca → se falhar, planejar pular na demo
+  □ Verificar console do browser: sem erros vermelhos visíveis
+
+Roteiro sugerido (10-15 min):
+  1. Dashboard → mostrar métricas (pipeline, forecast, conversão)
+  2. Ativos → mostrar portfólio, abrir 1 ativo detalhado
+  3. Matching → mostrar sugestões com score e raciocínio
+  4. CRM → mostrar Kanban com deals
+  5. Prospecção → ANM ou CNPJA ao vivo (evitar CAR)
+  6. Portal → mostrar landing page publicada
+  7. Prospecção reversa → "quem quer comprar essa mina?"
