@@ -1,0 +1,86 @@
+Você consegue fazer isso bem “estilo SIGMINE” montando um stack geoespacial (PostGIS) e cruzando o polígono do CAR com 3 camadas externas: altitude (DEM), hidrografia e rede elétrica.
+
+Abaixo vai o caminho mais prático e escalável, com as fontes certas.
+
+⸻
+
+1) Base de fazendas (polígonos): CAR / SICAR
+	•	Você baixa os shapefiles dos imóveis e guarda como “camada principal” (cada fazenda = 1 polígono).
+Base para tudo.  ￼
+
+⸻
+
+2) Altitude: use um DEM (modelo digital de elevação) e calcule por fazenda
+
+Como integrar (geoprocessamento):
+	•	importar o raster DEM (SRTM/Copernicus) no PostGIS (raster) ou manter em Cloud (COG)
+	•	rodar zonal stats por polígono do CAR:
+	•	altitude média, mínima, máxima
+	•	declividade média (opcional)
+
+Ferramentas típicas:
+	•	PostGIS raster (ST_SummaryStats, ST_Clip)
+	•	ou pipeline Python (rasterio + geopandas)
+
+(DEM é global e estável; você não depende de portal brasileiro.)
+
+⸻
+
+3) Água na fazenda: cruze com hidrografia oficial
+
+Melhor fonte pública no Brasil:
+	•	ANA / SNIRH (metadados + bases hidrográficas) – camadas de rios/corpos hídricos e bacias, com downloads geoespaciais.  ￼
+	•	Alternativa/apoio: IBGE BC250 (categoria Hidrografia) se você quiser uma base cartográfica de referência padronizada.  ￼
+	•	Para “tem água de fato o ano todo”: Hidroweb (séries históricas e mapa de estações) para cruzar proximidade de pontos monitorados / vazões.  ￼
+
+Como filtrar (exemplos):
+	•	“tem rio dentro” = ST_Intersects(fazenda, rios)
+	•	“tem represa/lago dentro” = intersects com “massas d’água”
+	•	“tem água perto” = distância até curso d’água (ST_Distance) + limiar (ex: 500 m)
+	•	opcional: cruzar com relevo para identificar área de drenagem e risco de encharcamento
+
+⸻
+
+4) Energia trifásica: não existe uma base pública perfeita “por fazenda”, mas dá para fazer proxy forte
+
+Melhor caminho “de dados abertos”:
+	•	ANEEL – BDGD (Base de Dados Geográfica da Distribuidora): é o dataset mais próximo de “rede elétrica real da distribuidora” em formato geográfico.  ￼
+	•	SIGEL (ANEEL): portal de download geoespacial do setor elétrico.  ￼
+
+Como transformar em “trifásica provável”:
+	1.	importar camadas de rede (linhas / subestações / alimentadores, conforme disponibilidade na BDGD/SIGEL)
+	2.	calcular distância da fazenda até:
+	•	rede de média tensão
+	•	subestação
+	3.	classificar:
+	•	Alta chance: rede MT passando dentro ou muito perto + proximidade de subestação
+	•	Média: rede MT próxima, mas sem evidência de ramal
+	•	Baixa: longe da rede
+
+⚠️ “Trifásico na porteira” normalmente exige detalhe do padrão de ligação/ramal e do contrato — isso muitas vezes só a concessionária local confirma. A BDGD te dá o melhor mapa para triagem, mas a confirmação final vira diligência.
+
+⸻
+
+Arquitetura recomendada (simples e poderosa)
+	1.	PostgreSQL + PostGIS (core)
+	2.	Tabelas:
+
+	•	fazendas_car (polígonos)
+	•	hidro_rios, hidro_massa_agua
+	•	rede_bdgd (linhas/subestações)
+	•	Raster DEM (ou referência a arquivos COG)
+
+	3.	Campos derivados por fazenda:
+
+	•	area_ha
+	•	alt_med, alt_min, alt_max, decliv_med
+	•	tem_rio_bool, tem_lago_bool, dist_agua_m
+	•	dist_mt_m, dist_subest_m, score_energia
+
+⸻
+
+Se você quer “o jeito mais rápido” (MVP em 7–14 dias)
+	•	CAR (polígonos) + DEM (altitude) + ANA (rios/massas d’água) + BDGD/SIGEL (energia)
+	•	Painel web com filtros e ranking de oportunidades
+
+Se você me disser 1 estado/município alvo (ex: MG, eixo Pirapora–Montes Claros), eu te passo um modelo de score e o conjunto mínimo de camadas para esse recorte (mais rápido e mais preciso).

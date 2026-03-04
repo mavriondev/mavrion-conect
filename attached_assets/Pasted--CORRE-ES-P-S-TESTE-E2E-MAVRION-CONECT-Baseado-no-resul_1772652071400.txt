@@ -1,0 +1,328 @@
+# CORREÇÕES PÓS-TESTE E2E — MAVRION CONECT
+# Baseado no resultado: 147✅ 3❌ 7⚠️ — Taxa: 98%
+# Cole na ordem indicada
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CORREÇÃO 1 — CRÍTICA: getDeals com filtro pipelineType quebrado
+Arquivo: server/storage.ts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Bug: .where() encadeado DEPOIS de .orderBy() é ignorado no Drizzle ORM.
+Impacto: Kanban com filtro de pipeline retorna lista errada.
+
+Localize o método getDeals e substitua por completo:
+
+```typescript
+async getDeals(pipelineType?: string): Promise<(Deal & { company: Company | null })[]> {
+  const baseQuery = db
+    .select({ deal: deals, company: companies })
+    .from(deals)
+    .leftJoin(companies, eq(deals.companyId, companies.id));
+
+  const rows = pipelineType
+    ? await baseQuery
+        .where(eq(deals.pipelineType, pipelineType))
+        .orderBy(desc(deals.createdAt))
+    : await baseQuery
+        .orderBy(desc(deals.createdAt));
+
+  return rows.map(r => ({ ...r.deal, company: r.company }));
+}
+```
+
+Salve o arquivo.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CORREÇÃO 2 — CRÍTICA: rota de contato verificado inexistente
+Arquivo: server/routes/crm.ts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Bug: PATCH /api/crm/companies/:id/verified-contact retorna 404.
+O campo verifiedContacts existe no schema mas não tem rota dedicada.
+Impacto: SDR não consegue salvar contato verificado na empresa.
+
+No arquivo server/routes/crm.ts, adicione ANTES do fechamento da função
+registerCrmRoutes:
+
+```typescript
+// Salvar contato verificado na empresa
+app.patch("/api/crm/companies/:id/verified-contact", async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+  try {
+    const id = Number(req.params.id);
+    const { contactName, contactRole, phone, email, whatsapp, notes } = req.body;
+
+    const updated = await storage.updateCompany(id, {
+      verifiedContacts: { contactName, contactRole, phone, email, whatsapp, notes },
+    });
+
+    const user = req.user as any;
+    if (user) {
+      await audit({
+        userId: user.id, userName: user.username,
+        entity: "company", entityId: id, entityTitle: updated.legalName,
+        action: "verified_contact_saved",
+        changes: { verifiedContacts: req.body },
+      });
+    }
+
+    res.json(updated);
+  } catch (err) {
+    console.error("Verified contact error:", err);
+    res.status(500).json({ message: "Erro ao salvar contato verificado" });
+  }
+});
+
+// Listar empresas com filtros
+app.get("/api/crm/companies", async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+  const companies = await storage.getCompanies();
+  res.json(companies);
+});
+```
+
+E no arquivo server/storage.ts, verifique se updateCompany existe.
+Se não existir, adicione ao DatabaseStorage:
+
+```typescript
+async updateCompany(id: number, data: Partial<InsertCompany>): Promise<Company> {
+  const [updated] = await db
+    .update(companies)
+    .set(data as any)
+    .where(eq(companies.id, id))
+    .returning();
+  return updated;
+}
+```
+
+E adicione a assinatura na interface IStorage:
+```typescript
+updateCompany(id: number, data: Partial<InsertCompany>): Promise<Company>;
+```
+
+Salve os arquivos.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CORREÇÃO 3 — IMPORTANTE: getAssets sem filtro de orgId
+Arquivo: server/storage.ts + server/routes/assets.ts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Bug: ativos criados pelo teste não aparecem na listagem geral
+porque getAssets() retorna apenas 3 (os pré-existentes do seed).
+Provavelmente os novos ativos são criados com orgId null
+enquanto o seed usa orgId = 1.
+
+Em server/storage.ts, localize getAssets e substitua:
+
+```typescript
+async getAssets(orgId?: number): Promise<Asset[]> {
+  if (orgId) {
+    return await db.select().from(assets)
+      .where(eq(assets.orgId, orgId))
+      .orderBy(desc(assets.createdAt));
+  }
+  return await db.select().from(assets).orderBy(desc(assets.createdAt));
+}
+```
+
+Em server/routes/assets.ts, localize a chamada de listagem e substitua:
+
+```typescript
+// ANTES:
+const assetsList = await storage.getAssets();
+
+// DEPOIS:
+const user = req.user as any;
+const assetsList = await storage.getAssets(user?.orgId ?? undefined);
+```
+
+E na criação de ativo, garanta que o orgId do usuário é passado:
+
+```typescript
+// Na rota POST de criação de ativo, adicione orgId:
+const user = req.user as any;
+const assetData = { ...req.body, orgId: user?.orgId ?? null };
+const asset = await storage.createAsset(assetData);
+```
+
+Salve os arquivos.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CORREÇÃO 4 — MÉDIA: cascata ao deletar assets e investors
+Arquivo: server/storage.ts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Bug: DELETE de ativo/investidor falha por FK constraint em match_suggestions.
+Impacto: não consegue deletar ativo que teve match gerado.
+
+Em server/storage.ts, localize deleteAsset e deleteInvestor
+e adicione limpeza das suggestions antes:
+
+```typescript
+async deleteAsset(id: number): Promise<void> {
+  // Remove matches antes para evitar FK constraint
+  await db.delete(matchSuggestions).where(eq(matchSuggestions.assetId, id));
+  await db.delete(assets).where(eq(assets.id, id));
+}
+
+async deleteInvestor(id: number): Promise<void> {
+  // Remove matches antes para evitar FK constraint
+  await db.delete(matchSuggestions)
+    .where(eq(matchSuggestions.investorProfileId, id));
+  await db.delete(investorProfiles).where(eq(investorProfiles.id, id));
+}
+```
+
+Adicione o import de matchSuggestions se não estiver presente:
+```typescript
+import { ..., matchSuggestions } from "@shared/schema";
+```
+
+Salve o arquivo.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CORREÇÃO 5 — MÉDIA: rota DELETE de empresas inexistente
+Arquivo: server/routes/crm.ts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Bug: DELETE /api/crm/companies/:id retorna 404.
+Não há rota para deletar empresa.
+Impacto: não consegue remover empresas duplicadas ou de teste.
+
+Adicione em server/routes/crm.ts dentro de registerCrmRoutes:
+
+```typescript
+app.delete("/api/crm/companies/:id", async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+  try {
+    const id = Number(req.params.id);
+    // Verificar se empresa tem deals ou leads vinculados
+    const allDeals = await storage.getDeals();
+    const hasDeals = allDeals.some(d => d.companyId === id);
+    if (hasDeals) {
+      return res.status(409).json({
+        message: "Empresa possui deals vinculados. Remova os deals antes de excluir a empresa."
+      });
+    }
+    await db.delete(contacts).where(eq(contacts.companyId, id));
+    await db.delete(leads).where(eq(leads.companyId, id));
+    await db.delete(companies).where(eq(companies.id, id));
+
+    const user = req.user as any;
+    if (user) {
+      await audit({
+        userId: user.id, userName: user.username,
+        entity: "company", entityId: id, entityTitle: "Empresa removida",
+        action: "deleted",
+      });
+    }
+    res.status(204).end();
+  } catch (err) {
+    res.status(500).json({ message: "Erro ao remover empresa" });
+  }
+});
+```
+
+Adicione os imports necessários no topo do arquivo se não existirem:
+```typescript
+import { contacts, leads, companies } from "@shared/schema";
+import { eq } from "drizzle-orm";
+```
+
+Salve o arquivo.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CORREÇÃO 6 — BAIXA: validações de entrada nos endpoints
+Arquivos: server/routes/crm.ts + server/routes/assets.ts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Avisos identificados pelo teste:
+  - Deal sem stageId é aceito
+  - Preço negativo em ativo é aceito
+  - Deal com stage de pipeline errado é aceito
+
+Em server/routes/crm.ts, na rota POST de criação de deal,
+adicione validação ANTES de chamar storage.createDeal:
+
+```typescript
+// Validações de deal
+if (!input.stageId) {
+  return res.status(400).json({ message: "stageId é obrigatório" });
+}
+if (input.amountEstimate !== undefined && input.amountEstimate !== null
+    && input.amountEstimate < 0) {
+  return res.status(400).json({ message: "Valor não pode ser negativo" });
+}
+
+// Validar que stage pertence ao pipelineType correto
+if (input.stageId && input.pipelineType) {
+  const stages = await storage.getPipelineStages();
+  const stage = stages.find(s => s.id === input.stageId);
+  if (stage && stage.pipelineType !== input.pipelineType) {
+    return res.status(400).json({
+      message: `Stage '${stage.name}' pertence ao pipeline '${stage.pipelineType}', não '${input.pipelineType}'`
+    });
+  }
+}
+```
+
+Em server/routes/assets.ts, na rota POST de criação de ativo,
+adicione ANTES de storage.createAsset:
+
+```typescript
+if (body.priceAsking !== undefined && body.priceAsking !== null
+    && body.priceAsking < 0) {
+  return res.status(400).json({ message: "Preço não pode ser negativo" });
+}
+```
+
+Salve os arquivos.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NOTA — ANM retornou 0 processos (não é falha, é observação)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+O teste passou ✅ mas retornou 0 processos para BAUXITA/MG.
+Isso pode significar:
+  a) A API ANM está respondendo mas sem dados para esse filtro
+  b) O campo de filtro está com nome diferente do esperado
+
+Para verificar, rode no terminal:
+  curl "http://localhost:5000/api/anm/search?substancia=FERRO&uf=PA&limit=3"
+
+Se retornar dados para FERRO/PA mas não BAUXITA/MG,
+o problema é nos dados de teste (BAUXITA é menos comum no ANM).
+Se retornar 0 para qualquer substância, há bug no filtro.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ORDEM DE EXECUÇÃO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Obrigatório antes da demo:
+  1. Correção 1 — getDeals quebrado (Kanban com filtro não funciona)
+  2. Correção 2 — rota contato verificado
+  3. Correção 3 — orgId em getAssets
+  4. Correção 4 — cascata delete assets/investors
+
+Se der tempo:
+  5. Correção 5 — rota DELETE empresas
+  6. Correção 6 — validações de entrada
+
+Após aplicar tudo, rodar o teste novamente:
+  npx tsx scripts/e2e-test.ts
+
+Meta: 150✅ 0❌ 3⚠️ (apenas CAR e externos)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RESULTADO ATUAL — AVALIAÇÃO HONESTA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Taxa:         98%  →  excelente para um sistema em construção
+  Performance:  todos os endpoints internos < 20ms  →  muito bom
+  Prospecção:   reversa retornou 37/65/25 empresas reais  →  funcionando
+  Portal:       intent score 100/100, rate limit ativo  →  robusto
+  Matching:     24 matches gerados, investidor vazio controlado  →  correto
+  Segurança:    autenticação testada, rota pública sem vazar dados  →  ok
+
+  As 3 falhas são reparáveis em < 30 minutos.
+  Nenhuma afeta o fluxo principal da demo.

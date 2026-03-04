@@ -1,0 +1,114 @@
+PROMPT 3 — MATCHING: ALGORITMO + COMPRADOR ESTRATÉGICO
+Cole após o Prompt 2 terminar.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+No arquivo server/routes/matching.ts, aplique estas alterações:
+Alteração 1 — Substitua TODAS as ocorrências de getOrgId() (sem argumentos) por getOrgId(req).
+Alteração 2 — No final da rota app.post(api.matching.suggestions.run.path, ...), logo ANTES do bloco if (matchesFound > 0), adicione este novo loop de matching com compradores estratégicos:
+typescript// ── MATCHING COM COMPRADORES ESTRATÉGICOS ──
+const orgId = getOrgId(req);
+const allCompanies = await storage.getCompanies?.() ?? [];
+const compradores = allCompanies.filter((c: any) => {
+  const prefs = (c.enrichmentData as any) || {};
+  return prefs.buyerType === "estrategico" || ((prefs.cnaeInteresse || []).length > 0);
+});
+
+const CNAE_POR_TIPO: Record<string, string[]> = {
+  MINA:    ["0710", "0890", "0810", "0600"],
+  TERRA:   ["0111", "0112", "0113", "0114", "0115", "0116", "0119", "0121", "0151"],
+  AGRO:    ["0111", "0112", "1011", "1012", "1031", "1061", "1065"],
+  FII_CRI: ["6422", "6423", "6431", "6432", "6450", "6630"],
+  DESENVOLVIMENTO: ["4110", "4120", "4211", "6810", "6821"],
+  NEGOCIO: [],
+};
+
+for (const asset of allAssets) {
+  for (const comprador of compradores) {
+    const enrichment = (comprador.enrichmentData as any) || {};
+    const cnaeInteresse: string[] = enrichment.cnaeInteresse || [];
+    const regioesInteresse: string[] = enrichment.regioesInteresse || [];
+    const cnaesEsperados = CNAE_POR_TIPO[asset.type] || [];
+
+    let score = 0;
+    const reasons: string[] = [];
+    const penalties: string[] = [];
+
+    const cnaeMatch = cnaeInteresse.length === 0
+      ? asset.type === "NEGOCIO"
+      : cnaeInteresse.some(cnae => cnaesEsperados.some(esp => cnae.startsWith(esp)));
+
+    if (cnaeMatch) {
+      score += 40;
+      reasons.push(`CNAE compatível com tipo ${asset.type}`);
+    } else if (asset.type === "NEGOCIO") {
+      score += 20;
+      reasons.push("Negócio — comprador estratégico genérico");
+    } else {
+      penalties.push(`CNAE não compatível com ${asset.type}`);
+    }
+
+    if (regioesInteresse.length === 0) {
+      score += 15;
+      reasons.push("Comprador opera em qualquer região");
+    } else if (matchesRegion(asset.location || asset.estado, regioesInteresse)) {
+      score += 25;
+      reasons.push("Região compatível");
+    } else {
+      penalties.push("Região fora do interesse");
+    }
+
+    if (asset.docsStatus === "completo") { score += 10; reasons.push("Documentação completa"); }
+
+    if (score >= 40 && penalties.length <= 1) {
+      const existingComp = await db.select().from(matchSuggestions).where(
+        and(eq(matchSuggestions.assetId, asset.id), eq(matchSuggestions.orgId, orgId))
+      );
+      const jaExiste = existingComp.some(e => (e.reasonsJson as any)?.compradorId === comprador.id);
+      if (!jaExiste) {
+        await db.insert(matchSuggestions).values({
+          orgId,
+          assetId: asset.id,
+          investorProfileId: null,
+          score: Math.min(score, 100),
+          reasonsJson: { reasons, penalties, tipo: "estrategico", compradorId: comprador.id, compradorNome: comprador.tradeName || comprador.legalName },
+          status: "new",
+        });
+        matchesFound++;
+      }
+    }
+  }
+}
+Salve o arquivo.
+No arquivo client/src/pages/matching.tsx, no componente AddInvestorDialog, adicione estes campos no form state inicial:
+typescriptbuyerType: "financeiro",
+cnaeInteresse: "",
+prazoDecisao: "",
+E no JSX do formulário, após o campo "Regiões de Interesse", adicione:
+tsx<div className="space-y-2">
+  <Label>Tipo de comprador</Label>
+  <Select value={form.buyerType || "financeiro"} onValueChange={v => setForm({ ...form, buyerType: v })}>
+    <SelectTrigger><SelectValue /></SelectTrigger>
+    <SelectContent>
+      <SelectItem value="financeiro">Investidor financeiro (fundo, family office)</SelectItem>
+      <SelectItem value="estrategico">Comprador estratégico (empresa operacional)</SelectItem>
+    </SelectContent>
+  </Select>
+</div>
+{form.buyerType === "estrategico" && (
+  <div className="space-y-2">
+    <Label>CNAEs de interesse (separar por vírgula)</Label>
+    <Input value={form.cnaeInteresse || ""} onChange={e => setForm({ ...form, cnaeInteresse: e.target.value })} placeholder="ex: 0710-1, 0890-0" />
+  </div>
+)}
+<div className="space-y-2">
+  <Label>Prazo de decisão</Label>
+  <Select value={form.prazoDecisao || ""} onValueChange={v => setForm({ ...form, prazoDecisao: v })}>
+    <SelectTrigger><SelectValue placeholder="Selecionar..." /></SelectTrigger>
+    <SelectContent>
+      <SelectItem value="imediato">Imediato (até 30 dias)</SelectItem>
+      <SelectItem value="3_meses">Até 3 meses</SelectItem>
+      <SelectItem value="6_meses">Até 6 meses</SelectItem>
+      <SelectItem value="12_meses">Até 12 meses</SelectItem>
+    </SelectContent>
+  </Select>
+</div>
+Salve o arquivo.

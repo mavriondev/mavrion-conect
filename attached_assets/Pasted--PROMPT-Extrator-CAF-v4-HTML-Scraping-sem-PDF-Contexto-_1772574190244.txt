@@ -1,0 +1,494 @@
+# PROMPT — Extrator CAF v4 (HTML Scraping — sem PDF)
+
+## Contexto
+
+O CAF migrou para o novo portal `caf.mda.gov.br` (CAF 3.0, março de 2025).
+O portal antigo `cafreq.agricultura.gov.br` foi descontinuado em novembro de 2024.
+
+O novo sistema é uma aplicação moderna (versão 3.2.1) com consulta pública em:
+- `https://caf.mda.gov.br/consulta-publica/ufpa` — consulta por NUFPA
+- `https://caf.mda.gov.br/consulta-publica/pessoa-juridica` — consulta por CNPJ
+
+Por ser uma SPA moderna, o frontend chama uma **API REST JSON** no backend.
+O crawler deve:
+1. **Primeiro tentar** descobrir e chamar a API REST diretamente (JSON puro)
+2. **Fallback**: scraping HTML da página de consulta pública
+3. **Sem pdf-parse** — não baixar nem processar PDFs
+
+---
+
+## Atualizar `server/services/caf-crawler.ts`
+
+Substituir completamente o arquivo pelo seguinte:
+
+```typescript
+import axios, { AxiosInstance } from 'axios';
+import * as cheerio from 'cheerio';
+
+// ==================== TIPOS ====================
+
+export interface CafLead {
+  id?: string;
+  nufpa: string;
+  nome: string;
+  cpfMascarado: string;
+  situacao: string;
+  municipio: string;
+  uf: string;
+  atividade: string;
+  areaHa: number | null;
+  condicaoPosse: string;
+  numImoveis: number;
+  enquadramentoPronaf: boolean;
+  dataValidade: string | null;
+  dataInscricao: string | null;
+  entidadeCadastradora: string;
+  membros: Array<{ nome: string; cpf: string; parentesco: string }>;
+  classificacao: 'pendente' | 'qualificado' | 'descartado' | 'enviado_sdr';
+  notasClassificacao?: string;
+  norionProfile?: 'alto' | 'medio' | 'baixo';
+  extraidoEm: string;
+}
+
+export interface CafCrawlerJob {
+  id: string;
+  orgId: string;
+  modo: 'sequencial' | 'municipio';
+  uf: string;
+  ano: number;
+  mes: number;
+  seqInicio: number;
+  seqFim: number;
+  municipio?: string;
+  codIBGE?: string;
+  areaMinHa: number;
+  apenasProprietario: boolean;
+  apenasAtivos: boolean;
+  apenasComPronaf: boolean;
+  status: 'pendente' | 'rodando' | 'pausado' | 'concluido' | 'erro';
+  progresso: number;
+  totalVaridos: number;
+  totalEncontrados: number;
+  totalSalvos: number;
+  totalErros: number;
+  iniciadoEm: string | null;
+  concluidoEm: string | null;
+  mensagemErro?: string;
+}
+
+// ==================== CONFIGURAÇÃO HTTP ====================
+
+const DELAY_MS = 1100;
+const MAX_404_CONSECUTIVOS = 50;
+const TIMEOUT = 15000;
+
+// Cliente HTTP com headers realistas para evitar bloqueio
+const http: AxiosInstance = axios.create({
+  timeout: TIMEOUT,
+  headers: {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml,application/json;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+    'Referer': 'https://caf.mda.gov.br/',
+  },
+  validateStatus: s => s < 500,
+});
+
+// ==================== URLS ====================
+
+const BASE_URL = 'https://caf.mda.gov.br';
+
+export function montarNufpa(uf: string, ano: number, mes: number, seq: number): string {
+  return `${uf.toUpperCase()}03${ano}.${mes.toString().padStart(2, '0')}.${seq.toString().padStart(9, '0')}CAF`;
+}
+
+// ==================== ESTRATÉGIA 1: API REST JSON ====================
+// O novo portal é uma SPA — tenta chamar a API do backend diretamente
+
+let apiBaseDiscoberta: string | null = null;
+
+async function descobrirApiBase(): Promise<string | null> {
+  if (apiBaseDiscoberta !== undefined) return apiBaseDiscoberta;
+
+  // Endpoints candidatos comuns em SPAs governamentais brasileiras
+  const candidatos = [
+    `${BASE_URL}/api`,
+    `${BASE_URL}/api/v1`,
+    `${BASE_URL}/api/v2`,
+    `${BASE_URL}/backend/api`,
+    `${BASE_URL}/rest/api`,
+  ];
+
+  for (const base of candidatos) {
+    try {
+      const res = await http.get(`${base}/ufpa/consulta-publica?nufpa=RS032025.01.000000001CAF`);
+      if (res.status === 200 && res.data && typeof res.data === 'object') {
+        console.log(`[CAF] API REST descoberta em: ${base}`);
+        apiBaseDiscoberta = base;
+        return base;
+      }
+    } catch {
+      // Continua tentando
+    }
+  }
+
+  // Tenta inspecionar o JS do bundle para encontrar a API base
+  try {
+    const res = await http.get(`${BASE_URL}/`);
+    const html = res.data as string;
+    // Procura padrões como "/api/v1" ou similar no HTML/JS
+    const apiMatch = html.match(/["'](\/api\/v\d[^"']*?)["']/);
+    if (apiMatch) {
+      const found = `${BASE_URL}${apiMatch[1].split('/').slice(0, 3).join('/')}`;
+      console.log(`[CAF] API encontrada no bundle: ${found}`);
+      apiBaseDiscoberta = found;
+      return found;
+    }
+  } catch {
+    // Ignora
+  }
+
+  console.log('[CAF] API REST não descoberta. Usando scraping HTML.');
+  apiBaseDiscoberta = null;
+  return null;
+}
+
+async function consultarViaApiJson(nufpa: string): Promise<CafLead | null> {
+  const apiBase = await descobrirApiBase();
+  if (!apiBase) return null;
+
+  try {
+    // Tenta diferentes formatos de endpoint
+    const endpoints = [
+      `${apiBase}/ufpa/consulta-publica?nufpa=${nufpa}`,
+      `${apiBase}/ufpa/${nufpa}/publico`,
+      `${apiBase}/consulta-publica/ufpa?nufpa=${nufpa}`,
+    ];
+
+    for (const url of endpoints) {
+      const res = await http.get(url, {
+        headers: { Accept: 'application/json' }
+      });
+      if (res.status === 200 && res.data?.nome) {
+        return parsearRespostaJson(nufpa, res.data);
+      }
+      if (res.status === 404) return null;
+    }
+  } catch {
+    // Fallback para HTML
+  }
+
+  return null;
+}
+
+function parsearRespostaJson(nufpa: string, data: any): CafLead {
+  const membros: CafLead['membros'] = [];
+  const composicao = data.composicaoFamiliar || data.membros || data.composicao || [];
+  for (const m of composicao) {
+    membros.push({
+      nome: m.nome || m.nomeCompleto || '',
+      cpf: m.cpf || m.numeroCpf || '',
+      parentesco: m.parentesco || m.relacao || m.tipoRelacao || '',
+    });
+  }
+
+  const imovelPrincipal = data.imovelPrincipal || data.imoveis?.[0] || data.estabelecimento || {};
+
+  return {
+    nufpa,
+    nome: data.nome || data.nomeDeclarante || data.responsavel?.nome || '',
+    cpfMascarado: data.cpf || data.cpfMascarado || '',
+    situacao: data.situacao || data.status || '',
+    municipio: data.municipio || data.nomeMunicipio || imovelPrincipal.municipio || '',
+    uf: data.uf || data.siglaUf || '',
+    atividade: data.atividadePrincipal || data.atividade || '',
+    areaHa: parseFloat(data.areaTotal || data.areaTotalHa || imovelPrincipal.areaHa || 0) || null,
+    condicaoPosse: data.condicaoPosse || imovelPrincipal.condicaoPosse || '',
+    numImoveis: parseInt(data.numImoveis || data.quantidadeImoveis || 1) || 1,
+    enquadramentoPronaf: !!(data.pronaf || data.enquadramentoPronaf || data.cafPronaf),
+    dataValidade: data.dataValidade || data.validade || null,
+    dataInscricao: data.dataInscricao || data.dataCadastro || null,
+    entidadeCadastradora: data.entidade?.nome || data.entidadeCadastradora || data.orgaoCadastrador || '',
+    membros,
+    classificacao: 'pendente',
+    norionProfile: calcularPerfilNorion({
+      areaHa: parseFloat(data.areaTotal || 0) || null,
+      condicaoPosse: data.condicaoPosse || '',
+      enquadramentoPronaf: !!(data.pronaf || data.enquadramentoPronaf),
+    }),
+    extraidoEm: new Date().toISOString(),
+  };
+}
+
+// ==================== ESTRATÉGIA 2: SCRAPING HTML ====================
+
+async function consultarViaHtml(nufpa: string): Promise<CafLead | null> {
+  try {
+    // Tenta a URL de consulta pública do novo portal
+    const urls = [
+      `${BASE_URL}/consulta-publica/ufpa?nufpa=${nufpa}`,
+      `${BASE_URL}/extrato-publico?nufpa=${nufpa}`,
+      // URL legada (pode ainda funcionar com redirect)
+      `https://cafreq.agricultura.gov.br/caf/extratoPublico.seam?nufpa=${nufpa}`,
+    ];
+
+    for (const url of urls) {
+      const res = await http.get(url);
+      if (res.status !== 200) continue;
+
+      const html = res.data as string;
+      if (!html || html.length < 200) continue;
+
+      // Verifica se é uma SPA vazia (sem dados renderizados)
+      const $ = cheerio.load(html);
+      const bodyText = $('body').text().trim();
+
+      if (bodyText.length < 100) {
+        // SPA que renderiza no cliente — tenta via API JSON
+        return null;
+      }
+
+      const lead = parsearHtml($, nufpa);
+      if (lead?.nome) return lead;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function parsearHtml($: cheerio.CheerioAPI, nufpa: string): CafLead | null {
+  try {
+    const texto = $('body').text();
+
+    // Extrai campos pelo texto da página
+    const nufpaMatch = texto.match(/(?:Nº UFPA|NUFPA|Número UFPA)[:\s]+([A-Z0-9.]+CAF)/i);
+    const situacaoMatch = texto.match(/Situação[:\s]+(ATIVA|INATIVA|SUSPENSA)/i);
+    const nomeCpfMatch = texto.match(/([A-ZÁÉÍÓÚÃÕÂÊÎÔÛÇ][A-ZÁÉÍÓÚÃÕÂÊÎÔÛÇ\s]{2,}?)\s+(\d{3}[\.\*]+\d{2})\s+(?:Pessoa responsável|Declarante)/i);
+    const municipioMatch = texto.match(/(?:Município[\/\s]+UF|Município)[:\s]+([^/\n,]+)[/,]?\s*([A-Z]{2})/i);
+    const areaMatch = texto.match(/([\d.,]+)\s*ha/i);
+    const posseMatch = texto.match(/(?:Condição de Posse|Posse)[:\s]+([^\n]+)/i);
+    const pronafMatch = /PRONAF|Pronaf/i.test(texto);
+    const atividadeMatch = texto.match(/(?:Atividade Principal)[:\s]+([^\n]+)/i);
+    const entidadeMatch = texto.match(/(?:Entidade)[:\s]+([^\n]+?)(?:\s+CNPJ|\n)/i);
+    const validadeMatch = texto.match(/(?:Data de Validade|Validade)[:\s]+([\d/]+)/i);
+    const inscricaoMatch = texto.match(/(?:Data da inscrição|Inscrição)[:\s]+([\d/]+)/i);
+
+    // Extrai membros da tabela de composição familiar
+    const membros: CafLead['membros'] = [];
+    $('table tr').each((_, row) => {
+      const cells = $(row).find('td').map((_, td) => $(td).text().trim()).get();
+      if (cells.length >= 3 && cells[1]?.match(/\d{3}[\.\*]/)) {
+        membros.push({ nome: cells[0], cpf: cells[1], parentesco: cells[2] });
+      }
+    });
+
+    const nome = nomeCpfMatch?.[1]?.trim() || '';
+    if (!nome) return null;
+
+    const areaHa = areaMatch ? parseFloat(areaMatch[1].replace(',', '.')) : null;
+    const condicaoPosse = posseMatch?.[1]?.trim() || '';
+
+    return {
+      nufpa: nufpaMatch?.[1] || nufpa,
+      nome,
+      cpfMascarado: nomeCpfMatch?.[2] || '',
+      situacao: situacaoMatch?.[1] || '',
+      municipio: municipioMatch?.[1]?.trim() || '',
+      uf: municipioMatch?.[2]?.trim() || nufpa.substring(0, 2),
+      atividade: atividadeMatch?.[1]?.trim() || '',
+      areaHa,
+      condicaoPosse,
+      numImoveis: 1,
+      enquadramentoPronaf: pronafMatch,
+      dataValidade: validadeMatch?.[1] || null,
+      dataInscricao: inscricaoMatch?.[1] || null,
+      entidadeCadastradora: entidadeMatch?.[1]?.trim() || '',
+      membros,
+      classificacao: 'pendente',
+      norionProfile: calcularPerfilNorion({ areaHa, condicaoPosse, enquadramentoPronaf: pronafMatch }),
+      extraidoEm: new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ==================== FUNÇÃO PRINCIPAL DE CONSULTA ====================
+
+export async function consultarNufpa(nufpa: string): Promise<CafLead | null> {
+  // Tenta API JSON primeiro (mais rápido e confiável)
+  const viaApi = await consultarViaApiJson(nufpa);
+  if (viaApi) return viaApi;
+
+  // Fallback: scraping HTML
+  const viaHtml = await consultarViaHtml(nufpa);
+  return viaHtml;
+}
+
+// ==================== FILTROS ====================
+
+export function passaNosFiltos(lead: CafLead, job: CafCrawlerJob): boolean {
+  if (job.areaMinHa > 0 && (!lead.areaHa || lead.areaHa < job.areaMinHa)) return false;
+  if (job.apenasProprietario && lead.condicaoPosse !== 'Proprietário') return false;
+  if (job.apenasAtivos && lead.situacao !== 'ATIVA') return false;
+  if (job.apenasComPronaf && !lead.enquadramentoPronaf) return false;
+  if (job.municipio && job.modo === 'sequencial') {
+    const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    if (!norm(lead.municipio).includes(norm(job.municipio))) return false;
+  }
+  return true;
+}
+
+// ==================== CRAWLER ====================
+
+const jobsAtivos = new Map<string, { cancelar: boolean }>();
+
+export async function executarCrawlerCAF(
+  job: CafCrawlerJob,
+  onProgresso: (job: CafCrawlerJob) => void,
+  onLead: (lead: CafLead) => Promise<void>
+): Promise<void> {
+  const controle = { cancelar: false };
+  jobsAtivos.set(job.id, controle);
+  job.status = 'rodando';
+  job.iniciadoEm = new Date().toISOString();
+
+  let consecutivos404 = 0;
+
+  for (let seq = job.seqInicio; seq <= job.seqFim; seq++) {
+    if (controle.cancelar) { job.status = 'pausado'; break; }
+
+    job.progresso = seq;
+    job.totalVaridos++;
+
+    const nufpa = montarNufpa(job.uf, job.ano, job.mes, seq);
+    const lead = await consultarNufpa(nufpa);
+
+    if (!lead) {
+      consecutivos404++;
+      job.totalErros++;
+      if (consecutivos404 >= MAX_404_CONSECUTIVOS) {
+        console.log(`[CAF] Fim da sequência após ${MAX_404_CONSECUTIVOS} consecutivos vazios.`);
+        break;
+      }
+    } else {
+      consecutivos404 = 0;
+      job.totalEncontrados++;
+      if (passaNosFiltos(lead, job)) {
+        await onLead(lead);
+        job.totalSalvos++;
+      }
+    }
+
+    onProgresso({ ...job });
+    await sleep(DELAY_MS);
+  }
+
+  if (job.status === 'rodando') {
+    job.status = 'concluido';
+    job.concluidoEm = new Date().toISOString();
+  }
+  jobsAtivos.delete(job.id);
+}
+
+export function cancelarJob(jobId: string) {
+  const ctrl = jobsAtivos.get(jobId);
+  if (ctrl) ctrl.cancelar = true;
+}
+
+// ==================== HELPERS ====================
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function calcularPerfilNorion(lead: { areaHa: number | null; condicaoPosse: string; enquadramentoPronaf: boolean }): 'alto' | 'medio' | 'baixo' {
+  if ((lead.areaHa || 0) >= 50 && lead.condicaoPosse === 'Proprietário' && lead.enquadramentoPronaf) return 'alto';
+  if ((lead.areaHa || 0) >= 10 || lead.condicaoPosse === 'Proprietário') return 'medio';
+  return 'baixo';
+}
+```
+
+---
+
+## Instalação
+
+```bash
+# Remover pdf-parse (não precisa mais)
+npm uninstall pdf-parse
+
+# Instalar cheerio para HTML parsing
+npm install cheerio
+npm install --save-dev @types/cheerio
+```
+
+---
+
+## Como funciona a estratégia dupla
+
+```
+consultarNufpa(nufpa)
+  │
+  ├─ 1. Tenta API REST JSON (caf.mda.gov.br/api/...)
+  │      → Se retornar JSON com dados: parseia direto ✅
+  │      → Se 404: lead não existe, retorna null
+  │      → Se falhar: vai para etapa 2
+  │
+  └─ 2. Fallback: Scraping HTML (caf.mda.gov.br/consulta-publica/ufpa?nufpa=...)
+         → Carrega a página, extrai campos com cheerio + regex
+         → Se SPA vazia (sem dados renderizados no servidor): retorna null
+         → Se dados encontrados: parseia e retorna lead ✅
+```
+
+### Por que isso é melhor que o PDF
+
+| | PDF | HTML/JSON |
+|---|---|---|
+| Dependência extra | `pdf-parse` (pesado) | `cheerio` (leve) |
+| Velocidade | Lento (arquivo binário) | Rápido (texto puro) |
+| Tamanho da resposta | ~80-150kb por arquivo | ~10-20kb por página |
+| Parsing | Frágil (layout quebra extração) | Estável (estrutura HTML) |
+| API JSON | ❌ Não existe | ✅ Tenta primeiro |
+
+---
+
+## Observação importante sobre o CAF 3.0
+
+O sistema foi atualizado em março de 2025. O número sequencial da UFPA continua o mesmo formato:
+```
+RS032025.01.002731822CAF
+```
+
+Porém o portal agora está em `caf.mda.gov.br`. O crawler tenta automaticamente descobrir o endpoint da API REST do novo sistema. Se a API tiver autenticação ou CORS restritivo, cai no scraping HTML como fallback.
+
+Se o scraping HTML também não funcionar (SPA sem SSR), a próxima abordagem é usar Playwright/Puppeteer para renderizar o JavaScript antes de extrair os dados — mas isso só vale implementar se as duas estratégias acima falharem nos testes iniciais.
+
+---
+
+## Teste rápido para validar após implementação
+
+Adicionar endpoint de teste em `server/routes/caf-extrator.ts`:
+
+```typescript
+// GET /api/caf-extrator/testar?nufpa=RS032025.01.002731822CAF
+cafExtratorRouter.get('/testar', async (req, res) => {
+  try {
+    const { consultarNufpa } = await import('../services/caf-crawler');
+    const nufpa = req.query.nufpa as string || 'RS032025.01.002731822CAF';
+    const lead = await consultarNufpa(nufpa);
+    res.json({ success: !!lead, nufpa, data: lead });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+```
+
+Isso permite testar se a extração está funcionando antes de rodar uma varredura completa.
+
+---
+
+## O restante do código
+
+O arquivo `server/routes/caf-extrator.ts` e o frontend `client/src/pages/caf.tsx` permanecem exatamente iguais ao PROMPT_EXTRACAO_CAF_v3.md. Apenas o arquivo `server/services/caf-crawler.ts` foi substituído nesta versão.

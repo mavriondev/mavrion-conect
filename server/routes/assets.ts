@@ -21,6 +21,9 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const input = api.matching.assets.create.input.parse(req.body);
+      if (input.priceAsking !== undefined && input.priceAsking !== null && input.priceAsking < 0) {
+        return res.status(400).json({ message: "Preço não pode ser negativo" });
+      }
       const novoAtivo = await storage.createAsset(input);
 
       const camposEsp = (novoAtivo.camposEspecificos as any) || {};

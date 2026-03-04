@@ -1,0 +1,161 @@
+Preciso de duas coisas. Faça tudo automaticamente.
+
+---
+
+**CORREÇÃO 1 — Bug no arquivo server/routes/norion.ts**
+
+A linha `const orgId = getOrgId()` está no topo da função `registerNorionRoutes`, fora dos handlers. Isso é um bug — o orgId precisa ser lido dentro de cada requisição, não uma vez ao iniciar o servidor.
+
+Mova a chamada `const orgId = getOrgId()` para dentro de cada handler (dentro do `try {`), nos seguintes endpoints: GET /api/norion/operations, POST /api/norion/operations, PATCH /api/norion/operations/:id, DELETE /api/norion/operations/:id, POST /api/norion/profile/:companyId, POST /api/norion/recalculate-profiles, GET /api/norion/dashboard.
+
+Remova a linha `const orgId = getOrgId()` do topo da função e adicione ela como primeira linha dentro do `try {` em cada handler. Não altere mais nada.
+
+---
+
+**CORREÇÃO 2 — Criar dados de demonstração para apresentação**
+
+Crie um endpoint temporário de seed para popular o módulo Norion com dados realistas de demonstração. No arquivo server/routes/norion.ts, adicione este endpoint no final, antes do fechamento da função:
+
+```typescript
+app.post("/api/norion/seed-demo", async (req, res) => {
+  try {
+    const orgId = getOrgId();
+
+    // Buscar empresas existentes
+    const empresas = await db.select().from(companies)
+      .where(eq(companies.orgId, orgId))
+      .limit(6);
+
+    if (empresas.length === 0) {
+      return res.status(400).json({ message: "Cadastre algumas empresas antes de rodar o demo" });
+    }
+
+    // Limpar operações existentes de demo
+    await db.delete(norionOperations).where(eq(norionOperations.orgId, orgId));
+
+    const operacoesDemo = [
+      {
+        companyId: empresas[0]?.id,
+        stage: "comissao_gerada",
+        diagnostico: {
+          valorSolicitado: 850000,
+          finalidade: "Expansão",
+          prazo: "24 a 36 meses",
+          garantias: ["Imóvel", "Recebíveis"],
+          faturamento: "R$2M a R$10M",
+          possuiDivida: false,
+          observacoes: "Empresa com histórico sólido, expansão para nova unidade"
+        },
+        valorAprovado: 800000,
+        percentualComissao: 2.5,
+        valorComissao: 20000,
+        comissaoRecebida: true,
+        comissaoRecebidaEm: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+        observacoesInternas: "Operação fechada com FIDC Agro Brasil. Cliente satisfeito.",
+      },
+      {
+        companyId: empresas[1]?.id,
+        stage: "aprovado",
+        diagnostico: {
+          valorSolicitado: 1200000,
+          finalidade: "Agro",
+          prazo: "12 a 24 meses",
+          garantias: ["Terra", "CPR"],
+          faturamento: "Acima de R$10M",
+          possuiDivida: false,
+          observacoes: "Produtor rural, safra de soja. Garantia em terra e recebíveis de contrato."
+        },
+        valorAprovado: 1100000,
+        percentualComissao: 2,
+        valorComissao: 22000,
+        comissaoRecebida: false,
+        observacoesInternas: "Aprovado pelo Fundo Capital Agro. Aguardando assinatura.",
+      },
+      {
+        companyId: empresas[2]?.id,
+        stage: "em_analise",
+        diagnostico: {
+          valorSolicitado: 500000,
+          finalidade: "Capital de Giro",
+          prazo: "Até 12 meses",
+          garantias: ["Recebíveis"],
+          faturamento: "R$500k a R$2M",
+          possuiDivida: true,
+          observacoes: "Empresa de varejo, necessidade de capital para estoque."
+        },
+        observacoesInternas: "Enviado para 3 fundos. Retorno esperado em 5 dias úteis.",
+      },
+      {
+        companyId: empresas[3]?.id,
+        stage: "enviado_fundos",
+        diagnostico: {
+          valorSolicitado: 2500000,
+          finalidade: "Imóvel",
+          prazo: "Acima de 36 meses",
+          garantias: ["Imóvel"],
+          faturamento: "Acima de R$10M",
+          possuiDivida: false,
+          observacoes: "Incorporadora. Desenvolvimento de loteamento residencial."
+        },
+        observacoesInternas: "Estruturado com SPE. Enviado a 5 fundos imobiliários.",
+      },
+      {
+        companyId: empresas[4]?.id,
+        stage: "diagnostico",
+        diagnostico: {
+          valorSolicitado: 320000,
+          finalidade: "Equipamentos",
+          prazo: "12 a 24 meses",
+          garantias: ["Equipamentos", "Recebíveis"],
+          faturamento: "R$500k a R$2M",
+          possuiDivida: false,
+          observacoes: "Indústria de pequeno porte. Modernização de maquinário."
+        },
+        observacoesInternas: "Diagnóstico concluído. Preparando dossiê para envio.",
+      },
+      {
+        companyId: empresas[5]?.id || empresas[0]?.id,
+        stage: "identificado",
+        diagnostico: {},
+        observacoesInternas: "Empresa indicada pelo SDR João. Aguardando reunião inicial.",
+      },
+    ];
+
+    for (const op of operacoesDemo) {
+      if (!op.companyId) continue;
+      await db.insert(norionOperations).values({
+        orgId,
+        companyId: op.companyId,
+        stage: op.stage,
+        diagnostico: op.diagnostico,
+        valorAprovado: (op as any).valorAprovado || null,
+        percentualComissao: (op as any).percentualComissao || 0,
+        valorComissao: (op as any).valorComissao || null,
+        comissaoRecebida: (op as any).comissaoRecebida || false,
+        comissaoRecebidaEm: (op as any).comissaoRecebidaEm || null,
+        observacoesInternas: op.observacoesInternas,
+      });
+    }
+
+    res.json({ success: true, message: `${operacoesDemo.length} operações de demonstração criadas com sucesso` });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+```
+
+Após adicionar o endpoint, chame-o automaticamente fazendo um POST para /api/norion/seed-demo logo após o servidor subir, apenas se o ambiente for desenvolvimento. Adicione isso no final do arquivo server/index.ts, dentro do bloco de inicialização do servidor, após o app.listen:
+
+```typescript
+// Seed demo Norion em desenvolvimento
+if (process.env.NODE_ENV !== "production") {
+  setTimeout(async () => {
+    try {
+      await fetch(`http://localhost:${process.env.PORT || 5000}/api/norion/seed-demo`, { method: "POST" });
+      console.log("[Demo] Dados Norion carregados para demonstração");
+    } catch {}
+  }, 3000);
+}
+```
+
+Confirme quando tudo estiver feito e o projeto compilando sem erros.
