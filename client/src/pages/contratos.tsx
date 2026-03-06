@@ -796,7 +796,7 @@ export default function ContratosPage() {
         type: "contract", id: contract.id, name: contract.name, pdfBase64: base64,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/contracts"] });
-      toast({ title: "Salvo no Google Drive!", description: "Arquivo disponível na pasta Mavrion Conect / Contratos." });
+      toast({ title: "Salvo no Google Drive!", description: "Arquivo disponível na pasta Mavrion Connect / Contratos." });
     } catch (e) {
       toast({ title: "Erro ao salvar no Drive", description: String(e), variant: "destructive" });
     } finally {

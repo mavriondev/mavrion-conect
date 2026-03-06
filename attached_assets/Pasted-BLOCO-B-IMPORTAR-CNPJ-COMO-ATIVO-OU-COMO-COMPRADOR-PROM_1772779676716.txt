@@ -1,0 +1,65 @@
+BLOCO B — IMPORTAR CNPJ COMO ATIVO OU COMO COMPRADOR
+PROMPT B1 — Rota para importar CNPJ como ativo NEGOCIO
+Arquivo: server/routes/prospeccao.ts
+No arquivo server/routes/prospeccao.ts, adicione a rota:
+POST /api/cnpj/:cnpj/import-as-asset
+
+app.post("/api/cnpj/:cnpj/import-as-asset", async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+  const orgId = getOrgId(req);
+  const cnpj = req.params.cnpj.replace(/\D/g, "");
+
+  try {
+    // 1. Buscar dados do CNPJ
+    const cnpjaKey = process.env.CNPJA_API_KEY;
+    const cnpjaRes = await fetch(`https://api.cnpja.com/office/${cnpj}`, {
+      headers: { Authorization: cnpjaKey || "" }
+    });
+    const cnpjaData = cnpjaRes.ok ? await cnpjaRes.json() as any : null;
+
+    // 2. Criar ou buscar empresa
+    let company = await storage.getCompanyByCnpj(cnpj).catch(() => null);
+    if (!company) {
+      company = await storage.createCompany({
+        orgId,
+        legalName: cnpjaData?.company?.name || cnpj,
+        tradeName: cnpjaData?.alias || null,
+        cnpj,
+        cnaePrincipal: cnpjaData?.mainActivity?.text || null,
+        porte: cnpjaData?.company?.size?.text || null,
+        phones: cnpjaData?.phones?.map((p: any) => p.number) || [],
+        emails: cnpjaData?.emails?.map((e: any) => e.address) || [],
+        address: {
+          street: cnpjaData?.address?.street,
+          city: cnpjaData?.address?.city,
+          state: cnpjaData?.address?.state,
+        },
+        enrichedAt: new Date(),
+      });
+    }
+
+    // 3. Criar ativo tipo NEGOCIO
+    const asset = await storage.createAsset({
+      orgId,
+      type: "NEGOCIO",
+      title: cnpjaData?.alias || cnpjaData?.company?.name || `Empresa ${cnpj}`,
+      description: cnpjaData?.mainActivity?.text || null,
+      estado: cnpjaData?.address?.state || null,
+      municipio: cnpjaData?.address?.city || null,
+      linkedCompanyId: company.id,
+      statusAtivo: "ativo",
+      docsStatus: "pendente",
+      camposEspecificos: {
+        cnpj,
+        origemAtivo: "prospeccao_cnpj",
+        cnaePrincipal: cnpjaData?.mainActivity?.text || null,
+      },
+    });
+
+    res.json({ asset, company, message: "Ativo NEGOCIO criado com sucesso" });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+Não altere nada mais no arquivo.

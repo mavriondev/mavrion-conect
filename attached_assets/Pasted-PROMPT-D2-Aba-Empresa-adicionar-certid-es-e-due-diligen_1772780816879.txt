@@ -1,0 +1,115 @@
+PROMPT D2 — Aba Empresa: adicionar certidões e due diligence
+Arquivo: client/src/pages/ativo-detalhe.tsx
+No arquivo client/src/pages/ativo-detalhe.tsx, adicione o estado
+NO NÍVEL do componente AtivoDetalhePage:
+
+const [certidoesLoading, setCertidoesLoading] = useState(false);
+const [certidoesData, setCertidoesData] = useState<any>(null);
+
+Dentro do TabsContent value="empresa", após o card de Valuation existente,
+adicione o card de Due Diligence:
+
+<Card>
+  <CardHeader className="pb-3">
+    <CardTitle className="text-sm flex items-center gap-2">
+      <FileText className="w-4 h-4 text-muted-foreground" />
+      Due Diligence — Certidões
+    </CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-3">
+    {!certidoesData && ativo.linkedCompanyId && (
+      <Button
+        size="sm"
+        variant="outline"
+        className="gap-1.5"
+        disabled={certidoesLoading}
+        onClick={async () => {
+          setCertidoesLoading(true);
+          try {
+            const res = await apiRequest("POST", `/api/companies/${ativo.linkedCompanyId}/certidoes`, {});
+            const data = await res.json();
+            setCertidoesData(data);
+          } catch {
+            toast({ title: "Erro ao consultar certidões", variant: "destructive" });
+          }
+          setCertidoesLoading(false);
+        }}
+      >
+        {certidoesLoading
+          ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Consultando...</>
+          : <><Search className="w-3.5 h-3.5" /> Consultar certidões</>}
+      </Button>
+    )}
+
+    {!ativo.linkedCompanyId && (
+      <p className="text-xs text-muted-foreground">
+        Vincule esta empresa ao CRM para consultar certidões.
+      </p>
+    )}
+
+    {certidoesData && (
+      <div className="space-y-3">
+        {/* PGFN */}
+        <div className={cn(
+          "p-3 rounded-lg border flex items-center gap-3",
+          certidoesData.pgfn?.temDebitoAtivo
+            ? "bg-red-50 border-red-300"
+            : "bg-green-50 border-green-200"
+        )}>
+          {certidoesData.pgfn?.temDebitoAtivo
+            ? <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            : <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />}
+          <div>
+            <p className="text-sm font-medium">PGFN — Dívida Ativa Federal</p>
+            <p className="text-xs text-muted-foreground">{certidoesData.pgfn?.situacao}</p>
+          </div>
+        </div>
+
+        {/* CNJ */}
+        <div className={cn(
+          "p-3 rounded-lg border",
+          certidoesData.cnj?.totalProcessos > 5
+            ? "bg-amber-50 border-amber-300"
+            : "bg-green-50 border-green-200"
+        )}>
+          <div className="flex items-center gap-2 mb-1">
+            <Briefcase className="w-4 h-4 text-muted-foreground" />
+            <p className="text-sm font-medium">CNJ — Processos Judiciais</p>
+            <Badge variant="outline" className="ml-auto text-xs">
+              {certidoesData.cnj?.totalProcessos} processo(s)
+            </Badge>
+          </div>
+          {certidoesData.cnj?.processos?.slice(0, 3).map((p: any, i: number) => (
+            <div key={i} className="text-xs text-muted-foreground border-t mt-1 pt-1">
+              <span className="font-mono">{p.numero}</span> — {p.classe} ({p.tribunal})
+            </div>
+          ))}
+        </div>
+
+        {/* CEIS */}
+        <div className={cn(
+          "p-3 rounded-lg border flex items-center gap-3",
+          certidoesData.ceis?.sancionado
+            ? "bg-red-50 border-red-300"
+            : "bg-green-50 border-green-200"
+        )}>
+          {certidoesData.ceis?.sancionado
+            ? <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            : <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />}
+          <div>
+            <p className="text-sm font-medium">TCU CEIS — Sanções</p>
+            <p className="text-xs text-muted-foreground">
+              {certidoesData.ceis?.sancionado ? "Empresa sancionada" : "Sem sanções registradas"}
+            </p>
+          </div>
+        </div>
+
+        <p className="text-[10px] text-muted-foreground text-right">
+          Consultado em: {new Date(certidoesData.pgfn?.consultadoEm || Date.now()).toLocaleString("pt-BR")}
+        </p>
+      </div>
+    )}
+  </CardContent>
+</Card>
+
+Não altere nada mais no arquivo além desta adição no TabsContent value="empresa".

@@ -1,0 +1,206 @@
+PROMPT A2 — Reorganizar aba Matches no ativo-detalhe
+Arquivo: client/src/pages/ativo-detalhe.tsx
+No arquivo client/src/pages/ativo-detalhe.tsx, faça as seguintes
+alterações APENAS na aba matches:
+
+PASSO 1 — Adicione o useQuery para matches internos.
+Coloque este hook no nível do componente AtivoDetalhePage,
+junto com os outros hooks existentes (NÃO dentro de IIFE ou JSX):
+
+const { data: matchesInternos = [], isLoading: matchesLoading } = useQuery({
+  queryKey: ["/api/matching/assets", id, "suggestions"],
+  queryFn: () =>
+    apiRequest("GET", `/api/matching/assets/${id}/suggestions`)
+      .then(r => r.json()),
+});
+
+PASSO 2 — Adicione a função iniciarNegociacao no nível do componente,
+após a função importarComprador() existente:
+
+const iniciarNegociacao = async (match: any) => {
+  try {
+    await apiRequest("POST", "/api/crm/deals", {
+      title: `${match.investorName || "Investidor"} — ${ativo.title}`,
+      pipelineType: "ASSET",
+      assetId: ativo.id,
+      companyId: match.companyId || undefined,
+      source: "matching",
+      amountEstimate: ativo.priceAsking || undefined,
+    });
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", id] });
+    toast({ title: "Negociação iniciada", description: "Deal criado no pipeline ASSET" });
+    navigate("/crm?pipeline=ASSET");
+  } catch {
+    toast({ title: "Erro ao iniciar negociação", variant: "destructive" });
+  }
+};
+
+PASSO 3 — Substitua o conteúdo do TabsContent value="matches" por:
+
+<TabsContent value="matches" className="mt-4 space-y-6">
+
+  {/* Negociações abertas */}
+  {linkedDeals.length > 0 && (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          Negociações abertas
+        </h3>
+        <Badge variant="secondary" className="text-xs">{linkedDeals.length}</Badge>
+      </div>
+      {linkedDeals.map((deal: any) => (
+        <Card key={deal.id} className="border-blue-200 dark:border-blue-800">
+          <CardContent className="p-4 flex items-center justify-between gap-3">
+            <div className="space-y-1">
+              <p className="font-medium text-sm">{deal.title}</p>
+              <div className="flex items-center gap-2 flex-wrap">
+                {deal.stageName && (
+                  <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                    {deal.stageName}
+                  </Badge>
+                )}
+                {deal.amountEstimate && (
+                  <span className="text-xs text-muted-foreground">
+                    {formatBRL(Number(deal.amountEstimate))}
+                  </span>
+                )}
+                <span className="text-xs text-muted-foreground">
+                  {deal.pipelineType === "INVESTOR" ? "Pipeline Investidor" : "Pipeline Ativo"}
+                </span>
+              </div>
+            </div>
+            <Button size="sm" variant="outline" className="h-7 text-xs shrink-0"
+              onClick={() => navigate("/crm")}>
+              Ver no CRM
+            </Button>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  )}
+
+  {/* Investidores compatíveis — matching engine */}
+  <div className="space-y-3">
+    <div className="flex items-center gap-2">
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+        Investidores compatíveis
+      </h3>
+      {matchesInternos.length > 0 && (
+        <Badge variant="secondary" className="text-xs">{matchesInternos.length}</Badge>
+      )}
+    </div>
+    <p className="text-xs text-muted-foreground">
+      Gerados automaticamente pelo engine de matching com perfis cadastrados no sistema.
+    </p>
+
+    {matchesLoading && (
+      <div className="flex items-center gap-2 text-sm text-muted-foreground py-3">
+        <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
+      </div>
+    )}
+
+    {!matchesLoading && matchesInternos.length === 0 && (
+      <Card>
+        <CardContent className="p-6 text-center space-y-2">
+          <Zap className="w-8 h-8 mx-auto text-muted-foreground opacity-30" />
+          <p className="text-sm text-muted-foreground">Nenhum investidor compatível ainda.</p>
+        </CardContent>
+      </Card>
+    )}
+
+    {(matchesInternos as any[]).map((match: any) => (
+      <Card key={match.id} className={cn(
+        "border transition-colors",
+        match.status === "accepted" ? "border-green-200 dark:border-green-800" :
+        match.status === "dismissed" ? "border-muted opacity-60" :
+        "hover:border-primary/30"
+      )}>
+        <CardContent className="p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1.5 flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="font-medium text-sm">
+                  {match.investorName || `Investidor #${match.investorProfileId}`}
+                </p>
+                {match.investorCnpj && (
+                  <span className="text-xs font-mono text-muted-foreground">{match.investorCnpj}</span>
+                )}
+                {(match as any).tipo === "estrategico" && (
+                  <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">
+                    Estratégico
+                  </Badge>
+                )}
+                {match.status === "accepted" && (
+                  <Badge variant="outline" className="text-[10px] bg-green-50 text-green-700 border-green-200">
+                    Em negociação
+                  </Badge>
+                )}
+                {match.status === "dismissed" && (
+                  <Badge variant="outline" className="text-[10px] text-muted-foreground">Descartado</Badge>
+                )}
+              </div>
+
+              {match.score != null && (
+                <div className="flex items-center gap-2">
+                  <div className="h-1.5 w-24 bg-muted rounded-full overflow-hidden">
+                    <div className={cn("h-full rounded-full",
+                      match.score >= 70 ? "bg-green-500" :
+                      match.score >= 40 ? "bg-amber-500" : "bg-red-400"
+                    )} style={{ width: `${Math.min(match.score, 100)}%` }} />
+                  </div>
+                  <span className="text-xs text-muted-foreground">Score {match.score}</span>
+                </div>
+              )}
+
+              {Array.isArray(match.reasonsJson) && match.reasonsJson.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {(match.reasonsJson as string[]).slice(0, 3).map((r: string, i: number) => (
+                    <span key={i} className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
+                      {r}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1.5 shrink-0">
+              {match.status === "new" && (
+                <Button size="sm" className="h-7 text-xs gap-1"
+                  onClick={() => iniciarNegociacao(match)}>
+                  <Handshake className="w-3 h-3" /> Iniciar negociação
+                </Button>
+              )}
+              {match.companyId && (
+                <Button size="sm" variant="ghost" className="h-7 text-xs"
+                  onClick={() => navigate(`/empresas/${match.companyId}`)}>
+                  Ver empresa
+                </Button>
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    ))}
+  </div>
+
+  {/* Prospecção reversa */}
+  <div className="space-y-3">
+    <div className="flex items-center gap-2">
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+        Prospecção reversa
+      </h3>
+      <Badge variant="outline" className="text-[10px]">CNPJA externo</Badge>
+    </div>
+    <p className="text-xs text-muted-foreground">
+      Empresas externas com perfil compatível. Ao importar, são vinculadas a este ativo.
+    </p>
+    {/* Cole aqui o conteúdo atual da prospecção reversa — não reescreva, apenas mova */}
+  </div>
+
+</TabsContent>
+
+PASSO 4 — Adicione Handshake aos imports de ícones se não existir:
+import { ..., Handshake } from "lucide-react";
+
+Não delete nada das funções existentes. Não altere outras abas.

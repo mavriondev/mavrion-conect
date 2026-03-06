@@ -1,12 +1,12 @@
 🚀 MAVRION CONECT — Teste E2E Completo v2
    Servidor: http://localhost:5000
-   Início:   04/03/2026, 19:35:31
+   Início:   04/03/2026, 21:12:11
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   1. AUTENTICAÇÃO
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ✅ Login válido retorna usuário (104ms)  → user: admin
-  ✅ [PERF] Login (104ms)  → 104ms ✓
+  ✅ Login válido retorna usuário (150ms)  → user: admin
+  ✅ [PERF] Login (150ms)  → 150ms ✓
   ✅ Sessão persiste entre requests  → id: 1
   ✅ Credenciais inválidas retornam 401
   ✅ Rota protegida sem sessão retorna 401
@@ -14,8 +14,8 @@
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   2. DASHBOARD / STATS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ✅ Dashboard responde (13ms)  → status 200
-  ✅ [PERF] Dashboard load (13ms)  → 13ms ✓
+  ✅ Dashboard responde (16ms)  → status 200
+  ✅ [PERF] Dashboard load (16ms)  → 16ms ✓
   ✅ Stats tem pipeline value  → R$ 0
   ✅ Stats tem conversão
   ✅ Stats tem forecast
@@ -24,64 +24,64 @@
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   3. PIPELINE STAGES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ✅ Stages respondem (8ms)
+  ✅ Stages respondem (9ms)
   ✅ Pipeline INVESTOR tem estágios  → 5 estágios: Prospectado → Contato Inicial → Qualificado → Proposta → Fechado
   ✅ Pipeline ASSET (M&A) tem estágios  → 7 estágios
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   4. CRM — EMPRESA
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ✅ Criar empresa (14ms)  → id: 15
+  ✅ Criar empresa (14ms)  → id: 28
   ✅ CNPJ duplicado é rejeitado  → status 500 — correto
   ✅ Empresa sem nome é rejeitada  → status 400
-  ✅ Listar empresas (7ms)  → 10 empresas
-  ✅ [PERF] Listar empresas (7ms)  → 7ms ✓
+  ✅ Listar empresas (9ms)  → 11 empresas
+  ✅ [PERF] Listar empresas (9ms)  → 9ms ✓
   ✅ Salvar contato verificado na empresa  → status 200
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   5. CADASTRO MANUAL DE ATIVOS (7 TIPOS)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ✅ Criar ativo TERRA (12ms)  → id: 35 | R$18.000.000
+  ✅ Criar ativo TERRA (15ms)  → id: 79 | R$18.000.000
   ✅   TERRA: buscar por ID
   ✅   TERRA: type correto  → TERRA
   ✅   TERRA: priceAsking salvo  → R$ 18.000.000
   ✅   TERRA: camposEspecificos persiste  → ✓ carCodImovel: MT-5107602-ABC12345
   ✅   TERRA: coordenadas salvas  → lat: -16.4661
   ✅   TERRA: update
-  ✅ Criar ativo MINA (10ms)  → id: 36 | R$45.000.000
+  ✅ Criar ativo MINA (12ms)  → id: 80 | R$45.000.000
   ✅   MINA: buscar por ID
   ✅   MINA: type correto  → MINA
   ✅   MINA: priceAsking salvo  → R$ 45.000.000
   ✅   MINA: camposEspecificos persiste  → ✓ substancia: BAUXITA
   ✅   MINA: coordenadas salvas  → lat: -20.3788
   ✅   MINA: update
-  ✅ Criar ativo AGRO (9ms)  → id: 37 | R$3.200.000
+  ✅ Criar ativo AGRO (16ms)  → id: 81 | R$3.200.000
   ✅   AGRO: buscar por ID
   ✅   AGRO: type correto  → AGRO
   ✅   AGRO: priceAsking salvo  → R$ 3.200.000
   ✅   AGRO: camposEspecificos persiste  → ✓ carCodImovel: MG-3147907-CAFE001
   ✅   AGRO: coordenadas salvas  → lat: -18.9421
   ✅   AGRO: update
-  ✅ Criar ativo NEGOCIO (10ms)  → id: 38 | R$12.000.000
+  ✅ Criar ativo NEGOCIO (11ms)  → id: 82 | R$12.000.000
   ✅   NEGOCIO: buscar por ID
   ✅   NEGOCIO: type correto  → NEGOCIO
   ✅   NEGOCIO: priceAsking salvo  → R$ 12.000.000
   ✅   NEGOCIO: camposEspecificos persiste  → ✓ faturamentoAnual: 8000000
   ✅   NEGOCIO: update
-  ✅ Criar ativo FII_CRI (8ms)  → id: 39 | R$5.000.000
+  ✅ Criar ativo FII_CRI (11ms)  → id: 83 | R$5.000.000
   ✅   FII_CRI: buscar por ID
   ✅   FII_CRI: type correto  → FII_CRI
   ✅   FII_CRI: priceAsking salvo  → R$ 5.000.000
   ✅   FII_CRI: camposEspecificos persiste  → ✓ taxaJuros: CDI+3%
   ✅   FII_CRI: update
-  ✅ Criar ativo DESENVOLVIMENTO (9ms)  → id: 40 | R$8.000.000
+  ✅ Criar ativo DESENVOLVIMENTO (11ms)  → id: 84 | R$8.000.000
   ✅   DESENVOLVIMENTO: buscar por ID
   ✅   DESENVOLVIMENTO: type correto  → DESENVOLVIMENTO
   ✅   DESENVOLVIMENTO: priceAsking salvo  → R$ 8.000.000
   ✅   DESENVOLVIMENTO: camposEspecificos persiste  → ✓ vgvEstimado: 40000000
   ✅   DESENVOLVIMENTO: coordenadas salvas  → lat: -16.8231
   ✅   DESENVOLVIMENTO: update
-  ✅ Criar ativo ENERGIA (9ms)  → id: 41 | R$22.000.000
+  ✅ Criar ativo ENERGIA (13ms)  → id: 85 | R$22.000.000
   ✅   ENERGIA: buscar por ID
   ✅   ENERGIA: type correto  → ENERGIA
   ✅   ENERGIA: priceAsking salvo  → R$ 22.000.000
@@ -89,14 +89,14 @@
   ✅   ENERGIA: coordenadas salvas  → lat: -6.7672
   ✅   ENERGIA: update
   ✅ Ativo sem campos obrigatórios é rejeitado  → status 400
-  ✅ Listar todos os ativos  → 3 ativos
-  ✅ [PERF] Listar ativos (6ms)  → 6ms ✓
+  ✅ Listar todos os ativos  → 5 ativos
+  ✅ [PERF] Listar ativos (7ms)  → 7ms ✓
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   6. DEALS — CICLO COMPLETO NO KANBAN
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ✅ Criar deal (20ms)  → id: 22
-  ✅ Deal aparece na listagem  → id: 22
+  ✅ Criar deal (12ms)  → id: 48
+  ✅ Deal aparece na listagem  → id: 48
   ✅ Deal vinculado à empresa  → [E2E] Holding Teste Capital Ltda
   ✅ Deal tem contagem de comentários
   ✅ Mover para 'Contato Inicial'
@@ -112,31 +112,31 @@
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   7. PROSPECÇÃO — BUSCA DE CNPJ
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ✅ Buscar CNPJ via CNPJA (7ms)  → empresa: PETROLEO BRASILEIRO S A PETROBRAS
+  ✅ Buscar CNPJ via CNPJA (8ms)  → empresa: PETROLEO BRASILEIRO S A PETROBRAS
   ✅ CNPJ retorna razão social
   ✅ CNPJ retorna CNAE principal
   ✅ CNPJ retorna endereço com cidade
   ✅ CNPJ retorna porte
-  ✅ [PERF] Consulta CNPJ (7ms)  → 7ms ✓
+  ✅ [PERF] Consulta CNPJ (8ms)  → 8ms ✓
   ✅ CNPJ inválido retorna erro  → status 400
-  ✅ Busca por CNAE retorna resultados (140ms)  → 0 empresas
-  ✅ [PERF] Busca CNAE (140ms)  → 140ms ✓
+  ✅ Busca por CNAE retorna resultados (155ms)  → 0 empresas
+  ✅ [PERF] Busca CNAE (155ms)  → 155ms ✓
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   8. PROSPECÇÃO REVERSA (COMPRADORES POR ATIVO)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ✅ Reversa MINA/BAUXITA (581ms)  → 37 empresas | diretos: 32 | fundos: 5
-  ✅ [PERF] Reversa MINA (581ms)  → 581ms ✓
+  ✅ Reversa MINA/BAUXITA (1160ms)  → 37 empresas | diretos: 32 | fundos: 5
+  ✅ [PERF] Reversa MINA (1160ms)  → 1160ms ✓
   ✅   MINA: resultado tem legalName
   ✅   MINA: resultado tem taxId (CNPJ)
   ✅   MINA: camada classificada (1-3)  → camada 1
-  ✅ Reversa TERRA (805ms)  → 65 empresas | diretos: 40 | fundos: 25
-  ✅ [PERF] Reversa TERRA (805ms)  → 805ms ✓
+  ✅ Reversa TERRA (1513ms)  → 65 empresas | diretos: 40 | fundos: 25
+  ✅ [PERF] Reversa TERRA (1513ms)  → 1513ms ✓
   ✅   TERRA: resultado tem legalName
   ✅   TERRA: resultado tem taxId (CNPJ)
   ✅   TERRA: camada classificada (1-3)  → camada 1
-  ✅ Reversa NEGOCIO (1025ms)  → 25 empresas | diretos: 0 | fundos: 25
-  ✅ [PERF] Reversa NEGOCIO (1025ms)  → 1025ms ✓
+  ✅ Reversa NEGOCIO (1118ms)  → 25 empresas | diretos: 0 | fundos: 25
+  ✅ [PERF] Reversa NEGOCIO (1118ms)  → 1118ms ✓
   ✅   NEGOCIO: resultado tem legalName
   ✅   NEGOCIO: resultado tem taxId (CNPJ)
   ✅   NEGOCIO: camada classificada (1-3)  → camada 2
@@ -146,7 +146,7 @@
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   9. PROSPECÇÃO — ANM (MINERAÇÃO)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ✅ Busca ANM por substância e UF (16ms)  → 0 processos
+  ✅ Busca ANM por substância e UF (23ms)  → 0 processos
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   10. PROSPECÇÃO — CAR (IMÓVEIS RURAIS)
@@ -156,14 +156,14 @@
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   11. INVESTIDORES + MATCHING ENGINE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ✅ Criar investidor 'Fundo Agro Capital'  → id: 17
-  ✅ Criar investidor 'Fundo Mineração Brasil'  → id: 18
-  ✅ Criar investidor 'M&A Partners'  → id: 19
-  ✅ Criar investidor 'Investidor Sem Critérios'  → id: 20
+  ✅ Criar investidor 'Fundo Agro Capital'  → id: 41
+  ✅ Criar investidor 'Fundo Mineração Brasil'  → id: 42
+  ✅ Criar investidor 'M&A Partners'  → id: 43
+  ✅ Criar investidor 'Investidor Sem Critérios'  → id: 44
   ✅ Listar investidores  → 13 perfis
-  ✅ Rodar matching engine (310ms)  → 36 matches gerados
-  ✅ [PERF] Matching engine (310ms)  → 310ms ✓
-  ✅ Listar sugestões  → 80 sugestões
+  ✅ Rodar matching engine (264ms)  → 38 matches gerados
+  ✅ [PERF] Matching engine (264ms)  → 264ms ✓
+  ✅ Listar sugestões  → 88 sugestões
   ✅ Investidor sem perfil não gera match score >= 60  → ✓ nenhum match indevido
   ✅ Match tem score válido (0-100)  → 50%
   ✅ Match tem ativo vinculado  → ÁGUA MINERAL - 807401/1977
@@ -174,14 +174,14 @@
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   12. SDR — FILA DE LEADS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ✅ Listar fila SDR (9ms)  → 20 leads
-  ✅ Promover lead a deal  → deal id: 24
+  ✅ Listar fila SDR (14ms)  → 51 leads
+  ✅ Promover lead a deal  → deal id: 50
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   13. PORTAL INVESTIDOR — FLUXO COMPLETO
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ✅ Listar listings  → 0 listings
-  ✅ Criar listing publicado  → id: 5
+  ✅ Criar listing publicado  → id: 11
   ✅ Listing publicado aparece na rota pública
   ✅ Preço oculto em teaser (visibilidade restrita)  → ✓ preço não exposto
   ✅ Inquiry via portal (sem auth)  → status 201
@@ -189,14 +189,14 @@
   ✅ Intent score calculado  → score: 100
   ✅ Intent alto por keywords (proposta/visita/reunião/urgente)  → score 100 — esperado >= 70
   ✅ Inquiry com telefone pontua mais  → telefone informado deve aumentar score
-  ✅ Inquiry do portal vira lead no SDR  → lead id: 25, score: 40
+  ✅ Inquiry do portal vira lead no SDR  → lead id: 56, score: 40
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   14. ERROR REPORTS & AUDIT LOG
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ✅ Criar error report  → status 201
-  ✅ Listar error reports  → 49 relatórios
-  ✅ Stats de error reports  → total: 49 | abertos: 5
+  ✅ Listar error reports  → 56 relatórios
+  ✅ Stats de error reports  → total: 56 | abertos: 12
   ✅ Audit log registrou ações do teste  → 20 entradas
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -210,12 +210,12 @@
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   16. PERFORMANCE — ENDPOINTS CRÍTICOS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ✅ [PERF] Dashboard (11ms)  → 11ms ✓
-  ✅ [PERF] Listar ativos (7ms)  → 7ms ✓
-  ✅ [PERF] Listar deals (9ms)  → 9ms ✓
-  ✅ [PERF] Listar empresas (6ms)  → 6ms ✓
-  ✅ [PERF] Listar investidores (6ms)  → 6ms ✓
-  ✅ [PERF] Listar stages (6ms)  → 6ms ✓
+  ✅ [PERF] Dashboard (10ms)  → 10ms ✓
+  ✅ [PERF] Listar ativos (6ms)  → 6ms ✓
+  ✅ [PERF] Listar deals (10ms)  → 10ms ✓
+  ✅ [PERF] Listar empresas (38ms)  → 38ms ✓
+  ✅ [PERF] Listar investidores (8ms)  → 8ms ✓
+  ✅ [PERF] Listar stages (12ms)  → 12ms ✓
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   17. LIMPEZA — REMOVER DADOS DE TESTE
@@ -224,7 +224,7 @@
   ✅ Limpar listings  → 1 removidos
   ✅ Limpar ativos  → 7 removidos
   ✅ Limpar investidores  → 4 removidos
-  ✅ Limpar empresa de teste  → id: 15 removida
+  ✅ Limpar empresa de teste  → id: 28 removida
   ✅ Logout
 
 ════════════════════════════════════════════════════════════
@@ -232,75 +232,75 @@
 ════════════════════════════════════════════════════════════
 
   1. AUTENTICAÇÃO
-    ✅ Login válido retorna usuário (104ms)  → user: admin
-    ✅ [PERF] Login (104ms)  → 104ms ✓
+    ✅ Login válido retorna usuário (150ms)  → user: admin
+    ✅ [PERF] Login (150ms)  → 150ms ✓
     ✅ Sessão persiste entre requests  → id: 1
     ✅ Credenciais inválidas retornam 401
     ✅ Rota protegida sem sessão retorna 401
 
   2. DASHBOARD / STATS
-    ✅ Dashboard responde (13ms)  → status 200
-    ✅ [PERF] Dashboard load (13ms)  → 13ms ✓
+    ✅ Dashboard responde (16ms)  → status 200
+    ✅ [PERF] Dashboard load (16ms)  → 16ms ✓
     ✅ Stats tem pipeline value  → R$ 0
     ✅ Stats tem conversão
     ✅ Stats tem forecast
     ✅ Stats tem alertas de deals
 
   3. PIPELINE STAGES
-    ✅ Stages respondem (8ms)
+    ✅ Stages respondem (9ms)
     ✅ Pipeline INVESTOR tem estágios  → 5 estágios: Prospectado → Contato Inicial → Qualificado → Proposta → Fechado
     ✅ Pipeline ASSET (M&A) tem estágios  → 7 estágios
 
   4. CRM — EMPRESA
-    ✅ Criar empresa (14ms)  → id: 15
+    ✅ Criar empresa (14ms)  → id: 28
     ✅ CNPJ duplicado é rejeitado  → status 500 — correto
     ✅ Empresa sem nome é rejeitada  → status 400
-    ✅ Listar empresas (7ms)  → 10 empresas
-    ✅ [PERF] Listar empresas (7ms)  → 7ms ✓
+    ✅ Listar empresas (9ms)  → 11 empresas
+    ✅ [PERF] Listar empresas (9ms)  → 9ms ✓
     ✅ Salvar contato verificado na empresa  → status 200
 
   5. CADASTRO MANUAL DE ATIVOS (7 TIPOS)
-    ✅ Criar ativo TERRA (12ms)  → id: 35 | R$18.000.000
+    ✅ Criar ativo TERRA (15ms)  → id: 79 | R$18.000.000
     ✅   TERRA: buscar por ID
     ✅   TERRA: type correto  → TERRA
     ✅   TERRA: priceAsking salvo  → R$ 18.000.000
     ✅   TERRA: camposEspecificos persiste  → ✓ carCodImovel: MT-5107602-ABC12345
     ✅   TERRA: coordenadas salvas  → lat: -16.4661
     ✅   TERRA: update
-    ✅ Criar ativo MINA (10ms)  → id: 36 | R$45.000.000
+    ✅ Criar ativo MINA (12ms)  → id: 80 | R$45.000.000
     ✅   MINA: buscar por ID
     ✅   MINA: type correto  → MINA
     ✅   MINA: priceAsking salvo  → R$ 45.000.000
     ✅   MINA: camposEspecificos persiste  → ✓ substancia: BAUXITA
     ✅   MINA: coordenadas salvas  → lat: -20.3788
     ✅   MINA: update
-    ✅ Criar ativo AGRO (9ms)  → id: 37 | R$3.200.000
+    ✅ Criar ativo AGRO (16ms)  → id: 81 | R$3.200.000
     ✅   AGRO: buscar por ID
     ✅   AGRO: type correto  → AGRO
     ✅   AGRO: priceAsking salvo  → R$ 3.200.000
     ✅   AGRO: camposEspecificos persiste  → ✓ carCodImovel: MG-3147907-CAFE001
     ✅   AGRO: coordenadas salvas  → lat: -18.9421
     ✅   AGRO: update
-    ✅ Criar ativo NEGOCIO (10ms)  → id: 38 | R$12.000.000
+    ✅ Criar ativo NEGOCIO (11ms)  → id: 82 | R$12.000.000
     ✅   NEGOCIO: buscar por ID
     ✅   NEGOCIO: type correto  → NEGOCIO
     ✅   NEGOCIO: priceAsking salvo  → R$ 12.000.000
     ✅   NEGOCIO: camposEspecificos persiste  → ✓ faturamentoAnual: 8000000
     ✅   NEGOCIO: update
-    ✅ Criar ativo FII_CRI (8ms)  → id: 39 | R$5.000.000
+    ✅ Criar ativo FII_CRI (11ms)  → id: 83 | R$5.000.000
     ✅   FII_CRI: buscar por ID
     ✅   FII_CRI: type correto  → FII_CRI
     ✅   FII_CRI: priceAsking salvo  → R$ 5.000.000
     ✅   FII_CRI: camposEspecificos persiste  → ✓ taxaJuros: CDI+3%
     ✅   FII_CRI: update
-    ✅ Criar ativo DESENVOLVIMENTO (9ms)  → id: 40 | R$8.000.000
+    ✅ Criar ativo DESENVOLVIMENTO (11ms)  → id: 84 | R$8.000.000
     ✅   DESENVOLVIMENTO: buscar por ID
     ✅   DESENVOLVIMENTO: type correto  → DESENVOLVIMENTO
     ✅   DESENVOLVIMENTO: priceAsking salvo  → R$ 8.000.000
     ✅   DESENVOLVIMENTO: camposEspecificos persiste  → ✓ vgvEstimado: 40000000
     ✅   DESENVOLVIMENTO: coordenadas salvas  → lat: -16.8231
     ✅   DESENVOLVIMENTO: update
-    ✅ Criar ativo ENERGIA (9ms)  → id: 41 | R$22.000.000
+    ✅ Criar ativo ENERGIA (13ms)  → id: 85 | R$22.000.000
     ✅   ENERGIA: buscar por ID
     ✅   ENERGIA: type correto  → ENERGIA
     ✅   ENERGIA: priceAsking salvo  → R$ 22.000.000
@@ -308,12 +308,12 @@
     ✅   ENERGIA: coordenadas salvas  → lat: -6.7672
     ✅   ENERGIA: update
     ✅ Ativo sem campos obrigatórios é rejeitado  → status 400
-    ✅ Listar todos os ativos  → 3 ativos
-    ✅ [PERF] Listar ativos (6ms)  → 6ms ✓
+    ✅ Listar todos os ativos  → 5 ativos
+    ✅ [PERF] Listar ativos (7ms)  → 7ms ✓
 
   6. DEALS — CICLO COMPLETO NO KANBAN
-    ✅ Criar deal (20ms)  → id: 22
-    ✅ Deal aparece na listagem  → id: 22
+    ✅ Criar deal (12ms)  → id: 48
+    ✅ Deal aparece na listagem  → id: 48
     ✅ Deal vinculado à empresa  → [E2E] Holding Teste Capital Ltda
     ✅ Deal tem contagem de comentários
     ✅ Mover para 'Contato Inicial'
@@ -327,29 +327,29 @@
     ✅ Buscar deal por ID
 
   7. PROSPECÇÃO — BUSCA DE CNPJ
-    ✅ Buscar CNPJ via CNPJA (7ms)  → empresa: PETROLEO BRASILEIRO S A PETROBRAS
+    ✅ Buscar CNPJ via CNPJA (8ms)  → empresa: PETROLEO BRASILEIRO S A PETROBRAS
     ✅ CNPJ retorna razão social
     ✅ CNPJ retorna CNAE principal
     ✅ CNPJ retorna endereço com cidade
     ✅ CNPJ retorna porte
-    ✅ [PERF] Consulta CNPJ (7ms)  → 7ms ✓
+    ✅ [PERF] Consulta CNPJ (8ms)  → 8ms ✓
     ✅ CNPJ inválido retorna erro  → status 400
-    ✅ Busca por CNAE retorna resultados (140ms)  → 0 empresas
-    ✅ [PERF] Busca CNAE (140ms)  → 140ms ✓
+    ✅ Busca por CNAE retorna resultados (155ms)  → 0 empresas
+    ✅ [PERF] Busca CNAE (155ms)  → 155ms ✓
 
   8. PROSPECÇÃO REVERSA (COMPRADORES POR ATIVO)
-    ✅ Reversa MINA/BAUXITA (581ms)  → 37 empresas | diretos: 32 | fundos: 5
-    ✅ [PERF] Reversa MINA (581ms)  → 581ms ✓
+    ✅ Reversa MINA/BAUXITA (1160ms)  → 37 empresas | diretos: 32 | fundos: 5
+    ✅ [PERF] Reversa MINA (1160ms)  → 1160ms ✓
     ✅   MINA: resultado tem legalName
     ✅   MINA: resultado tem taxId (CNPJ)
     ✅   MINA: camada classificada (1-3)  → camada 1
-    ✅ Reversa TERRA (805ms)  → 65 empresas | diretos: 40 | fundos: 25
-    ✅ [PERF] Reversa TERRA (805ms)  → 805ms ✓
+    ✅ Reversa TERRA (1513ms)  → 65 empresas | diretos: 40 | fundos: 25
+    ✅ [PERF] Reversa TERRA (1513ms)  → 1513ms ✓
     ✅   TERRA: resultado tem legalName
     ✅   TERRA: resultado tem taxId (CNPJ)
     ✅   TERRA: camada classificada (1-3)  → camada 1
-    ✅ Reversa NEGOCIO (1025ms)  → 25 empresas | diretos: 0 | fundos: 25
-    ✅ [PERF] Reversa NEGOCIO (1025ms)  → 1025ms ✓
+    ✅ Reversa NEGOCIO (1118ms)  → 25 empresas | diretos: 0 | fundos: 25
+    ✅ [PERF] Reversa NEGOCIO (1118ms)  → 1118ms ✓
     ✅   NEGOCIO: resultado tem legalName
     ✅   NEGOCIO: resultado tem taxId (CNPJ)
     ✅   NEGOCIO: camada classificada (1-3)  → camada 2
@@ -357,20 +357,20 @@
     ✅ Filtro 'ocultar já no CRM' funciona  → 65 empresas não no CRM
 
   9. PROSPECÇÃO — ANM (MINERAÇÃO)
-    ✅ Busca ANM por substância e UF (16ms)  → 0 processos
+    ✅ Busca ANM por substância e UF (23ms)  → 0 processos
 
   10. PROSPECÇÃO — CAR (IMÓVEIS RURAIS)
     ⚠️  Busca CAR (SICAR)  → status 502 — SICAR sabidamente instável
 
   11. INVESTIDORES + MATCHING ENGINE
-    ✅ Criar investidor 'Fundo Agro Capital'  → id: 17
-    ✅ Criar investidor 'Fundo Mineração Brasil'  → id: 18
-    ✅ Criar investidor 'M&A Partners'  → id: 19
-    ✅ Criar investidor 'Investidor Sem Critérios'  → id: 20
+    ✅ Criar investidor 'Fundo Agro Capital'  → id: 41
+    ✅ Criar investidor 'Fundo Mineração Brasil'  → id: 42
+    ✅ Criar investidor 'M&A Partners'  → id: 43
+    ✅ Criar investidor 'Investidor Sem Critérios'  → id: 44
     ✅ Listar investidores  → 13 perfis
-    ✅ Rodar matching engine (310ms)  → 36 matches gerados
-    ✅ [PERF] Matching engine (310ms)  → 310ms ✓
-    ✅ Listar sugestões  → 80 sugestões
+    ✅ Rodar matching engine (264ms)  → 38 matches gerados
+    ✅ [PERF] Matching engine (264ms)  → 264ms ✓
+    ✅ Listar sugestões  → 88 sugestões
     ✅ Investidor sem perfil não gera match score >= 60  → ✓ nenhum match indevido
     ✅ Match tem score válido (0-100)  → 50%
     ✅ Match tem ativo vinculado  → ÁGUA MINERAL - 807401/1977
@@ -379,12 +379,12 @@
     ✅ Rejeitar match
 
   12. SDR — FILA DE LEADS
-    ✅ Listar fila SDR (9ms)  → 20 leads
-    ✅ Promover lead a deal  → deal id: 24
+    ✅ Listar fila SDR (14ms)  → 51 leads
+    ✅ Promover lead a deal  → deal id: 50
 
   13. PORTAL INVESTIDOR — FLUXO COMPLETO
     ✅ Listar listings  → 0 listings
-    ✅ Criar listing publicado  → id: 5
+    ✅ Criar listing publicado  → id: 11
     ✅ Listing publicado aparece na rota pública
     ✅ Preço oculto em teaser (visibilidade restrita)  → ✓ preço não exposto
     ✅ Inquiry via portal (sem auth)  → status 201
@@ -392,12 +392,12 @@
     ✅ Intent score calculado  → score: 100
     ✅ Intent alto por keywords (proposta/visita/reunião/urgente)  → score 100 — esperado >= 70
     ✅ Inquiry com telefone pontua mais  → telefone informado deve aumentar score
-    ✅ Inquiry do portal vira lead no SDR  → lead id: 25, score: 40
+    ✅ Inquiry do portal vira lead no SDR  → lead id: 56, score: 40
 
   14. ERROR REPORTS & AUDIT LOG
     ✅ Criar error report  → status 201
-    ✅ Listar error reports  → 49 relatórios
-    ✅ Stats de error reports  → total: 49 | abertos: 5
+    ✅ Listar error reports  → 56 relatórios
+    ✅ Stats de error reports  → total: 56 | abertos: 12
     ✅ Audit log registrou ações do teste  → 20 entradas
 
   15. EDGE CASES — DADOS INVÁLIDOS E LIMITES
@@ -407,19 +407,19 @@
     ✅ Cross-pipeline é rejeitado  → status 400
 
   16. PERFORMANCE — ENDPOINTS CRÍTICOS
-    ✅ [PERF] Dashboard (11ms)  → 11ms ✓
-    ✅ [PERF] Listar ativos (7ms)  → 7ms ✓
-    ✅ [PERF] Listar deals (9ms)  → 9ms ✓
-    ✅ [PERF] Listar empresas (6ms)  → 6ms ✓
-    ✅ [PERF] Listar investidores (6ms)  → 6ms ✓
-    ✅ [PERF] Listar stages (6ms)  → 6ms ✓
+    ✅ [PERF] Dashboard (10ms)  → 10ms ✓
+    ✅ [PERF] Listar ativos (6ms)  → 6ms ✓
+    ✅ [PERF] Listar deals (10ms)  → 10ms ✓
+    ✅ [PERF] Listar empresas (38ms)  → 38ms ✓
+    ✅ [PERF] Listar investidores (8ms)  → 8ms ✓
+    ✅ [PERF] Listar stages (12ms)  → 12ms ✓
 
   17. LIMPEZA — REMOVER DADOS DE TESTE
     ✅ Limpar deals  → 2 removidos
     ✅ Limpar listings  → 1 removidos
     ✅ Limpar ativos  → 7 removidos
     ✅ Limpar investidores  → 4 removidos
-    ✅ Limpar empresa de teste  → id: 15 removida
+    ✅ Limpar empresa de teste  → id: 28 removida
     ✅ Logout
 
 ════════════════════════════════════════════════════════════
@@ -429,12 +429,12 @@
   ⏭  Pulados:  0
   📊 Total:    156
   🏆 Taxa:     100%
-  ⏱  Tempo:    13.9s
+  ⏱  Tempo:    16.4s
 ════════════════════════════════════════════════════════════
 
   ⚠️  AVISOS (APIs externas ou configuração):
      • [10. PROSPECÇÃO — CAR (IMÓVEIS RURAIS)] Busca CAR (SICAR) — status 502 — SICAR sabidamente instável
 
-  Fim: 04/03/2026, 19:35:45
+  Fim: 04/03/2026, 21:12:27
 ════════════════════════════════════════════════════════════
 

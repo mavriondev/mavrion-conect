@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Zap, MapPin, Loader2, RefreshCw, Plus, Building2, User, CheckCircle2, XCircle, Search, Handshake, ExternalLink } from "lucide-react";
+import { Zap, MapPin, Loader2, RefreshCw, Plus, Building2, User, CheckCircle2, XCircle, Search, Handshake, ExternalLink, Trash2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest } from "@/lib/queryClient";
 import { Link } from "wouter";
@@ -365,6 +365,12 @@ export default function MatchingPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.matching.suggestions.list.path] }),
   });
 
+  const deleteSuggestion = useMutation({
+    mutationFn: (id: number) =>
+      apiRequest("DELETE", `/api/matching/suggestions/${id}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.matching.suggestions.list.path] }),
+  });
+
   const filteredSuggestions = useMemo(() => {
     if (!suggestions) return [];
     return suggestions.filter(m => {
@@ -652,6 +658,19 @@ export default function MatchingPage() {
                             Rejeitar
                           </Button>
                         )}
+                        <Button
+                          variant="ghost"
+                          className="h-8 px-2 text-muted-foreground hover:text-red-600"
+                          size="sm"
+                          data-testid={`button-delete-match-${match.id}`}
+                          onClick={() => {
+                            if (confirm("Remover este matching permanentemente?")) {
+                              deleteSuggestion.mutate(match.id);
+                            }
+                          }}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
                       </div>
                     </CardContent>
                   </Card>

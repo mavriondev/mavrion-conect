@@ -85,6 +85,9 @@ export default function EmpresaDetailPage() {
     observacoes: "",
   });
   const [savingPerfil, setSavingPerfil] = useState(false);
+  const [cnpjaLoading, setCnpjaLoading] = useState(false);
+  const [sicorData, setSicorData] = useState<any>(null);
+  const [sicorLoading, setSicorLoading] = useState(false);
 
   const { data, isLoading, error } = useQuery<RelationshipData>({
     queryKey: [`/api/companies/${id}/relationships`],
@@ -103,6 +106,8 @@ export default function EmpresaDetailPage() {
     (a: any) => a.linkedCompanyId === Number(id)
   );
 
+  const companyDeals: any[] = (data as any)?.deals || [];
+
   const sociosWithTaxId = socios.filter(s => s.taxId);
   const creditCost = sociosWithTaxId.length;
   const alreadyExpanded = Object.keys(expandedCompanies).length > 0;
@@ -115,7 +120,10 @@ export default function EmpresaDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/companies/with-leads"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sdr/queue"] });
     },
-    onError: () => toast({ title: "Erro ao criar lead", variant: "destructive" }),
+    onError: (err: any) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/companies/${id}/relationships`] });
+      toast({ title: err?.message === "409" ? "Esta empresa já possui um lead" : "Erro ao criar lead", variant: "destructive" });
+    },
     onSettled: () => setCreatingLead(false),
   });
 
@@ -815,6 +823,176 @@ export default function EmpresaDetailPage() {
         </TabsContent>
 
         <TabsContent value="enriquecimento" className="mt-4 space-y-5">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Building2 className="w-4 h-4" /> Consulta CNPJA
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center gap-3">
+                {company?.enrichedAt ? (
+                  <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400" data-testid="badge-enriched-at">
+                    <CheckCircle2 className="w-3 h-3 mr-1" />
+                    Enriquecido em {new Date(company.enrichedAt).toLocaleDateString("pt-BR")}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400" data-testid="badge-never-enriched">
+                    <AlertCircle className="w-3 h-3 mr-1" />
+                    Nunca enriquecido
+                  </Badge>
+                )}
+              </div>
+              {company?.cnpj && (
+                <Button size="sm" variant="outline" className="gap-1.5"
+                  disabled={cnpjaLoading}
+                  data-testid="button-atualizar-cnpja"
+                  onClick={async () => {
+                    setCnpjaLoading(true);
+                    try {
+                      const cnpjClean = company.cnpj!.replace(/\D/g, "");
+                      const res = await apiRequest("GET", `/api/cnpj/${cnpjClean}`);
+                      if (!res.ok) throw new Error("Falha ao consultar CNPJA");
+                      const cnpjaData = await res.json();
+                      const patchBody: any = {};
+                      if (cnpjaData.razaoSocial || cnpjaData.company?.name) patchBody.legalName = cnpjaData.razaoSocial || cnpjaData.company?.name;
+                      if (cnpjaData.nomeFantasia || cnpjaData.alias) patchBody.tradeName = cnpjaData.nomeFantasia || cnpjaData.alias;
+                      if (cnpjaData.porte || cnpjaData.company?.size?.text) patchBody.porte = cnpjaData.porte || cnpjaData.company?.size?.text;
+                      if (cnpjaData.telefones || cnpjaData.phones) patchBody.phones = cnpjaData.telefones || cnpjaData.phones;
+                      if (cnpjaData.emails || cnpjaData.emails) patchBody.emails = cnpjaData.emails;
+                      if (cnpjaData.endereco || cnpjaData.address) patchBody.address = cnpjaData.endereco || cnpjaData.address;
+                      if (cnpjaData.cnaePrincipal || cnpjaData.mainActivity) patchBody.cnaePrincipal = cnpjaData.cnaePrincipal?.codigo || cnpjaData.mainActivity?.id || cnpjaData.cnaePrincipal;
+                      patchBody.enrichedAt = new Date().toISOString();
+                      await apiRequest("PATCH", `/api/crm/companies/${id}`, patchBody);
+                      queryClient.invalidateQueries({ queryKey: [`/api/companies/${id}/relationships`] });
+                      toast({ title: "Dados atualizados via CNPJA" });
+                    } catch {
+                      toast({ title: "Erro ao consultar CNPJA", variant: "destructive" });
+                    }
+                    setCnpjaLoading(false);
+                  }}
+                >
+                  {cnpjaLoading
+                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Consultando...</>
+                    : <><Download className="w-3.5 h-3.5" /> Atualizar dados via CNPJA</>}
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Briefcase className="w-4 h-4" /> Histórico de Negociações
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {companyDeals.length === 0 ? (
+                <p className="text-sm text-muted-foreground" data-testid="text-sem-deals">Nenhuma negociação registrada</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-xs text-muted-foreground">
+                        <th className="text-left py-2 px-2 font-medium">Título</th>
+                        <th className="text-left py-2 px-2 font-medium">Pipeline</th>
+                        <th className="text-left py-2 px-2 font-medium">Estágio</th>
+                        <th className="text-right py-2 px-2 font-medium">Valor</th>
+                        <th className="text-right py-2 px-2 font-medium">Data</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {companyDeals.map((d: any) => (
+                        <tr key={d.id} className="border-b last:border-0 hover:bg-muted/30 cursor-pointer"
+                          onClick={() => navigate("/crm")} data-testid={`row-deal-${d.id}`}>
+                          <td className="py-2 px-2 font-medium">{d.title || "\u2014"}</td>
+                          <td className="py-2 px-2">{d.pipelineType || "\u2014"}</td>
+                          <td className="py-2 px-2">{d.stageName || d.stageId || "\u2014"}</td>
+                          <td className="py-2 px-2 text-right">
+                            {d.value ? Number(d.value).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "\u2014"}
+                          </td>
+                          <td className="py-2 px-2 text-right">
+                            {d.createdAt ? new Date(d.createdAt).toLocaleDateString("pt-BR") : "\u2014"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {company?.cnaePrincipal && String(company.cnaePrincipal).startsWith("01") && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <FileText className="w-4 h-4" /> Crédito Rural (SICOR)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {!sicorData ? (
+                  <Button size="sm" variant="outline" className="gap-1.5"
+                    disabled={sicorLoading}
+                    data-testid="button-consultar-sicor-empresa"
+                    onClick={async () => {
+                      const addr = company?.address as any;
+                      const codigoIbge = addr?.codigoIbge || addr?.ibge || "";
+                      if (!codigoIbge) {
+                        toast({ title: "Código IBGE não disponível no endereço da empresa", variant: "destructive" });
+                        return;
+                      }
+                      setSicorLoading(true);
+                      try {
+                        const res = await apiRequest("GET", `/api/norion/sicor/${codigoIbge}`);
+                        if (res.ok) setSicorData(await res.json());
+                        else toast({ title: "Erro ao consultar SICOR", variant: "destructive" });
+                      } catch {
+                        toast({ title: "Erro ao consultar SICOR", variant: "destructive" });
+                      }
+                      setSicorLoading(false);
+                    }}
+                  >
+                    {sicorLoading
+                      ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Consultando...</>
+                      : <><Search className="w-3.5 h-3.5" /> Consultar crédito rural (SICOR)</>}
+                  </Button>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    {sicorData.totalContratos != null && (
+                      <div className="p-3 rounded bg-muted/50 text-center">
+                        <p className="text-xs text-muted-foreground">Contratos PRONAF</p>
+                        <p className="text-lg font-bold" data-testid="text-sicor-contratos-empresa">
+                          {Number(sicorData.totalContratos).toLocaleString("pt-BR")}
+                        </p>
+                      </div>
+                    )}
+                    {sicorData.volumeTotal != null && (
+                      <div className="p-3 rounded bg-muted/50 text-center">
+                        <p className="text-xs text-muted-foreground">Volume Financiado</p>
+                        <p className="text-lg font-bold" data-testid="text-sicor-volume-empresa">
+                          {Number(sicorData.volumeTotal).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </p>
+                      </div>
+                    )}
+                    {sicorData.culturas?.length > 0 && (
+                      <div className="p-3 rounded bg-muted/50 col-span-2">
+                        <p className="text-xs text-muted-foreground mb-2">Principais culturas financiadas</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {sicorData.culturas.map((c: any, i: number) => (
+                            <Badge key={i} variant="outline" className="text-xs capitalize" data-testid={`badge-sicor-cultura-empresa-${i}`}>
+                              {typeof c === "string" ? c : c.nome || c.cultura}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           <EnrichmentPanel
             company={company}
             enrichmentResult={enrichmentResult}

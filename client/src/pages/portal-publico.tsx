@@ -106,7 +106,7 @@ function Navbar({ onScrollTo, transparent }: { onScrollTo?: (id: string) => void
             <span className={cn(
               "text-lg font-bold tracking-tight transition-colors",
               showBg ? "text-gray-900" : "text-white"
-            )}>Mavrion Conect</span>
+            )}>Mavrion Connect</span>
           </div>
         </Link>
 
@@ -342,7 +342,7 @@ function ListingGrid() {
         <div className="max-w-7xl mx-auto px-4 md:px-8 text-center">
           <div className="flex items-center justify-center gap-3 mb-6">
             <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
-            <span className="text-sm font-medium text-gray-500 tracking-wide">Mavrion Conect</span>
+            <span className="text-sm font-medium text-gray-500 tracking-wide">Mavrion Connect</span>
             <span className="text-sm text-gray-400">•</span>
             <span className="text-sm text-gray-500">{stats.totalAssets > 0 ? `${stats.totalAssets}+ Ativos` : "Plataforma Premium"}</span>
           </div>
@@ -585,7 +585,7 @@ function ListingGrid() {
                   <div className="w-9 h-9 rounded-lg bg-white flex items-center justify-center">
                     <Zap className="w-5 h-5 text-gray-900 fill-current" />
                   </div>
-                  <span className="text-lg font-bold">Mavrion Conect</span>
+                  <span className="text-lg font-bold">Mavrion Connect</span>
                 </div>
                 <p className="text-gray-400 text-sm leading-relaxed max-w-md">
                   Plataforma de originação de negócios e investimentos. Conectamos investidores a oportunidades verificadas em Real Estate, Mineração, Agronegócio e M&A.
@@ -641,7 +641,7 @@ function ListingGrid() {
             </div>
             <div className="border-t border-white/10 mt-12 pt-6 flex flex-col md:flex-row items-center justify-between gap-3">
               <p className="text-gray-600 text-xs" data-testid="text-footer-copyright">
-                © {new Date().getFullYear()} Mavrion Conect — Plataforma de Originação de Negócios
+                © {new Date().getFullYear()} Mavrion Connect — Plataforma de Originação de Negócios
               </p>
               <div className="flex items-center gap-1 text-gray-600 text-xs">
                 <Shield className="w-3 h-3" />
@@ -800,7 +800,7 @@ function ListingDetail({ id }: { id: number }) {
               <div className="w-8 h-8 rounded-lg bg-gray-900 flex items-center justify-center">
                 <Zap className="w-4 h-4 text-white fill-current" />
               </div>
-              <span className="font-bold text-sm text-gray-900">Mavrion Conect</span>
+              <span className="font-bold text-sm text-gray-900">Mavrion Connect</span>
             </div>
           </Link>
         </div>
@@ -1081,9 +1081,9 @@ function ListingDetail({ id }: { id: number }) {
               <div className="w-7 h-7 rounded-lg bg-white flex items-center justify-center">
                 <Zap className="w-4 h-4 text-gray-900 fill-current" />
               </div>
-              <span className="font-bold text-sm">Mavrion Conect</span>
+              <span className="font-bold text-sm">Mavrion Connect</span>
             </div>
-            <p className="text-gray-600 text-xs">© {new Date().getFullYear()} Mavrion Conect — Plataforma de Originação de Negócios</p>
+            <p className="text-gray-600 text-xs">© {new Date().getFullYear()} Mavrion Connect — Plataforma de Originação de Negócios</p>
             <Link href="/portal" className="text-gray-500 hover:text-white text-sm transition-colors">
               Ver todas oportunidades
             </Link>

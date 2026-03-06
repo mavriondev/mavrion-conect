@@ -36,7 +36,7 @@ export default function LoginPage() {
       <div className="hidden lg:flex lg:w-[55%] relative overflow-hidden">
         <img
           src={loginHeroPath}
-          alt="Mavrion Conect"
+          alt="Mavrion Connect"
           className="absolute inset-0 w-full h-full object-cover"
         />
         <div className="absolute inset-0 bg-gradient-to-r from-[#062b1e]/95 via-[#062b1e]/80 to-[#062b1e]/40" />
@@ -48,7 +48,7 @@ export default function LoginPage() {
               <Zap className="w-6 h-6 text-white fill-current" />
             </div>
             <div>
-              <span className="text-white font-bold text-lg tracking-tight">Mavrion Conect</span>
+              <span className="text-white font-bold text-lg tracking-tight">Mavrion Connect</span>
               <p className="text-emerald-400/80 text-[11px] font-medium tracking-widest uppercase -mt-0.5">Deal Origination</p>
             </div>
           </div>
@@ -106,7 +106,7 @@ export default function LoginPage() {
             <div className="w-9 h-9 bg-emerald-500 rounded-xl flex items-center justify-center">
               <Zap className="w-5 h-5 text-white fill-current" />
             </div>
-            <span className="text-lg font-bold tracking-tight">Mavrion Conect</span>
+            <span className="text-lg font-bold tracking-tight">Mavrion Connect</span>
           </div>
 
           <div className="space-y-2">
@@ -166,7 +166,7 @@ export default function LoginPage() {
 
           <div className="pt-4 border-t border-border/40">
             <p className="text-[11px] text-center text-muted-foreground/70">
-              Plataforma segura — Mavrion Conect © {new Date().getFullYear()}
+              Plataforma segura — Mavrion Connect © {new Date().getFullYear()}
             </p>
           </div>
         </div>

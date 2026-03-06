@@ -2,7 +2,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  Building2, MapPin, Briefcase, AlertCircle, Download, Loader2, Filter, XCircle, ExternalLink
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu";
+import {
+  Building2, MapPin, Briefcase, AlertCircle, Download, Loader2, Filter, XCircle, ExternalLink, ChevronDown, Users
 } from "lucide-react";
 
 interface SearchResult {
@@ -30,6 +33,7 @@ interface ResultsTableProps {
   disqualifyingCnpj: string | null;
   importedMap?: Record<string, number>;
   onImport: (cnpj: string) => void;
+  onImportAsAsset: (empresa: SearchResult) => void;
   onDisqualify: (cnpj: string) => void;
 }
 
@@ -49,6 +53,7 @@ export default function ResultsTable({
   disqualifyingCnpj,
   importedMap = {},
   onImport,
+  onImportAsAsset,
   onDisqualify,
 }: ResultsTableProps) {
   return (
@@ -162,21 +167,30 @@ export default function ResultsTable({
                             <XCircle className="w-3.5 h-3.5" />
                           )}
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => onImport(result.taxId)}
-                          disabled={importingCnpj === result.taxId}
-                          data-testid={`button-importar-${result.taxId}`}
-                          className="h-8"
-                        >
-                          {importingCnpj === result.taxId ? (
+                        {importingCnpj === result.taxId ? (
+                          <Button size="sm" variant="outline" disabled className="h-8">
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Download className="w-3.5 h-3.5" />
-                          )}
-                          <span className="ml-1 hidden sm:inline">Importar</span>
-                        </Button>
+                            <span className="ml-1 hidden sm:inline">Importando...</span>
+                          </Button>
+                        ) : (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button size="sm" variant="outline" className="h-8 text-xs gap-1" data-testid={`button-importar-${result.taxId}`}>
+                                Importar <ChevronDown className="w-3 h-3" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => onImport(result.taxId)} data-testid={`menu-comprador-${result.taxId}`}>
+                                <Users className="w-3.5 h-3.5 mr-2 text-blue-600" />
+                                Como comprador / investidor
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => onImportAsAsset(result)} data-testid={`menu-ativo-${result.taxId}`}>
+                                <Building2 className="w-3.5 h-3.5 mr-2 text-emerald-600" />
+                                Como ativo (empresa à venda)
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
                       </>
                     )}
                   </div>

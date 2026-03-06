@@ -2,8 +2,8 @@ import type { Express } from "express";
 import type { IStorage } from "../storage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { sendNotification, notifId } from "../notifications";
-import { insertPortalListingSchema, insertAssetLandingPageSchema, companies, leads, deals, pipelineStages, portalInquiries } from "@shared/schema";
-import { eq, and, asc } from "drizzle-orm";
+import { insertPortalListingSchema, insertAssetLandingPageSchema, companies, leads, deals, pipelineStages, portalInquiries, assets } from "@shared/schema";
+import { eq, and, asc, sql } from "drizzle-orm";
 import { getOrgId } from "../lib/tenant";
 
 function computeIntent(data: { phone?: string; message?: string; assetId?: number | null }) {
@@ -201,6 +201,40 @@ export function registerPortalRoutes(app: Express, storage: IStorage, db: NodePg
         intentSignalsJson: intentSignals,
       });
 
+      setImmediate(async () => {
+        try {
+          if (!process.env.RESEND_API_KEY) return;
+          if (!inquiry || (inquiry.intentScore || 0) < 50) return;
+          const notifyEmail = process.env.NOTIFY_EMAIL;
+          if (!notifyEmail) return;
+
+          const { Resend } = await import("resend");
+          const resend = new Resend(process.env.RESEND_API_KEY);
+          const emoji = (inquiry.intentScore || 0) >= 70 ? "🔥" : "⚡";
+
+          await resend.emails.send({
+            from: "Mavrion <noreply@mavrion.com.br>",
+            to: [notifyEmail],
+            subject: `${emoji} Novo lead: ${inquiry.name}`,
+            html: `<div style="font-family:sans-serif;max-width:580px">
+              <h2 style="color:#059669">Novo lead pelo portal</h2>
+              <p><b>Nome:</b> ${inquiry.name}</p>
+              <p><b>Email:</b> ${inquiry.email}</p>
+              <p><b>Telefone:</b> ${inquiry.phone || "—"}</p>
+              <p><b>Score:</b> <strong style="color:${(inquiry.intentScore||0)>=70?"#059669":"#d97706"}">${inquiry.intentScore}/100</strong></p>
+              <p><b>Mensagem:</b> ${inquiry.message || "—"}</p>
+              <br>
+              <a href="${process.env.APP_URL || "https://mavrionconnect.com.br"}/crm"
+                 style="background:#059669;color:white;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:bold">
+                Ver no CRM →
+              </a>
+            </div>`,
+          });
+        } catch (err) {
+          console.error("Email lead error:", err);
+        }
+      });
+
       try {
         const emailLower = email.toLowerCase().trim();
         const allCompanies = await db.select().from(companies).where(eq(companies.orgId, orgId));
@@ -237,20 +271,26 @@ export function registerPortalRoutes(app: Express, storage: IStorage, db: NodePg
 
         let dealCreated = false;
         let dealId: number | null = null;
-        if (intentScore >= 70) {
+        if (intentScore >= 50) {
           const stages = await db.select().from(pipelineStages)
             .where(eq(pipelineStages.pipelineType, "INVESTOR"))
             .orderBy(asc(pipelineStages.order))
             .limit(1);
           if (stages.length > 0) {
+            let amountEstimate: number | null = null;
+            if (assetId) {
+              const [asset] = await db.select().from(assets).where(eq(assets.id, assetId)).limit(1);
+              if (asset) amountEstimate = asset.priceAsking || null;
+            }
             const [deal] = await db.insert(deals).values({
               orgId,
               pipelineType: "INVESTOR",
               stageId: stages[0].id,
-              title: `Portal: ${company || name} — ${contextTitle || "Interesse"}`,
+              title: `Lead Portal: ${name} — ${contextTitle || "Interesse"}`,
               description: `Interesse via portal.\nNome: ${name}\nEmail: ${email}\nTelefone: ${phone || "N/A"}\nMensagem: ${message || "N/A"}\nIntent Score: ${intentScore}%`,
               companyId,
               assetId,
+              amountEstimate,
               labels: ["Portal", `Intent ${intentScore}%`],
               source: "PORTAL",
             } as any).returning();
@@ -262,7 +302,7 @@ export function registerPortalRoutes(app: Express, storage: IStorage, db: NodePg
 
         const notifType = dealCreated ? "new_deal_portal" : "new_lead_portal";
         const notifTitle = dealCreated
-          ? `Novo Deal via Portal (Intent ${intentScore}%)`
+          ? `Novo Deal via Portal (Intent ${intentScore}%) — Lead qualificado`
           : `Novo Lead via Portal`;
         const notifMsg = `${name} (${company || email}) demonstrou interesse em "${contextTitle || "portal"}"`;
 
@@ -279,7 +319,7 @@ export function registerPortalRoutes(app: Express, storage: IStorage, db: NodePg
         console.error("Portal→CRM integration error (inquiry saved):", crmErr);
       }
 
-      res.status(201).json({ success: true, message: "Recebido" });
+      res.status(201).json({ ...inquiry, dealCreated: !!dealId, dealId });
     } catch (err) {
       console.error("Portal inquiry error:", err);
       res.status(500).json({ message: "Erro ao enviar interesse" });
@@ -461,5 +501,163 @@ export function registerPortalRoutes(app: Express, storage: IStorage, db: NodePg
       } : null,
     };
     res.json(safe);
+  });
+
+  app.get("/api/public/showcase/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ message: "ID inválido" });
+
+    try {
+      let rows: any;
+      try {
+        rows = await db.execute(sql`
+          SELECT a.id, a.org_id, a.type, a.title, a.description, a.location, a.municipio, a.estado,
+                 a.price_asking, a.area_ha, a.area_util, a.tags, a.fotos,
+                 a.campos_especificos, a.attributes_json,
+                 a.geo_alt_med, a.geo_alt_min, a.geo_alt_max, a.geo_decliv_med,
+                 a.geo_tem_rio, a.geo_tem_lago, a.geo_dist_agua_m, a.geo_tem_energia,
+                 a.geo_dist_energia_m, a.geo_score, a.geo_score_energia,
+                 a.anm_processo, a.car_cod_imovel, a.created_at,
+                 ST_AsGeoJSON(a.geom) as geom_json,
+                 c.trade_name
+          FROM assets a
+          LEFT JOIN companies c ON a.linked_company_id = c.id
+          WHERE a.id = ${id}
+        `);
+      } catch (geoErr: any) {
+        if (geoErr?.code === '42883' || geoErr?.code === '42703') {
+          rows = await db.execute(sql`
+            SELECT a.id, a.org_id, a.type, a.title, a.description, a.location, a.municipio, a.estado,
+                   a.price_asking, a.area_ha, a.area_util, a.tags, a.fotos,
+                   a.campos_especificos, a.attributes_json,
+                   a.geo_alt_med, a.geo_alt_min, a.geo_alt_max, a.geo_decliv_med,
+                   a.geo_tem_rio, a.geo_tem_lago, a.geo_dist_agua_m, a.geo_tem_energia,
+                   a.geo_dist_energia_m, a.geo_score, a.geo_score_energia,
+                   a.anm_processo, a.car_cod_imovel, a.created_at,
+                   NULL as geom_json,
+                   c.trade_name
+            FROM assets a
+            LEFT JOIN companies c ON a.linked_company_id = c.id
+            WHERE a.id = ${id}
+          `);
+        } else {
+          throw geoErr;
+        }
+      }
+
+      const asset = (rows as any).rows?.[0];
+      if (!asset) return res.status(404).json({ message: "Ativo não encontrado" });
+
+      const campos = asset.campos_especificos || {};
+      const attrs = asset.attributes_json || {};
+
+      let settings: Record<string, any> = {};
+      try {
+        const allSettings = await storage.getOrgSettings(asset.org_id || 1);
+        if (allSettings && typeof allSettings === "object") settings = allSettings as any;
+      } catch {}
+
+      const anmLive = campos.anmLiveData?.features?.[0] || null;
+
+      const showcase = {
+        id: asset.id,
+        type: asset.type,
+        title: asset.title,
+        description: asset.description,
+        location: asset.location,
+        municipio: asset.municipio,
+        estado: asset.estado,
+        priceAsking: asset.price_asking,
+        areaHa: asset.area_ha,
+        areaUtil: asset.area_util,
+        tags: asset.tags || [],
+        fotos: asset.fotos || [],
+
+        geometry: asset.geom_json ? JSON.parse(asset.geom_json) : null,
+
+        geoAltMed: asset.geo_alt_med,
+        geoAltMin: asset.geo_alt_min,
+        geoAltMax: asset.geo_alt_max,
+        geoDecliv: asset.geo_decliv_med,
+        geoTemRio: asset.geo_tem_rio,
+        geoTemLago: asset.geo_tem_lago,
+        geoDistAgua: asset.geo_dist_agua_m,
+        geoDistEnergia: asset.geo_dist_energia_m,
+        geoScore: asset.geo_score,
+        geoScoreEnergia: asset.geo_score_energia,
+
+        anmProcesso: asset.anm_processo,
+        carCodImovel: asset.car_cod_imovel,
+
+        empresa: {
+          tradeName: asset.trade_name || null,
+        },
+
+        certidoesData: campos.certidoesData ? {
+          status: campos.certidoesData.status || null,
+          resumo: campos.certidoesData.resumo || null,
+        } : null,
+
+        embrapa: campos.embrapa ? {
+          solo: campos.embrapa.solo || null,
+          zoneamento: campos.embrapa.zoneamento || null,
+          ndvi: campos.embrapa.ndvi || null,
+          clima: campos.embrapa.clima || null,
+          scoreAgro: campos.embrapa.scoreAgro || null,
+          resumo: campos.embrapa.resumo || null,
+        } : null,
+
+        ibama: {
+          temEmbargo: campos.temEmbargoIbama || false,
+        },
+
+        mapbiomas: campos.mapbiomas || null,
+
+        anmNome: anmLive?.NOME || attrs.anmNome || null,
+        anmSubstancia: anmLive?.SUBS || attrs.anmSubstancia || null,
+        anmFase: anmLive?.FASE || attrs.anmFase || null,
+        anmUltimoEvento: anmLive?.ULT_EVENTO || attrs.anmUltimoEvento || null,
+        anmArea: anmLive?.AREA_HA || attrs.anmArea || null,
+        anmTipo: anmLive?.TIPO || null,
+        anmSituacao: anmLive?.DSProcesso || null,
+
+        setor: campos.setor || null,
+
+        enrichmentAgro: campos.enrichmentAgro || null,
+
+        companyName: settings.company_name || "Mavrion Connect",
+        logoUrl: settings.logo_url || null,
+        showcaseWhatsapp: settings.showcase_whatsapp || null,
+
+        updatedAt: campos.embrapaUpdatedAt || campos.certidoesDataUpdatedAt || asset.created_at,
+      };
+
+      res.json(showcase);
+    } catch (err: any) {
+      console.error("Erro showcase:", err);
+      res.status(500).json({ message: "Erro ao gerar vitrine" });
+    }
+  });
+
+  app.get("/api/matching/assets/:id/showcase-check", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const id = Number(req.params.id);
+    const asset = await storage.getAsset(id);
+    if (!asset) return res.status(404).json({ message: "Ativo não encontrado" });
+
+    const campos = (asset.camposEspecificos || {}) as any;
+    const fotos = (asset.fotos || []) as any[];
+    const warnings: string[] = [];
+
+    if (!asset.title) warnings.push("Título não definido");
+    if (!asset.municipio && !asset.estado) warnings.push("Localização não definida");
+    if (fotos.length === 0) warnings.push("Nenhuma foto cadastrada");
+    if (!asset.description) warnings.push("Sem descrição");
+
+    res.json({
+      ready: warnings.length <= 1,
+      warnings,
+      url: `/vitrine/${id}`,
+    });
   });
 }

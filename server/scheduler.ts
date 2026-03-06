@@ -20,24 +20,26 @@ async function runConnectorJob(connector: { id: number; type: string; configJson
         break;
       }
       case "receita_ws": {
-        console.log(`[Scheduler] Receita WS connector ${connector.id} — sincronização registrada.`);
-        break;
+        throw new Error("Connector tipo receita_ws não implementado ainda — dados de CNPJ não estão sendo sincronizados automaticamente");
       }
       case "sicar_scraper": {
-        console.log(`[Scheduler] SICAR connector ${connector.id} — sincronização registrada.`);
-        break;
+        throw new Error("Connector tipo sicar_scraper não implementado ainda — dados do SICAR não estão sendo sincronizados automaticamente");
       }
       default: {
-        console.log(`[Scheduler] Tipo desconhecido: ${connector.type} — nenhuma ação executada.`);
+        throw new Error(`Connector tipo "${connector.type}" desconhecido — nenhuma ação executada`);
       }
     }
 
     await db.update(connectors)
-      .set({ lastRunAt: new Date() })
+      .set({ lastRunAt: new Date(), lastError: null } as any)
       .where(eq(connectors.id, connector.id));
 
-  } catch (err) {
-    console.error(`[Scheduler] Erro no connector ${connector.id}:`, err);
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error(`[Scheduler] Erro no connector ${connector.id}:`, errorMsg);
+    await db.update(connectors)
+      .set({ lastRunAt: new Date(), lastError: errorMsg } as any)
+      .where(eq(connectors.id, connector.id));
   }
 }
 

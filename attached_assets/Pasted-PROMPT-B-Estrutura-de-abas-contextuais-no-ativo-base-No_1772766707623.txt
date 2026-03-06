@@ -1,0 +1,61 @@
+PROMPT B — Estrutura de abas contextuais no ativo (base)
+No arquivo client/src/pages/ativo-detalhe.tsx, implemente o sistema 
+de abas contextuais por tipo de ativo.
+
+Adicione logo após os imports:
+
+const ABAS_POR_TIPO: Record<string, Array<{id: string, label: string}>> = {
+  TERRA: [
+    { id: "info",       label: "Informações" },
+    { id: "documentos", label: "Documentos" },
+    { id: "matches",    label: "Matches" },
+    { id: "geo",        label: "Geo & SICAR" },
+    { id: "embrapa",    label: "Embrapa" },
+    { id: "caf",        label: "CAF / PRONAF" },
+  ],
+  AGRO: [
+    { id: "info",       label: "Informações" },
+    { id: "documentos", label: "Documentos" },
+    { id: "matches",    label: "Matches" },
+    { id: "geo",        label: "Geo & SICAR" },
+    { id: "embrapa",    label: "Embrapa" },
+    { id: "caf",        label: "CAF / PRONAF" },
+  ],
+  MINA: [
+    { id: "info",       label: "Informações" },
+    { id: "documentos", label: "Documentos" },
+    { id: "matches",    label: "Matches" },
+    { id: "anm",        label: "ANM" },
+    { id: "geo",        label: "Geo" },
+  ],
+  NEGOCIO: [
+    { id: "info",       label: "Informações" },
+    { id: "documentos", label: "Documentos" },
+    { id: "matches",    label: "Matches" },
+    { id: "empresa",    label: "Empresa" },
+  ],
+  FII_CRI: [
+    { id: "info",       label: "Informações" },
+    { id: "documentos", label: "Documentos" },
+    { id: "matches",    label: "Matches" },
+    { id: "cvm",        label: "CVM / ANBIMA" },
+  ],
+  DESENVOLVIMENTO: [
+    { id: "info",       label: "Informações" },
+    { id: "documentos", label: "Documentos" },
+    { id: "matches",    label: "Matches" },
+    { id: "geo",        label: "Geo" },
+  ],
+};
+
+Adicione estado: const [abaAtiva, setAbaAtiva] = useState("info");
+
+Renderize as abas dinamicamente:
+const abas = ABAS_POR_TIPO[ativo?.type] || ABAS_POR_TIPO["NEGOCIO"];
+
+Para cada aba nova (geo, embrapa, caf, anm, empresa, cvm) renderize 
+por enquanto apenas: <p className="text-muted-foreground text-sm">
+Em breve — {aba.label}</p>
+
+Mantenha o conteúdo atual das abas "info", "documentos" e "matches" 
+exatamente como está. Não mexa em nada além das tabs.

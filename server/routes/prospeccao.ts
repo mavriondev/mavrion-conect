@@ -1,6 +1,9 @@
 import type { Express } from "express";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { companies } from "@shared/schema";
+import { eq } from "drizzle-orm";
+import { companies, assets } from "@shared/schema";
+import { storage } from "../storage";
+import { getOrgId } from "../lib/tenant";
 
 const cnpjaHeaders = () => ({
   "Authorization": process.env.CNPJA_API_KEY || "",
@@ -346,6 +349,61 @@ export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) 
     } catch (err) {
       console.error("Credit check error:", err);
       res.status(500).json({ message: "Falha ao consultar créditos" });
+    }
+  });
+
+  app.post("/api/cnpj/:cnpj/import-as-asset", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const orgId = getOrgId(req);
+    const cnpj = req.params.cnpj.replace(/\D/g, "");
+
+    try {
+      const cnpjaKey = process.env.CNPJA_API_KEY;
+      const cnpjaRes = await fetch(`https://api.cnpja.com/office/${cnpj}`, {
+        headers: { Authorization: cnpjaKey || "" }
+      });
+      const cnpjaData = cnpjaRes.ok ? await cnpjaRes.json() as any : null;
+
+      let [company] = await db.select().from(companies).where(eq(companies.cnpj, cnpj)).limit(1);
+      if (!company) {
+        company = await storage.createCompany({
+          orgId,
+          legalName: cnpjaData?.company?.name || cnpj,
+          tradeName: cnpjaData?.alias || null,
+          cnpj,
+          cnaePrincipal: cnpjaData?.mainActivity?.text || null,
+          porte: cnpjaData?.company?.size?.text || null,
+          phones: cnpjaData?.phones?.map((p: any) => p.number) || [],
+          emails: cnpjaData?.emails?.map((e: any) => e.address) || [],
+          address: {
+            street: cnpjaData?.address?.street,
+            city: cnpjaData?.address?.city,
+            state: cnpjaData?.address?.state,
+          },
+          enrichedAt: new Date(),
+        });
+      }
+
+      const asset = await storage.createAsset({
+        orgId,
+        type: "NEGOCIO",
+        title: cnpjaData?.alias || cnpjaData?.company?.name || `Empresa ${cnpj}`,
+        description: cnpjaData?.mainActivity?.text || null,
+        estado: cnpjaData?.address?.state || null,
+        municipio: cnpjaData?.address?.city || null,
+        linkedCompanyId: company.id,
+        statusAtivo: "ativo",
+        docsStatus: "pendente",
+        camposEspecificos: {
+          cnpj,
+          origemAtivo: "prospeccao_cnpj",
+          cnaePrincipal: cnpjaData?.mainActivity?.text || null,
+        },
+      });
+
+      res.json({ asset, company, message: "Ativo NEGOCIO criado com sucesso" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
     }
   });
 }

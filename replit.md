@@ -1,9 +1,7 @@
-# Mavrion Conect — B2B Deal Origination Platform
+# Mavrion Connect — B2B Deal Origination Platform
 
 ## Overview
-Mavrion Conect is a comprehensive B2B platform designed to streamline deal origination for real estate and M&A fund operations. It integrates SDR lead management, dual CRM pipelines (INVESTOR + ASSET), sophisticated asset-investor matching, CNPJ enrichment, dynamic proposal/contract generation, email automation, robust analytics, and a public investor portal. The platform aims to be a full-stack solution, branded with an emerald green theme, maximizing deal flow efficiency for funds.
-
-**Norion Capital** has been separated into a fully independent standalone application in `norion-standalone/`. It has its own backend, frontend, schema, and is designed to run as a separate Replit project with its own database. See `norion-standalone/README.md` for setup instructions.
+Mavrion Connect is a comprehensive B2B platform designed to streamline deal origination for real estate and M&A fund operations. It integrates SDR lead management, dual CRM pipelines (INVESTOR + ASSET), sophisticated asset-investor matching, CNPJ enrichment, dynamic proposal/contract generation, email automation, robust analytics, and a public investor portal. The platform aims to be a full-stack solution, branded with an emerald green theme, maximizing deal flow efficiency for funds.
 
 ## User Preferences
 I prefer detailed explanations. I want iterative development. Ask before making major changes. Do not make changes to folder `server/enrichment/`. Do not make changes to file `client/src/index.css`.
@@ -12,30 +10,42 @@ I prefer detailed explanations. I want iterative development. Ask before making 
 The platform is a full-stack application utilizing React, Vite, TypeScript, Shadcn UI, and TailwindCSS for the frontend, and Express.js with TypeScript for the backend. Data persistence is handled by Drizzle ORM and PostgreSQL. Authentication is session-based via Passport.js with role-based access control.
 
 ### UI/UX Decisions
-The primary theme is emerald green with a dark forest green sidebar. Navigation is organized through a 6-section sidebar with expandable, permission-based sub-menus. The Investor Portal offers a premium, public-facing interface with dynamic landing pages. The Norion Capital application features a distinct dark navy horizontal top navbar with amber accents.
+The primary theme is emerald green with a dark forest green sidebar. Navigation follows a streamlined 8-item sidebar: Dashboard, Ativos (expandable by type), Matching, CRM (expandable: Kanban, Empresas, Fila SDR, Propostas, Contratos), Prospecção (expandable: CNPJ, M&A Radar), Portal, Honorários, Configurações (Sistema section for admin). Enrichment tools (Geo, Embrapa, ANM, CAF) live inside asset detail tabs — not as standalone sidebar links. Rural/SICAR and ANM discovery pages still exist as routes but were removed from the sidebar for a cleaner navigation. The Investor Portal offers a premium, public-facing interface with dynamic landing pages.
 
 ### Technical Implementations
 - **Data Enrichment**: Web scraping (Python 3) and CNPJ enrichment via external API.
-- **CRM & Deal Management**: Dual Kanban pipelines (INVESTOR, ASSET) with customizable stages, drag-and-drop functionality, and detailed deal cards. Commission/fee control per deal (feeType, feePercent, feeValue auto-calculated, feeStatus, feeNotes) in the deal detail panel.
+- **CRM & Deal Management**: Dual Kanban pipelines (INVESTOR, ASSET) with customizable stages, drag-and-drop functionality, and detailed deal cards including commission/fee control.
 - **Asset Management**: Comprehensive portfolio management with type filtering and integration with geographic data.
 - **Proposal & Contract Generation**: Dynamic generation from templates.
-- **Matching Engine**: A scoring algorithm matches assets to investors based on multiple criteria, preventing re-matching of rejected suggestions. Includes strategic buyer matching via CNAE codes — companies with `buyerType=estrategico` or `cnaeInteresse` are matched against assets by sector (CNAE→tipo mapping), region, and documentation status. Auto-matching on asset creation for `oferta_recebida`/`indicacao` origins with deduplication.
-- **Prospecção Reversa**: `GET /api/prospeccao/reversa` route queries CNPJA API for buyer companies matching an asset's type (CNAE mapping), state, and substance (for MINA). Results displayed in "Compradores" tab on asset detail page with import-to-CRM capability.
-- **Geo Module**: Advanced rural prospection with scoring (Water, Energy, Altitude, Declivity, Area) and specific analysis endpoints. SICAR status checking with offline resilience.
-- **Análise Agro**: Standalone page (`/analise-agro`) for soil, ZARC, productivity, and SIGEF analysis — separated from Prospecção Rural since it works independently of SICAR. Uses `POST /api/geo/enriquecer-agro` (SoilGrids, Embrapa AgroAPI, SIGEF/INCRA).
-- **Inteligência Agro**: Dashboard page (`/inteligencia-agro`) ranking TERRA/AGRO assets by quality score (NDVI 40% + Solo 30% + Zoneamento 30%). Features medal-ranked cards, detail modals (solo/clima/culturas/ndvi), batch "Analisar todos" Embrapa enrichment, and type/score filters. Uses existing `/api/matching/assets` + `/api/matching/assets/:id/enriquecer-embrapa` endpoints.
-- **M&A Module**: Facilitates searching for active Brazilian companies and initiating deals.
-- **Norion Capital Application**: A standalone frontend for credit operations, sharing the same backend and database. Features a table-based operations view with filterable columns (empresa, CNPJ, valor, finalidade, etapa, docs, matching score). Includes a Home Equity checklist and a detailed "Defesa do Crédito" form.
+- **Matching Engine**: A scoring algorithm matches assets to investors based on multiple criteria, including strategic buyer matching via CNAE codes, region, and documentation status. Auto-matching occurs on asset creation for specific origins with deduplication.
+- **Prospecção Reversa**: Queries external APIs for buyer companies matching an asset's type, state, and substance, with results displayed on the asset detail page and import-to-CRM capability. On import, automatically creates a `matchSuggestion` (tipo "estrategico") linking the company to the asset via `POST /api/matching/assets/:assetId/add-buyer`, so the buyer appears in the Matching page.
+- **Geo Module**: Advanced rural prospection with scoring (Water, Energy, Altitude, Declivity, Area), SICAR status checking with persistent caching, and offline resilience.
+- **Análise Agro**: Standalone page for soil, ZARC, productivity, and SIGEF analysis, leveraging external APIs for enrichment.
+- **Inteligência Agro**: Dashboard ranking assets by quality score, featuring medal-ranked cards, detail modals, and batch enrichment. Includes intelligent caching for Embrapa data.
+- **NDVI Variabilidade & Zonas de Manejo**: Samples NDVI across a grid within the asset polygon, returning per-point values, statistics, management zones, and alerts, visualized as an interactive Leaflet heatmap.
+- **M&A Module**: Facilitates searching for active Brazilian companies and initiating deals. Each result row offers two actions: "Salvar empresa" (imports company + creates SDR lead with `source="ma_radar"`) and "Iniciar Tratativa" (imports + creates CRM deal). Already-saved companies show "Já no CRM" badge.
+- **SDR Enhancements**: Inline notes per lead (`notes text` + `updated_at` columns), source-based filtering (portal, prospecção, M&A, CAF), "Última atividade" idle badge, "Já no CRM" deal badge, "Ver empresa" link, and "Criar Deal" dialog with asset linking.
+- **Asset Detail Tabs**: Per-type tab configuration via `ABAS_POR_TIPO`. TERRA/AGRO show [info, documentos, matches, geo, embrapa, caf]. MINA shows [info, documentos, matches, anm, geo]. NEGOCIO shows [info, documentos, matches, empresa]. FII_CRI shows [info, documentos, matches, cvm]. The "matches" tab combines deal negotiations and reverse prospecting in one view. The GEO tab reads geographic data from first-level Drizzle columns (`ativo.geoAltMed`, `ativo.geoScore`, `ativo.geoTemRio`, etc.) — NOT from `camposEspecificos`. It displays the asset polygon on a Leaflet map (fetched from PostGIS `geom` column via `GET /api/matching/assets/:id/geometry`), coordinates/IBGE code from `camposEspecificos`, and SICAR code from `ativo.carCodImovel`. Includes "Atualizar análise" button that calls `/api/geo/analisar` then `/api/geo/persist-analysis`. The `persist-analysis` endpoint auto-populates `codigoIbge` via Nominatim reverse geocoding when missing, and auto-calculates `area_ha` from the PostGIS polygon when the field is NULL. The CAF/PRONAF tab auto-loads SICOR/BCB rural credit data when `codigoIbge` exists (no manual button needed) and auto-loads CAF producers when `estado` is set.
 - **Service Monitoring & Caching**: External service status monitoring and a database-backed API cache with TTLs.
 - **Scheduler & Audit**: `node-cron` for job scheduling and a system for tracking all entity changes.
-- **Norion Portal do Cliente**: CPF-only login for end clients, 6-step wizard form (dados pessoais → endereço → profissional → operação → patrimônio → documentos), document upload to Google Drive, admin review/approve flow. Auth guards on admin routes, token expiration enforced on login-cpf.
-- **Integration with Google Drive**: For document uploads.
+- **Norion Portal do Cliente**: CPF-only login for end clients, including a multi-step wizard form for data entry, document upload to Google Drive, and admin review/approve flow.
+- **Integration with Google Drive**: Via `@replit/connectors-sdk` (Replit Connector for dev) or `googleapis` (Service Account for production). Unified in `server/lib/google-drive.ts` — used by both `documents.ts` and `commercial.ts` routes.
 - **Real-time Notifications**: Server-Sent Events (SSE) for key user notifications.
-- **Dashboard & KPIs**: Displays key performance indicators with trend analysis.
+- **Dashboard & KPIs**: Rich dashboard with 12+ KPI widgets (ativos, deals, volume, matches, empresas, portfólio value, área total, leads qualificados, fees, geo score, R$/ha), pipeline bar chart, pie charts (ativos por tipo, deals por prioridade), line/area charts (deals/empresas mensais 6m), activity feed, stalled deals, high-priority deals, portal leads, upcoming closings, assets by state. Bottom section includes real-time financial quotes (Dólar, Euro, Bitcoin, Selic, Ibovespa, CDI via AwesomeAPI + BCB API) and weather widget (São Paulo via Open-Meteo).
 - **Connectors**: Manages API, scraper, and database connectors with JSON configuration.
-- **Portal→CRM Integration**: Public inquiries are scored for intent and automatically create Companies, Leads, and potentially Deals, with rate limiting.
-- **Atomic Operations**: Database transactions ensure atomicity for critical workflows like matching acceptance and lead promotion.
-- **Single-Tenant Architecture**: Enforces tenant isolation by injecting `orgId` server-side and preventing client-side `orgId` submissions.
+- **Portal→CRM Integration**: Public inquiries are scored for intent and automatically create Companies, Leads, and Deals, with rate limiting.
+- **Atomic Operations**: Database transactions ensure atomicity for critical workflows.
+- **Multi-Tenant Isolation**: All storage methods (`getDeals`, `getAssets`, `getInvestors`, `getMatchSuggestions`, `getLeadsQueue`, `getCompanies`, `getContacts`) accept and filter by `orgId`. All CRM and Matching routes validate resource ownership (`orgId` check) before returning or modifying data. `getOrgId(req)` extracts org from session user, falling back to `DEFAULT_ORG_ID`.
+
+## VPS Deployment
+- **VPS**: `187.77.232.164`, SSH as `root`
+- **App directory**: `/var/www/mavrion-conect`
+- **PM2 process**: `mavrion-conect` (id 0, port 5000), `norion` (id 2, port 5001)
+- **Production DB**: `postgresql://mavrion:***@localhost:5432/mavrion_conect`
+- **Nginx**: Reverse proxy at `/etc/nginx/sites-enabled/mavrion-conect` (port 80 → 5000)
+- **Deploy process**: `tar czf` from Replit → `scp` → extract on VPS → `npm ci` → `npm run build` → `pm2 restart mavrion-conect`
+- **DB migrations**: Applied via `psql` ALTER TABLE commands (drizzle-kit push not used in production)
+- **Last deployed**: 2026-03-06 — includes i18n, dark mode, dashboard improvements, showcase, audit export
 
 ## External Dependencies
 - **PostgreSQL**: Primary relational database.
@@ -43,49 +53,28 @@ The primary theme is emerald green with a dark forest green sidebar. Navigation 
 - **cnpja.com API**: For CNPJ search and data enrichment.
 - **Agência Nacional de Mineração (geo.anm.gov.br)**: For mining process data.
 - **SICAR (geoserver.car.gov.br)**: For rural property data.
-- **IBGE WFS**: For geographic data (hydrography, energy, water bodies).
+- **IBGE WFS**: For geographic data (hydrography, energy, water bodies), with OpenStreetMap Overpass as a fallback.
+- **OpenStreetMap Overpass API**: Fallback for IBGE WFS.
 - **OpenTopoData SRTM 30m**: For elevation data.
 - **node-cron**: For scheduling background jobs.
 - **Google Drive**: For cloud storage of documents.
 - **SheetJS (`xlsx`)**: For generating spreadsheet exports.
-- **SoilGrids**: For soil data (pH, clay, SOC, nitrogen, CEC, water).
-- **Embrapa AgroAPI**: For agricultural suitability (ZARC, cultivars, productivity).
+- **SoilGrids (ISRIC)**: For soil data.
+- **Embrapa AgroAPI**: For climactic, ZARC, and NDVI/EVI data via ClimAPI, Agritec v2, and SATVeg v2.
 - **Infosimples API**: For SIGEF/INCRA parcel data.
 - **Banco Central do Brasil (BCB) OData API**: For SICOR/PRONAF rural credit data.
-- **ViaCEP**: For address auto-fill by CEP in the Client Portal.
+- **ViaCEP**: For address auto-fill by CEP.
+- **AwesomeAPI (economia.awesomeapi.com.br)**: For real-time USD/BRL, EUR/BRL, BTC/BRL exchange rates (dashboard + showcase) and Ibovespa data.
+- **BCB SGS API (api.bcb.gov.br)**: For Selic rate on the dashboard.
 
-## Norion Capital (SEPARATED — see `norion-standalone/`)
-Norion Capital has been fully separated into an independent standalone application. All Norion routes, pages, and components have been removed from this Mavrion Conect codebase. The Norion database tables remain in `shared/schema.ts` to preserve existing data, and `server/routes/companies.ts` still references norionOperations/norionCafRegistros for cascade deletes (this is correct).
+## Relatórios (Reports) Page
+10 tabs: Geral, Empresas, Deals, Ativos, M&A, Funil M&A, Honorários, Geográfico, Leads, Atividades. 8 filters: período, pipeline type, asset type, UF, prioridade, fee status, origem (source). Honorários tab shows fees totais/recebidos/pendentes, ticket médio fee, monthly stacked chart, fee type pie, top deals by fee. Geográfico tab shows assets by município, R$/ha by state, water/energy/CAR/ANM counts, state summary table. Leads tab shows lead scoring distribution, status bar chart, monthly evolution, top leads by score.
 
-The standalone app lives in `norion-standalone/` and is designed to be deployed as a separate Replit project. See `norion-standalone/README.md` for setup and configuration details.
+## Showcase / Vitrine Feature
+Public asset showcase page accessible at `/vitrine/:id` (no auth required). Backend API: `GET /api/public/showcase/:id` with explicit column whitelisting (no `SELECT *`). Sensitive data (CNPJ, matrícula, financial details, raw certidões) is excluded from the public response. Pre-validation endpoint: `GET /api/matching/assets/:id/showcase-check`. Asset photos stored in `assets.fotos` JSONB column, uploaded via `POST /api/upload/images`. Showcase contact phone/WhatsApp configured via `showcase_phone`/`showcase_whatsapp` org settings in Configurações. Showcase includes WhatsApp FAB button (bottom-right) when `showcase_whatsapp` is configured, linking to `wa.me/{number}` with pre-filled message.
 
-## Ativos (Portfólio de Ativos)
-- **Schema columns**: `statusAtivo` (rascunho/em_validacao/ativo/em_negociacao/fechado/arquivado), `camposEspecificos` (jsonb — stores type-specific fields, origem, ofertante data), `activityLog` (jsonb).
-- **Campos Específicos por Tipo**: MINA (processo ANM, substância, fase, situação, validade, último evento), TERRA (código CAR, validade CAR, CCIR, ITR, aptidão agrícola, SIGEF), AGRO (CAR, culturas, armazenagem, silos), FII_CRI (registro CVM, gestora, DY, P/VP), DESENVOLVIMENTO (alvará, VGV, estágio obra), NEGOCIO (CNPJ, faturamento, EBITDA, múltiplo, motivo venda).
-- **Origem do Ativo**: prospeccao_interna, oferta_recebida, indicacao, portal_publico — stored in `camposEspecificos.origemAtivo`.
-- **Ofertante Data**: When origin is `oferta_recebida` or `indicacao`, additional fields (nome, telefone, email, observações) stored in `camposEspecificos`.
-- **Urgência Documental**: Auto-detects expiring CAR/ANM/Alvará dates (≤90 days) and shows AlertTriangle badge on card.
-- **Card Badges**: Status badge (when not "ativo"), urgency badge (when docs expiring), origem badge (when not "prospeccao_interna").
-
-## Empresas Module
-- **Filters**: Text search, Porte (ME/EPP/Demais), Estado (UF), Cidade, and **status filter tags** (Novo, Na fila, Em progresso, Contactado, Qualificado, Descartado, Sem Lead) — all combinable.
-- **Selection & Batch Actions**: Checkbox per company card, sticky batch action bar with "Excluir selecionadas" (with confirmation dialog) and "Limpar seleção".
-- **Delete**: Individual delete button (trash icon) per card with confirmation dialog. Cascade deletes leads, contacts, deals, proposals, contracts, norionOperations, norionCafRegistros, and nullifies assets.linkedCompanyId.
-- **Routes**: `DELETE /api/companies/:id` (single), `POST /api/companies/batch-delete` (batch with `{ids: [...]}`) — both authenticated + org-scoped.
-- **Modes**: `/empresas` (all), `/empresas/leads` (active leads), `/empresas/desqualificadas` (disqualified).
-
-## Geo-Rural Agro Tab
-- **Standalone "Análise Agro" tab** in geo-rural.tsx — works without SICAR, accepts manual lat/lon + optional CNPJ/cultura.
-- Calls `POST /api/geo/enriquecer-agro` and displays SoilGrids, ZARC aptidão, productivity, and SIGEF parcels.
-
-## CAF Module (Agricultura Familiar) — MOVED TO NORION STANDALONE
-- **Status**: Moved to `norion-standalone/` as part of Norion separation. CAF pages, routes, and crawler are now in the standalone app.
-- **Mavrion files preserved**: `server/routes/caf-extrator.ts`, `server/services/caf-crawler.ts` (still used by Mavrion's CAF data).
-- **Schema**: `norionCafRegistros` table still in `shared/schema.ts` — do not remove.
-
-## E2E Test Suite
-- **Script**: `scripts/e2e-test.ts` — run with `npx tsx scripts/e2e-test.ts` (terminal) or `npx tsx scripts/e2e-test.ts --html` (HTML report)
-- **Coverage**: 17 sections / ~156 tests: auth, dashboard, pipeline stages, CRM companies, 7 asset types, deals kanban cycle, CNPJ/CNAE search, reversa, ANM, CAR, matching engine, SDR, portal inquiry flow, error reports, audit log, edge cases, performance benchmarks, cleanup
-- **Latest result**: 156✅ 0❌ 1⚠️ (SICAR instability) — 100% pass rate
-- **Credentials**: username `admin`, password `admin`
-- **API corrections applied**: Deal creation injects `orgId`; asset/investor delete cascades to `matchSuggestions`, `deals`, `portalListings`, `portalInquiries`, `assetLandingPages`, `contracts`; deal validation requires `stageId` and validates cross-pipeline; asset creation rejects negative `priceAsking`
+## i18n & Theming
+- **i18n**: `client/src/lib/i18n.ts` provides `I18nContext` with `lang`, `setLang`, `t()` function. Supported: `pt` (default), `en`. Language selector component with flag icons in `client/src/components/language-selector.tsx`. Language persisted in `localStorage` key `mavrion-lang`. `t()` supports template args: `t("key", arg0)` → replaces `{0}`. Helpers: `getDateLocale(lang)`, `formatDatePattern(lang)`, `formatDayPattern(lang)`.
+- **i18n coverage**: Dashboard fully wired. Reports page (`relatorios.tsx`) fully wired — all 10 tabs (Geral, Empresas, Deals, Ativos, M&A, Funil M&A, Honorários, Geográfico, Leads, Atividades), all KPI tiles, chart titles/tooltips/legends, filter placeholders, empty states, and sub-components (ActivityFeed, FunilConversao). Option hooks (`usePeriodOptions`, `usePipelineTypeOptions`, `useAssetTypeOptions`, `usePriorityOptions`, `useFeeStatusOptions`, `useSourceOptions`) provide language-reactive filter options.
+- **Theme**: `client/src/components/theme-provider.tsx` provides `ThemeContext` with `theme`, `setTheme`, `toggleTheme`. Dark mode uses Tailwind `class` strategy (`darkMode: ["class"]`). Theme persisted in `localStorage` key `mavrion-theme`. Toggle button in sidebar footer.
+- Both providers wrapped in `App.tsx`: `ThemeProvider > I18nProvider > TooltipProvider`.

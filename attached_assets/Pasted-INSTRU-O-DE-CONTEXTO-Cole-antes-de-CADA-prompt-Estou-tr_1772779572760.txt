@@ -1,0 +1,68 @@
+INSTRUÇÃO DE CONTEXTO
+Cole antes de CADA prompt:
+Estou trabalhando no sistema Mavrion Connect.
+Stack: React + Vite + TypeScript, Express.js, Drizzle ORM, PostgreSQL + PostGIS.
+UI: shadcn/ui + Tailwind. Tema emerald green.
+NUNCA modifique server/enrichment/ nem client/src/index.css.
+useState/useEffect devem estar no nível do componente, nunca dentro de IIFEs no JSX.
+Modifique APENAS o que o prompt pede. Não refatore outros trechos.
+
+BLOCO A — REESTRUTURAÇÃO DA ABA MATCHES
+PROMPT A1 — Rota para buscar matches internos do ativo
+Arquivo: server/routes/matching.ts
+No arquivo server/routes/matching.ts, adicione a rota:
+GET /api/matching/assets/:id/suggestions
+
+Após as rotas existentes de assets, adicione:
+
+app.get("/api/matching/assets/:id/suggestions", async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+  const orgId = getOrgId(req);
+  const assetId = Number(req.params.id);
+
+  try {
+    const suggestions = await db
+      .select()
+      .from(matchSuggestions)
+      .where(
+        and(
+          eq(matchSuggestions.assetId, assetId),
+          eq(matchSuggestions.orgId, orgId)
+        )
+      )
+      .orderBy(desc(matchSuggestions.score));
+
+    const enriched = await Promise.all(
+      suggestions.map(async (s) => {
+        let investorName: string | null = null;
+        let investorCnpj: string | null = null;
+        let companyId: number | null = null;
+
+        if (s.investorProfileId) {
+          const inv = await storage.getInvestorProfile(s.investorProfileId).catch(() => null);
+          if (inv) {
+            investorName = inv.name;
+            companyId = (inv as any).companyId || null;
+          }
+        }
+
+        if (!investorName && (s as any).companyId) {
+          const co = await storage.getCompany((s as any).companyId).catch(() => null);
+          if (co) {
+            investorName = co.tradeName || co.legalName;
+            investorCnpj = co.cnpj || null;
+            companyId = co.id;
+          }
+        }
+
+        return { ...s, investorName, investorCnpj, companyId };
+      })
+    );
+
+    res.json(enriched);
+  } catch (err) {
+    res.status(500).json({ message: "Erro ao buscar matches" });
+  }
+});
+
+Não altere nada mais no arquivo.

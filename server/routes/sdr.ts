@@ -11,16 +11,18 @@ import { eq } from "drizzle-orm";
 export function registerSdrRoutes(app: Express, storage: IStorage) {
   app.get(api.sdr.queue.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
-    const queue = await storage.getLeadsQueue();
+    const orgId = getOrgId(req);
+    const queue = await storage.getLeadsQueue(orgId);
     res.json(queue);
   });
 
   app.patch(api.sdr.updateLead.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
+      const orgId = getOrgId(req);
       const leadId = Number(req.params.id);
       const input = api.sdr.updateLead.input.parse(req.body);
-      const queue = await storage.getLeadsQueue();
+      const queue = await storage.getLeadsQueue(orgId);
       const leadBefore = queue.find(l => l.id === leadId);
       const data = await storage.updateLead(leadId, input.status);
       const user = req.user as any;
@@ -39,6 +41,23 @@ export function registerSdrRoutes(app: Express, storage: IStorage) {
     }
   });
 
+  app.patch("/api/sdr/leads/:id/notes", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const orgId = getOrgId(req);
+      const leadId = Number(req.params.id);
+      const { notes } = z.object({ notes: z.string() }).parse(req.body);
+      const queue = await storage.getLeadsQueue(orgId);
+      const lead = queue.find(l => l.id === leadId);
+      if (!lead) return res.status(404).json({ message: "Lead não encontrado" });
+      const [updated] = await db.update(leads).set({ notes, updatedAt: new Date() } as any).where(eq(leads.id, leadId)).returning();
+      res.json(updated);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json(err.errors);
+      res.status(500).json({ message: "Erro ao salvar anotação" });
+    }
+  });
+
   const promoteInput = z.object({
     title: z.string().min(1),
     pipelineType: z.string().min(1),
@@ -47,6 +66,7 @@ export function registerSdrRoutes(app: Express, storage: IStorage) {
     probability: z.number().optional(),
     source: z.string().optional(),
     description: z.string().optional(),
+    assetId: z.number().int().positive().optional(),
   });
 
   app.post("/api/sdr/leads/:id/promote", async (req, res) => {
@@ -55,7 +75,7 @@ export function registerSdrRoutes(app: Express, storage: IStorage) {
       const leadId = Number(req.params.id);
       const input = promoteInput.parse(req.body);
 
-      const orgId = getOrgId();
+      const orgId = getOrgId(req);
       const result = await db.transaction(async (tx) => {
         const [lead] = await tx.select().from(leads).where(eq(leads.id, leadId));
         if (!lead || lead.orgId !== orgId) throw new Error("NOT_FOUND");
@@ -64,7 +84,7 @@ export function registerSdrRoutes(app: Express, storage: IStorage) {
           throw new Error("ALREADY_CONVERTED");
         }
 
-        const [deal] = await tx.insert(deals).values({
+        const dealValues: any = {
           orgId: lead.orgId,
           pipelineType: input.pipelineType,
           stageId: input.stageId,
@@ -74,7 +94,9 @@ export function registerSdrRoutes(app: Express, storage: IStorage) {
           probability: input.probability ?? 50,
           source: input.source || "SDR",
           description: input.description || null,
-        }).returning();
+        };
+        if (input.assetId) dealValues.assetId = input.assetId;
+        const [deal] = await tx.insert(deals).values(dealValues).returning();
 
         await tx.update(leads).set({ status: "converted" }).where(eq(leads.id, leadId));
 

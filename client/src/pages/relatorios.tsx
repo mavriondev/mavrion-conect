@@ -17,51 +17,88 @@ import {
   Filter, Calendar, ArrowUpRight, ArrowDownRight, DollarSign,
   MapPin, Briefcase, X, Target, Percent, History,
   PenLine, Shuffle, CirclePlus, CircleMinus,
+  Banknote, Globe, Star, CheckCircle2, Clock,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, subDays, isAfter, parseISO } from "date-fns";
-import { ptBR } from "date-fns/locale";
+import { useI18n, getDateLocale } from "@/lib/i18n";
 
 const CHART_COLORS = [
   "hsl(var(--chart-1))", "hsl(var(--chart-2))", "hsl(var(--chart-3))",
   "hsl(var(--chart-4))", "hsl(var(--chart-5))",
 ];
 
-const TIPO_LABEL: Record<string, string> = {
-  TERRA: "Terras/Fazendas", MINA: "Mineração", NEGOCIO: "Negócio/M&A",
-  FII_CRI: "FII/CRI", DESENVOLVIMENTO: "Desenvolvimento", AGRO: "Agronegócio",
-};
+function useTipoLabel(): Record<string, string> {
+  const { lang } = useI18n();
+  return lang === "en"
+    ? { TERRA: "Land/Farms", MINA: "Mining", NEGOCIO: "Business/M&A", FII_CRI: "FII/CRI", DESENVOLVIMENTO: "Development", AGRO: "Agribusiness" }
+    : { TERRA: "Terras/Fazendas", MINA: "Mineração", NEGOCIO: "Negócio/M&A", FII_CRI: "FII/CRI", DESENVOLVIMENTO: "Desenvolvimento", AGRO: "Agronegócio" };
+}
 
-const PERIOD_OPTIONS = [
-  { value: "7",   label: "Últimos 7 dias" },
-  { value: "30",  label: "Últimos 30 dias" },
-  { value: "90",  label: "Últimos 90 dias" },
-  { value: "365", label: "Último ano" },
-  { value: "all", label: "Todo o período" },
-];
+function usePeriodOptions() {
+  const { t } = useI18n();
+  return [
+    { value: "7",   label: t("reports.period7") },
+    { value: "30",  label: t("reports.period30") },
+    { value: "90",  label: t("reports.period90") },
+    { value: "365", label: t("reports.period365") },
+    { value: "all", label: t("reports.periodAll") },
+  ];
+}
 
-const PIPELINE_TYPE_OPTIONS = [
-  { value: "all", label: "Todos os pipelines" },
-  { value: "INVESTOR", label: "Investidor" },
-  { value: "ASSET", label: "Ativo/Captação" },
-];
+function usePipelineTypeOptions() {
+  const { t } = useI18n();
+  return [
+    { value: "all", label: t("reports.allPipelines") },
+    { value: "INVESTOR", label: t("reports.investorPipeline") },
+    { value: "ASSET", label: t("reports.assetPipeline") },
+  ];
+}
 
-const ASSET_TYPE_OPTIONS = [
-  { value: "all", label: "Todos os tipos" },
-  { value: "TERRA", label: "Terras/Fazendas" },
-  { value: "MINA", label: "Mineração" },
-  { value: "NEGOCIO", label: "Negócio/M&A" },
-  { value: "FII_CRI", label: "FII/CRI" },
-  { value: "DESENVOLVIMENTO", label: "Desenvolvimento" },
-  { value: "AGRO", label: "Agronegócio" },
-];
+function useAssetTypeOptions() {
+  const { t } = useI18n();
+  return [
+    { value: "all", label: t("reports.allTypes") },
+    { value: "TERRA", label: t("reports.landsFarms") },
+    { value: "MINA", label: t("reports.miningType") },
+    { value: "NEGOCIO", label: t("reports.businessMA") },
+    { value: "FII_CRI", label: t("reports.fiiCri") },
+    { value: "DESENVOLVIMENTO", label: t("reports.development") },
+    { value: "AGRO", label: t("reports.agribusiness") },
+  ];
+}
 
-const PRIORITY_OPTIONS = [
-  { value: "all", label: "Todas as prioridades" },
-  { value: "high", label: "Alta" },
-  { value: "medium", label: "Média" },
-  { value: "low", label: "Baixa" },
-];
+function usePriorityOptions() {
+  const { t } = useI18n();
+  return [
+    { value: "all", label: t("reports.allPriorities") },
+    { value: "high", label: t("reports.highPriority") },
+    { value: "medium", label: t("reports.mediumPriority") },
+    { value: "low", label: t("reports.lowPriority") },
+  ];
+}
+
+function useFeeStatusOptions() {
+  const { t } = useI18n();
+  return [
+    { value: "all", label: t("reports.allFeeStatus") },
+    { value: "a_receber", label: t("reports.feeToReceive") },
+    { value: "recebido", label: t("reports.feeReceived") },
+    { value: "pendente", label: t("reports.feePending") },
+  ];
+}
+
+function useSourceOptions() {
+  const { t } = useI18n();
+  return [
+    { value: "all", label: t("reports.allSources") },
+    { value: "manual", label: t("reports.sourceManual") },
+    { value: "portal", label: t("reports.sourcePortal") },
+    { value: "connector", label: t("reports.sourceConnector") },
+    { value: "import", label: t("reports.sourceImport") },
+  ];
+}
 
 function filterByPeriod(items: any[], field: string, days: string) {
   if (days === "all") return items;
@@ -82,26 +119,26 @@ function groupBy<T>(arr: T[], key: (item: T) => string): Record<string, T[]> {
   return result;
 }
 
-function buildMonthlyData(items: any[], field = "createdAt", months = 6) {
+function buildMonthlyData(items: any[], field = "createdAt", months = 6, locale?: any) {
   const data: { name: string; value: number }[] = [];
   for (let i = months - 1; i >= 0; i--) {
     const d = new Date();
     d.setMonth(d.getMonth() - i);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const label = format(d, "MMM/yy", { locale: ptBR });
+    const label = format(d, "MMM/yy", { locale });
     const count = items.filter(it => it[field]?.startsWith(key)).length;
     data.push({ name: label, value: count });
   }
   return data;
 }
 
-function buildMonthlyValueData(items: any[], field = "createdAt", valueField = "amountEstimate", months = 6) {
+function buildMonthlyValueData(items: any[], field = "createdAt", valueField = "amountEstimate", months = 6, locale?: any) {
   const data: { name: string; value: number; count: number }[] = [];
   for (let i = months - 1; i >= 0; i--) {
     const d = new Date();
     d.setMonth(d.getMonth() - i);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const label = format(d, "MMM/yy", { locale: ptBR });
+    const label = format(d, "MMM/yy", { locale });
     const matching = items.filter(it => it[field]?.startsWith(key));
     const total = matching.reduce((s, it) => s + (it[valueField] || 0), 0);
     data.push({ name: label, value: total, count: matching.length });
@@ -140,19 +177,26 @@ function KpiTile({ label, value, sub, change, changeUp, icon: Icon, color = "pri
   );
 }
 
-const ACTIVITY_ACTION_CONFIG: Record<string, { label: string; icon: typeof CirclePlus; color: string; bg: string }> = {
-  created: { label: "Criado", icon: CirclePlus, color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-900/20" },
-  updated: { label: "Atualizado", icon: PenLine, color: "text-blue-600", bg: "bg-blue-50 dark:bg-blue-900/20" },
-  deleted: { label: "Excluído", icon: CircleMinus, color: "text-red-600", bg: "bg-red-50 dark:bg-red-900/20" },
-  stage_changed: { label: "Etapa alterada", icon: Shuffle, color: "text-purple-600", bg: "bg-purple-50 dark:bg-purple-900/20" },
-  status_changed: { label: "Status alterado", icon: Shuffle, color: "text-amber-600", bg: "bg-amber-50 dark:bg-amber-900/20" },
-};
-
-const ENTITY_LABEL: Record<string, string> = {
-  deal: "Deal", lead: "Lead", company: "Empresa", asset: "Ativo", connector: "Conector",
-};
+function useActivityConfig() {
+  const { t } = useI18n();
+  return {
+    actions: {
+      created: { label: t("reports.actionCreated"), icon: CirclePlus, color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-900/20" },
+      updated: { label: t("reports.actionUpdated"), icon: PenLine, color: "text-blue-600", bg: "bg-blue-50 dark:bg-blue-900/20" },
+      deleted: { label: t("reports.actionDeleted"), icon: CircleMinus, color: "text-red-600", bg: "bg-red-50 dark:bg-red-900/20" },
+      stage_changed: { label: t("reports.actionStageChanged"), icon: Shuffle, color: "text-purple-600", bg: "bg-purple-50 dark:bg-purple-900/20" },
+      status_changed: { label: t("reports.actionStatusChanged"), icon: Shuffle, color: "text-amber-600", bg: "bg-amber-50 dark:bg-amber-900/20" },
+    } as Record<string, { label: string; icon: typeof CirclePlus; color: string; bg: string }>,
+    entities: {
+      deal: t("reports.entityDeal"), lead: t("reports.entityLead"), company: t("reports.entityCompany"), asset: t("reports.entityAsset"), connector: t("reports.entityConnector"),
+    } as Record<string, string>,
+  };
+}
 
 function ActivityFeed() {
+  const { t, lang } = useI18n();
+  const locale = getDateLocale(lang);
+  const { actions: ACTIVITY_ACTION_CONFIG, entities: ENTITY_LABEL } = useActivityConfig();
   const [entityFilter, setEntityFilter] = useState("all");
   const { data: logs = [], isLoading } = useQuery({
     queryKey: ["/api/audit-logs", entityFilter],
@@ -178,19 +222,19 @@ function ActivityFeed() {
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base flex items-center gap-2">
-            <History className="w-4 h-4" /> Histórico de Atividades
+            <History className="w-4 h-4" /> {t("reports.activityHistory")}
           </CardTitle>
           <Select value={entityFilter} onValueChange={setEntityFilter}>
             <SelectTrigger className="w-40 h-8 text-xs" data-testid="select-activity-entity">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">Todas as entidades</SelectItem>
-              <SelectItem value="deal">Deals</SelectItem>
-              <SelectItem value="lead">Leads</SelectItem>
-              <SelectItem value="company">Empresas</SelectItem>
-              <SelectItem value="asset">Ativos</SelectItem>
-              <SelectItem value="connector">Conectores</SelectItem>
+              <SelectItem value="all">{t("common.allEntities")}</SelectItem>
+              <SelectItem value="deal">{t("common.deals")}</SelectItem>
+              <SelectItem value="lead">{t("common.leads")}</SelectItem>
+              <SelectItem value="company">{t("common.companies")}</SelectItem>
+              <SelectItem value="asset">{t("common.assets")}</SelectItem>
+              <SelectItem value="connector">{t("common.connectors")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -203,15 +247,15 @@ function ActivityFeed() {
         ) : logs.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
             <History className="w-10 h-10 mx-auto mb-3 opacity-20" />
-            <p className="text-sm">Nenhuma atividade registrada.</p>
-            <p className="text-xs mt-1">As ações realizadas no sistema aparecerão aqui.</p>
+            <p className="text-sm">{t("reports.noActivityRecorded")}</p>
+            <p className="text-xs mt-1">{t("reports.actionsWillAppear")}</p>
           </div>
         ) : (
           <div className="space-y-6" data-testid="activity-feed">
             {grouped.map(([day, dayLogs]) => (
               <div key={day}>
                 <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wider">
-                  {format(new Date(day + "T12:00:00"), "EEEE, dd 'de' MMMM", { locale: ptBR })}
+                  {format(new Date(day + "T12:00:00"), lang === "en" ? "EEEE, MMMM dd" : "EEEE, dd 'de' MMMM", { locale })}
                 </p>
                 <div className="space-y-2">
                   {dayLogs.map((log: any) => {
@@ -248,13 +292,13 @@ function ActivityFeed() {
                                 );
                               })}
                               {changeKeys.length > 3 && (
-                                <p className="text-[10px] text-muted-foreground/60">+{changeKeys.length - 3} mais alterações</p>
+                                <p className="text-[10px] text-muted-foreground/60">+{changeKeys.length - 3} {t("common.moreChanges")}</p>
                               )}
                             </div>
                           )}
                         </div>
                         <span className="text-[10px] text-muted-foreground shrink-0 mt-1">
-                          {format(new Date(log.createdAt), "HH:mm", { locale: ptBR })}
+                          {format(new Date(log.createdAt), "HH:mm", { locale })}
                         </span>
                       </div>
                     );
@@ -272,57 +316,58 @@ function ActivityFeed() {
 function FunilConversao({ deals, assets, companies }: {
   deals: any[]; assets: any[]; companies: any[];
 }) {
+  const { t } = useI18n();
   const etapas = [
     {
-      label: "Empresas prospectadas",
+      label: t("reports.prospectedCompanies"),
       valor: companies?.length || 0,
       cor: "#6366f1",
-      desc: "Total de empresas no CRM"
+      desc: t("reports.totalCRMCompanies")
     },
     {
-      label: "Leads qualificados",
+      label: t("reports.qualifiedLeads"),
       valor: (companies || []).filter((c: any) => c.lead?.status === "qualified").length,
       cor: "#8b5cf6",
-      desc: "Empresas com status Qualificado"
+      desc: t("reports.qualifiedStatusCompanies")
     },
     {
-      label: "Ativos no portfólio",
+      label: t("reports.portfolioAssets"),
       valor: assets?.length || 0,
       cor: "#a78bfa",
-      desc: "Ativos cadastrados"
+      desc: t("reports.registeredAssets")
     },
     {
-      label: "Matches gerados",
+      label: t("reports.generatedMatches"),
       valor: (deals || []).length,
       cor: "#f59e0b",
-      desc: "Deals abertos no pipeline"
+      desc: t("reports.openPipelineDeals")
     },
     {
-      label: "Em Due Diligence",
+      label: t("reports.inDueDiligence"),
       valor: (deals || []).filter((d: any) =>
         d.stage?.name?.toLowerCase().includes("diligence") ||
         d.stage?.name?.toLowerCase().includes("nda")
       ).length,
       cor: "#f97316",
-      desc: "Deals em NDA ou Due Diligence"
+      desc: t("reports.ddDeals")
     },
     {
-      label: "Em negociação final",
+      label: t("reports.finalNegotiation"),
       valor: (deals || []).filter((d: any) =>
         d.stage?.name?.toLowerCase().includes("negociação") ||
         d.stage?.name?.toLowerCase().includes("loi")
       ).length,
       cor: "#ef4444",
-      desc: "Deals em LOI ou Negociação Final"
+      desc: t("reports.loiDeals")
     },
     {
-      label: "Fechamentos",
+      label: t("reports.closings"),
       valor: (deals || []).filter((d: any) =>
         d.stage?.name?.toLowerCase().includes("fechamento") ||
         d.stage?.name?.toLowerCase().includes("fechado")
       ).length,
       cor: "#10b981",
-      desc: "Deals fechados"
+      desc: t("reports.closedDeals")
     },
   ];
 
@@ -342,7 +387,7 @@ function FunilConversao({ deals, assets, companies }: {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardContent className="p-4 text-center">
-            <p className="text-xs text-muted-foreground">Ticket médio</p>
+            <p className="text-xs text-muted-foreground">{t("reports.avgTicket")}</p>
             <p className="text-xl font-bold mt-1" data-testid="kpi-ticket-medio">
               {ticketMedio >= 1_000_000
                 ? `R$ ${(ticketMedio / 1_000_000).toFixed(1)}M`
@@ -352,7 +397,7 @@ function FunilConversao({ deals, assets, companies }: {
         </Card>
         <Card>
           <CardContent className="p-4 text-center">
-            <p className="text-xs text-muted-foreground">Fees totais</p>
+            <p className="text-xs text-muted-foreground">{t("reports.totalFees")}</p>
             <p className="text-xl font-bold mt-1 text-amber-600" data-testid="kpi-fees-totais">
               R$ {(feesTotal / 1_000).toFixed(0)}k
             </p>
@@ -360,7 +405,7 @@ function FunilConversao({ deals, assets, companies }: {
         </Card>
         <Card>
           <CardContent className="p-4 text-center">
-            <p className="text-xs text-muted-foreground">Fees recebidos</p>
+            <p className="text-xs text-muted-foreground">{t("reports.receivedFees")}</p>
             <p className="text-xl font-bold mt-1 text-green-600" data-testid="kpi-fees-recebidos">
               R$ {(feesRecebidos / 1_000).toFixed(0)}k
             </p>
@@ -368,7 +413,7 @@ function FunilConversao({ deals, assets, companies }: {
         </Card>
         <Card>
           <CardContent className="p-4 text-center">
-            <p className="text-xs text-muted-foreground">Taxa de fechamento</p>
+            <p className="text-xs text-muted-foreground">{t("reports.closingRate")}</p>
             <p className="text-xl font-bold mt-1" data-testid="kpi-taxa-fechamento">
               {deals?.length > 0
                 ? `${Math.round((etapas[6].valor / deals.length) * 100)}%`
@@ -380,7 +425,7 @@ function FunilConversao({ deals, assets, companies }: {
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Funil de Conversão M&A</CardTitle>
+          <CardTitle className="text-sm">{t("reports.funnelTitle")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           {etapas.map((etapa, i) => {
@@ -396,7 +441,7 @@ function FunilConversao({ deals, assets, companies }: {
                   <div className="flex items-center gap-3">
                     {taxa !== null && (
                       <span className="text-muted-foreground">
-                        {taxa}% da etapa anterior
+                        {taxa}% {t("reports.previousStage")}
                       </span>
                     )}
                     <span className="font-bold" style={{ color: etapa.cor }}>
@@ -425,12 +470,24 @@ function FunilConversao({ deals, assets, companies }: {
 }
 
 export default function RelatoriosPage() {
+  const { t, lang } = useI18n();
+  const locale = getDateLocale(lang);
+  const TIPO_LABEL = useTipoLabel();
+  const PERIOD_OPTIONS = usePeriodOptions();
+  const PIPELINE_TYPE_OPTIONS = usePipelineTypeOptions();
+  const ASSET_TYPE_OPTIONS = useAssetTypeOptions();
+  const PRIORITY_OPTIONS = usePriorityOptions();
+  const FEE_STATUS_OPTIONS = useFeeStatusOptions();
+  const SOURCE_OPTIONS = useSourceOptions();
+
   const [period, setPeriod] = useState("30");
   const [activeTab, setActiveTab] = useState("geral");
   const [filterPipelineType, setFilterPipelineType] = useState("all");
   const [filterAssetType, setFilterAssetType] = useState("all");
   const [filterUF, setFilterUF] = useState("all");
   const [filterPriority, setFilterPriority] = useState("all");
+  const [filterFeeStatus, setFilterFeeStatus] = useState("all");
+  const [filterSource, setFilterSource] = useState("all");
 
   const { data: companies = [] } = useQuery({
     queryKey: ["/api/crm/companies"],
@@ -492,10 +549,16 @@ export default function RelatoriosPage() {
         return false;
       });
     }
+    if (filterFeeStatus !== "all") {
+      result = result.filter(d => d.feeStatus === filterFeeStatus);
+    }
+    if (filterSource !== "all") {
+      result = result.filter(d => (d.source || "manual") === filterSource);
+    }
     return result;
-  }, [deals, period, filterPipelineType, filterAssetType, filterPriority, filterUF, assets]);
+  }, [deals, period, filterPipelineType, filterAssetType, filterPriority, filterUF, filterFeeStatus, filterSource, assets]);
 
-  const hasActiveFilters = filterPipelineType !== "all" || filterAssetType !== "all" || filterUF !== "all" || filterPriority !== "all" || period !== "30";
+  const hasActiveFilters = filterPipelineType !== "all" || filterAssetType !== "all" || filterUF !== "all" || filterPriority !== "all" || filterFeeStatus !== "all" || filterSource !== "all" || period !== "30";
 
   const clearAllFilters = () => {
     setPeriod("30");
@@ -503,6 +566,8 @@ export default function RelatoriosPage() {
     setFilterAssetType("all");
     setFilterUF("all");
     setFilterPriority("all");
+    setFilterFeeStatus("all");
+    setFilterSource("all");
   };
 
   const totalRevEst = (filteredDeals as any[]).reduce((s, d) => s + (d.amountEstimate || 0), 0);
@@ -520,7 +585,7 @@ export default function RelatoriosPage() {
 
   const dealsByStage = useMemo(() => {
     const stagesMap = Object.fromEntries((stages as any[]).map((s: any) => [s.id, s.name]));
-    const grouped = groupBy(filteredDeals as any[], d => stagesMap[d.stageId] || "Sem Estágio");
+    const grouped = groupBy(filteredDeals as any[], d => stagesMap[d.stageId] || t("reports.noStage"));
     return Object.entries(grouped).map(([name, items]) => ({
       name,
       count: items.length,
@@ -537,7 +602,7 @@ export default function RelatoriosPage() {
   }, [filteredCompanies]);
 
   const companiesByPorte = useMemo(() => {
-    const grouped = groupBy(filteredCompanies as any[], co => co.porte || "Não informado");
+    const grouped = groupBy(filteredCompanies as any[], co => co.porte || (lang === "en" ? "Not specified" : "Não informado"));
     return Object.entries(grouped).map(([name, items]) => ({ name, value: items.length }));
   }, [filteredCompanies]);
 
@@ -580,7 +645,7 @@ export default function RelatoriosPage() {
 
   const maDealsByStage = useMemo(() => {
     const stagesMap = Object.fromEntries((stages as any[]).map((s: any) => [s.id, s.name]));
-    const grouped = groupBy(maDeals as any[], d => stagesMap[d.stageId] || "Sem Estágio");
+    const grouped = groupBy(maDeals as any[], d => stagesMap[d.stageId] || t("reports.noStage"));
     return Object.entries(grouped).map(([name, items]) => ({
       name,
       count: items.length,
@@ -609,8 +674,8 @@ export default function RelatoriosPage() {
     <div className="p-4 md:p-6 space-y-5 max-w-7xl mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl md:text-2xl font-display font-bold" data-testid="text-relatorios-title">Relatórios</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Análise e indicadores estratégicos da plataforma</p>
+          <h1 className="text-xl md:text-2xl font-display font-bold" data-testid="text-relatorios-title">{t("reports.title")}</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">{t("reports.subtitle")}</p>
         </div>
         <div className="flex items-center gap-2">
           <Filter className="w-4 h-4 text-muted-foreground" />
@@ -630,32 +695,41 @@ export default function RelatoriosPage() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="flex-wrap h-auto gap-1">
           <TabsTrigger value="geral" className="text-xs md:text-sm" data-testid="tab-geral">
-            <BarChart2 className="w-3.5 h-3.5 mr-1.5" /> Geral
+            <BarChart2 className="w-3.5 h-3.5 mr-1.5" /> {t("reports.tabGeneral")}
           </TabsTrigger>
           <TabsTrigger value="empresas" className="text-xs md:text-sm" data-testid="tab-empresas">
-            <Building2 className="w-3.5 h-3.5 mr-1.5" /> Empresas
+            <Building2 className="w-3.5 h-3.5 mr-1.5" /> {t("reports.tabCompanies")}
           </TabsTrigger>
           <TabsTrigger value="deals" className="text-xs md:text-sm" data-testid="tab-deals">
-            <Briefcase className="w-3.5 h-3.5 mr-1.5" /> Deals
+            <Briefcase className="w-3.5 h-3.5 mr-1.5" /> {t("reports.tabDeals")}
           </TabsTrigger>
           <TabsTrigger value="ativos" className="text-xs md:text-sm" data-testid="tab-ativos">
-            <Layers className="w-3.5 h-3.5 mr-1.5" /> Ativos
+            <Layers className="w-3.5 h-3.5 mr-1.5" /> {t("reports.tabAssets")}
           </TabsTrigger>
           <TabsTrigger value="ma" className="text-xs md:text-sm" data-testid="tab-ma">
-            <Briefcase className="w-3.5 h-3.5 mr-1.5" /> M&A
+            <Briefcase className="w-3.5 h-3.5 mr-1.5" /> {t("reports.tabMA")}
           </TabsTrigger>
           <TabsTrigger value="funil" className="text-xs md:text-sm" data-testid="tab-funil">
-            Funil M&A
+            {t("reports.tabFunnel")}
+          </TabsTrigger>
+          <TabsTrigger value="honorarios" className="text-xs md:text-sm" data-testid="tab-honorarios">
+            <Banknote className="w-3.5 h-3.5 mr-1.5" /> {t("reports.tabFees")}
+          </TabsTrigger>
+          <TabsTrigger value="geografico" className="text-xs md:text-sm" data-testid="tab-geografico">
+            <Globe className="w-3.5 h-3.5 mr-1.5" /> {t("reports.tabGeo")}
+          </TabsTrigger>
+          <TabsTrigger value="leads" className="text-xs md:text-sm" data-testid="tab-leads">
+            <Users className="w-3.5 h-3.5 mr-1.5" /> {t("reports.tabLeads")}
           </TabsTrigger>
           <TabsTrigger value="atividades" className="text-xs md:text-sm" data-testid="tab-atividades">
-            <History className="w-3.5 h-3.5 mr-1.5" /> Atividades
+            <History className="w-3.5 h-3.5 mr-1.5" /> {t("reports.tabActivities")}
           </TabsTrigger>
         </TabsList>
 
         <div className="flex flex-wrap items-center gap-2 mt-4" data-testid="filter-row">
           <Select value={filterPipelineType} onValueChange={setFilterPipelineType}>
             <SelectTrigger className="w-44" data-testid="select-filter-pipeline">
-              <SelectValue placeholder="Pipeline" />
+              <SelectValue placeholder={lang === "en" ? "Pipeline" : "Pipeline"} />
             </SelectTrigger>
             <SelectContent>
               {PIPELINE_TYPE_OPTIONS.map(o => (
@@ -666,7 +740,7 @@ export default function RelatoriosPage() {
 
           <Select value={filterAssetType} onValueChange={setFilterAssetType}>
             <SelectTrigger className="w-44" data-testid="select-filter-asset-type">
-              <SelectValue placeholder="Tipo de ativo" />
+              <SelectValue placeholder={lang === "en" ? "Asset type" : "Tipo de ativo"} />
             </SelectTrigger>
             <SelectContent>
               {ASSET_TYPE_OPTIONS.map(o => (
@@ -677,10 +751,10 @@ export default function RelatoriosPage() {
 
           <Select value={filterUF} onValueChange={setFilterUF}>
             <SelectTrigger className="w-40" data-testid="select-filter-uf">
-              <SelectValue placeholder="Estado/UF" />
+              <SelectValue placeholder={lang === "en" ? "State" : "Estado/UF"} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">Todos os estados</SelectItem>
+              <SelectItem value="all">{lang === "en" ? "All states" : "Todos os estados"}</SelectItem>
               {availableUFs.map(uf => (
                 <SelectItem key={uf} value={uf}>{uf}</SelectItem>
               ))}
@@ -689,7 +763,7 @@ export default function RelatoriosPage() {
 
           <Select value={filterPriority} onValueChange={setFilterPriority}>
             <SelectTrigger className="w-44" data-testid="select-filter-priority">
-              <SelectValue placeholder="Prioridade" />
+              <SelectValue placeholder={lang === "en" ? "Priority" : "Prioridade"} />
             </SelectTrigger>
             <SelectContent>
               {PRIORITY_OPTIONS.map(o => (
@@ -698,9 +772,31 @@ export default function RelatoriosPage() {
             </SelectContent>
           </Select>
 
+          <Select value={filterFeeStatus} onValueChange={setFilterFeeStatus}>
+            <SelectTrigger className="w-44" data-testid="select-filter-fee-status">
+              <SelectValue placeholder={lang === "en" ? "Fee status" : "Status fee"} />
+            </SelectTrigger>
+            <SelectContent>
+              {FEE_STATUS_OPTIONS.map(o => (
+                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={filterSource} onValueChange={setFilterSource}>
+            <SelectTrigger className="w-40" data-testid="select-filter-source">
+              <SelectValue placeholder={lang === "en" ? "Source" : "Origem"} />
+            </SelectTrigger>
+            <SelectContent>
+              {SOURCE_OPTIONS.map(o => (
+                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           {hasActiveFilters && (
             <Button variant="ghost" size="sm" onClick={clearAllFilters} data-testid="button-clear-filters">
-              <X className="w-3.5 h-3.5 mr-1" /> Limpar filtros
+              <X className="w-3.5 h-3.5 mr-1" /> {t("common.clearFilters")}
             </Button>
           )}
         </div>
@@ -709,34 +805,34 @@ export default function RelatoriosPage() {
         <TabsContent value="geral" className="space-y-5 mt-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <KpiTile
-              label="Empresas no período"
+              label={t("reports.companiesInPeriod")}
               value={filteredCompanies.length}
-              sub={`de ${(companies as any[]).length} total`}
+              sub={`${(companies as any[]).length} ${t("reports.ofTotal2")}`}
               icon={Building2}
             />
             <KpiTile
-              label="Deals no período"
+              label={t("reports.dealsInPeriod")}
               value={filteredDeals.length}
-              sub={`Invest: ${investorDeals} | Ativo: ${assetDeals}`}
+              sub={`${t("reports.investLabel")}: ${investorDeals} | ${t("reports.assetLabel")}: ${assetDeals}`}
               icon={Briefcase}
             />
             <KpiTile
-              label="Ativos cadastrados"
+              label={t("reports.registeredAssetsKpi")}
               value={(assets as any[]).length}
               icon={Layers}
             />
             <KpiTile
-              label="Valor estimado pipeline"
+              label={t("reports.estimatedPipelineValue")}
               value={totalRevEst >= 1_000_000
                 ? `R$ ${(totalRevEst / 1_000_000).toFixed(1)}M`
                 : `R$ ${(totalRevEst / 1_000).toFixed(0)}k`}
-              sub="soma dos deals no período"
+              sub={t("reports.dealsSum")}
               icon={DollarSign}
             />
             <KpiTile
-              label="Taxa de Conversão"
+              label={t("reports.conversionRate")}
               value={`${conversionRate.toFixed(1)}%`}
-              sub="deals no último estágio"
+              sub={t("reports.dealsInLastStage")}
               icon={Target}
             />
           </div>
@@ -744,7 +840,7 @@ export default function RelatoriosPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card className="border-border/50 shadow-sm">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold">Empresas importadas por mês</CardTitle>
+                <CardTitle className="text-sm font-semibold">{t("reports.companiesImportedMonth")}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-[220px]">
@@ -759,7 +855,7 @@ export default function RelatoriosPage() {
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                       <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" />
                       <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, "Empresas"]} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, t("reports.tabCompanies")]} />
                       <Area type="monotone" dataKey="value" stroke="hsl(var(--chart-1))" strokeWidth={2} fill="url(#cgEmp)" dot={{ r: 3, fill: "hsl(var(--chart-1))" }} />
                     </AreaChart>
                   </ResponsiveContainer>
@@ -769,7 +865,7 @@ export default function RelatoriosPage() {
 
             <Card className="border-border/50 shadow-sm">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold">Deals criados por mês</CardTitle>
+                <CardTitle className="text-sm font-semibold">{t("reports.dealsCreatedMonth")}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-[220px]">
@@ -778,7 +874,7 @@ export default function RelatoriosPage() {
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                       <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" />
                       <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, "Deals"]} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, t("reports.tabDeals")]} />
                       <Bar dataKey="value" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -791,12 +887,12 @@ export default function RelatoriosPage() {
         {/* ── EMPRESAS ── */}
         <TabsContent value="empresas" className="space-y-5 mt-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <KpiTile label="Total de empresas" value={(companies as any[]).length} icon={Building2} />
-            <KpiTile label="No período selecionado" value={filteredCompanies.length} icon={Calendar} />
+            <KpiTile label={t("reports.totalCompanies")} value={(companies as any[]).length} icon={Building2} />
+            <KpiTile label={t("reports.inSelectedPeriod")} value={filteredCompanies.length} icon={Calendar} />
             <KpiTile
-              label="Com e-mail"
+              label={t("reports.withEmail")}
               value={(filteredCompanies as any[]).filter((c: any) => (c.emails as any[])?.length > 0).length}
-              sub="com contato direto"
+              sub={t("reports.withDirectContact")}
               icon={Magnet}
             />
           </div>
@@ -805,7 +901,7 @@ export default function RelatoriosPage() {
             <Card className="border-border/50 shadow-sm">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <MapPin className="w-4 h-4 text-muted-foreground" /> Empresas por Estado (UF)
+                  <MapPin className="w-4 h-4 text-muted-foreground" /> {t("reports.companiesByState")}
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -815,7 +911,7 @@ export default function RelatoriosPage() {
                       <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
                       <XAxis type="number" fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
                       <YAxis type="category" dataKey="name" fontSize={11} tickLine={false} axisLine={false} width={30} stroke="hsl(var(--muted-foreground))" />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, "Empresas"]} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, t("reports.tabCompanies")]} />
                       <Bar dataKey="value" fill="hsl(var(--chart-1))" radius={[0, 4, 4, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -825,7 +921,7 @@ export default function RelatoriosPage() {
 
             <Card className="border-border/50 shadow-sm">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold">Empresas por Porte</CardTitle>
+                <CardTitle className="text-sm font-semibold">{t("reports.companiesBySize")}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-[260px]">
@@ -846,7 +942,7 @@ export default function RelatoriosPage() {
                           <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
                         ))}
                       </Pie>
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, "Empresas"]} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, t("reports.tabCompanies")]} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -856,11 +952,11 @@ export default function RelatoriosPage() {
 
           <Card className="border-border/50 shadow-sm">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold">Top CNAEs Captados</CardTitle>
+              <CardTitle className="text-sm font-semibold">{t("reports.topCnaes")}</CardTitle>
             </CardHeader>
             <CardContent>
               {(() => {
-                const cnaeGroups = groupBy(filteredCompanies as any[], co => co.cnaePrincipal || "Não informado");
+                const cnaeGroups = groupBy(filteredCompanies as any[], co => co.cnaePrincipal || (lang === "en" ? "Not specified" : "Não informado"));
                 const sorted = Object.entries(cnaeGroups)
                   .map(([cnae, items]) => ({ cnae, count: items.length }))
                   .sort((a, b) => b.count - a.count)
@@ -884,7 +980,7 @@ export default function RelatoriosPage() {
                       </div>
                     ))}
                     {sorted.length === 0 && (
-                      <p className="text-xs text-muted-foreground text-center py-4">Sem dados de CNAE.</p>
+                      <p className="text-xs text-muted-foreground text-center py-4">{t("reports.noCnaeData")}</p>
                     )}
                   </div>
                 );
@@ -896,11 +992,11 @@ export default function RelatoriosPage() {
         {/* ── DEALS ── */}
         <TabsContent value="deals" className="space-y-5 mt-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <KpiTile label="Total de deals" value={filteredDeals.length} icon={Briefcase} />
-            <KpiTile label="Pipeline Investidor" value={investorDeals} icon={TrendingUp} />
-            <KpiTile label="Pipeline Ativo" value={assetDeals} icon={Layers} />
+            <KpiTile label={t("reports.totalDeals")} value={filteredDeals.length} icon={Briefcase} />
+            <KpiTile label={t("reports.investorPipelineKpi")} value={investorDeals} icon={TrendingUp} />
+            <KpiTile label={t("reports.assetPipelineKpi")} value={assetDeals} icon={Layers} />
             <KpiTile
-              label="Valor médio estimado"
+              label={t("reports.avgEstimatedValue")}
               value={filteredDeals.length > 0
                 ? `R$ ${(totalRevEst / filteredDeals.length / 1000).toFixed(0)}k`
                 : "—"}
@@ -911,7 +1007,7 @@ export default function RelatoriosPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card className="border-border/50 shadow-sm">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold">Deals por Estágio</CardTitle>
+                <CardTitle className="text-sm font-semibold">{t("reports.dealsByStageKpi")}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-[240px]">
@@ -920,7 +1016,7 @@ export default function RelatoriosPage() {
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                       <XAxis dataKey="name" fontSize={10} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" tick={{ width: 80 }} />
                       <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, "Deals"]} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, t("reports.tabDeals")]} />
                       <Bar dataKey="count" fill="hsl(var(--chart-3))" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -930,7 +1026,7 @@ export default function RelatoriosPage() {
 
             <Card className="border-border/50 shadow-sm">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold">Distribuição por Pipeline</CardTitle>
+                <CardTitle className="text-sm font-semibold">{t("reports.pipelineDistribution")}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-[240px]">
@@ -938,8 +1034,8 @@ export default function RelatoriosPage() {
                     <PieChart>
                       <Pie
                         data={[
-                          { name: "Investidor", value: investorDeals },
-                          { name: "Ativo/Captação", value: assetDeals },
+                          { name: lang === "en" ? "Investor" : "Investidor", value: investorDeals },
+                          { name: lang === "en" ? "Asset/Capture" : "Ativo/Captação", value: assetDeals },
                         ]}
                         dataKey="value"
                         nameKey="name"
@@ -963,7 +1059,7 @@ export default function RelatoriosPage() {
 
           <Card className="border-border/50 shadow-sm">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold">Deals com maior valor estimado</CardTitle>
+              <CardTitle className="text-sm font-semibold">{t("reports.highestValueDealsKpi")}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
@@ -976,7 +1072,7 @@ export default function RelatoriosPage() {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">{deal.title}</p>
                         <p className="text-xs text-muted-foreground">
-                          {deal.pipelineType === "INVESTOR" ? "Investidor" : "Ativo"}
+                          {deal.pipelineType === "INVESTOR" ? (lang === "en" ? "Investor" : "Investidor") : (lang === "en" ? "Asset" : "Ativo")}
                         </p>
                       </div>
                       <span className="text-sm font-semibold text-emerald-600 shrink-0">
@@ -986,7 +1082,7 @@ export default function RelatoriosPage() {
                   ))}
                 {(filteredDeals as any[]).filter(d => d.amountEstimate).length === 0 && (
                   <p className="text-xs text-muted-foreground text-center py-6">
-                    Nenhum deal com valor estimado no período.
+                    {t("reports.noDealsWithValuePeriod")}
                   </p>
                 )}
               </div>
@@ -998,17 +1094,17 @@ export default function RelatoriosPage() {
         <TabsContent value="ativos" className="space-y-5 mt-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <KpiTile
-              label="Total de ativos"
+              label={t("reports.totalAssetsKpi")}
               value={(assets as any[]).length}
               icon={Layers}
             />
             <KpiTile
-              label="Área total cadastrada"
+              label={t("reports.totalRegisteredAreaKpi")}
               value={`${(assets as any[]).reduce((s, a) => s + (a.areaHa || 0), 0).toLocaleString("pt-BR")} ha`}
               icon={MapPin}
             />
             <KpiTile
-              label="Valor total portfólio"
+              label={t("reports.totalPortfolioValueKpi")}
               value={(() => {
                 const total = (assets as any[]).reduce((s, a) => s + (a.priceAsking || 0), 0);
                 return total >= 1_000_000 ? `R$ ${(total / 1_000_000).toFixed(1)}M` : `R$ ${(total / 1_000).toFixed(0)}k`;
@@ -1016,9 +1112,9 @@ export default function RelatoriosPage() {
               icon={DollarSign}
             />
             <KpiTile
-              label="Com documentação completa"
+              label={t("reports.withCompleteDoc")}
               value={(assets as any[]).filter(a => a.docsStatus === "completo").length}
-              sub={`de ${(assets as any[]).length} ativos`}
+              sub={`${(assets as any[]).length} ${t("reports.tabAssets").toLowerCase()}`}
               icon={Briefcase}
             />
           </div>
@@ -1026,7 +1122,7 @@ export default function RelatoriosPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card className="border-border/50 shadow-sm">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold">Ativos por Tipo</CardTitle>
+                <CardTitle className="text-sm font-semibold">{t("reports.assetsByTypeKpi")}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-[240px]">
@@ -1035,7 +1131,7 @@ export default function RelatoriosPage() {
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                       <XAxis dataKey="name" fontSize={10} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" />
                       <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, "Ativos"]} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, t("reports.tabAssets")]} />
                       <Bar dataKey="count" fill="hsl(var(--chart-4))" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -1045,7 +1141,7 @@ export default function RelatoriosPage() {
 
             <Card className="border-border/50 shadow-sm">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold">Ativos por Estado (UF)</CardTitle>
+                <CardTitle className="text-sm font-semibold">{t("reports.assetsByStateKpi")}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-[240px]">
@@ -1054,7 +1150,7 @@ export default function RelatoriosPage() {
                       <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
                       <XAxis type="number" fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
                       <YAxis type="category" dataKey="name" fontSize={11} tickLine={false} axisLine={false} width={30} stroke="hsl(var(--muted-foreground))" />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, "Ativos"]} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, t("reports.tabAssets")]} />
                       <Bar dataKey="value" fill="hsl(var(--chart-1))" radius={[0, 4, 4, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -1065,7 +1161,7 @@ export default function RelatoriosPage() {
 
           <Card className="border-border/50 shadow-sm">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold">Ranking por valor pedido</CardTitle>
+              <CardTitle className="text-sm font-semibold">{t("reports.rankingByPriceKpi")}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
@@ -1093,7 +1189,7 @@ export default function RelatoriosPage() {
                   ))}
                 {(assets as any[]).filter(a => a.priceAsking).length === 0 && (
                   <p className="text-xs text-muted-foreground text-center py-6">
-                    Nenhum ativo com preço cadastrado.
+                    {t("reports.noAssetWithPriceKpi")}
                   </p>
                 )}
               </div>
@@ -1105,20 +1201,20 @@ export default function RelatoriosPage() {
         <TabsContent value="ma" className="space-y-5 mt-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <KpiTile
-              label="Total deals M&A"
+              label={t("reports.totalMADealsKpi")}
               value={maDeals.length}
-              sub={`de ${filteredDeals.length} deals totais`}
+              sub={`${filteredDeals.length} ${t("reports.tabDeals").toLowerCase()} ${t("reports.ofTotal2")}`}
               icon={Briefcase}
             />
             <KpiTile
-              label="Valor pipeline M&A"
+              label={t("reports.maPipelineValueKpi")}
               value={maTotalValue >= 1_000_000
                 ? `R$ ${(maTotalValue / 1_000_000).toFixed(1)}M`
                 : `R$ ${(maTotalValue / 1_000).toFixed(0)}k`}
               icon={DollarSign}
             />
             <KpiTile
-              label="Ticket médio M&A"
+              label={t("reports.maAvgTicketKpi")}
               value={maAvgTicket >= 1_000_000
                 ? `R$ ${(maAvgTicket / 1_000_000).toFixed(1)}M`
                 : maAvgTicket > 0
@@ -1127,9 +1223,9 @@ export default function RelatoriosPage() {
               icon={TrendingUp}
             />
             <KpiTile
-              label="Conversão M&A"
+              label={t("reports.maConversionKpi")}
               value={`${maConversionRate.toFixed(1)}%`}
-              sub="deals no último estágio"
+              sub={t("reports.dealsInLastStage")}
               icon={Target}
             />
           </div>
@@ -1137,7 +1233,7 @@ export default function RelatoriosPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card className="border-border/50 shadow-sm">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold">Evolução mensal — Deals M&A</CardTitle>
+                <CardTitle className="text-sm font-semibold">{t("reports.monthlyMAEvolutionKpi")}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-[240px]">
@@ -1152,10 +1248,7 @@ export default function RelatoriosPage() {
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                       <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" />
                       <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any, name: string) => {
-                        if (name === "count") return [v, "Deals"];
-                        return [v, "Deals"];
-                      }} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, t("reports.tabDeals")]} />
                       <Area type="monotone" dataKey="count" stroke="hsl(var(--chart-3))" strokeWidth={2} fill="url(#cgMA)" dot={{ r: 3, fill: "hsl(var(--chart-3))" }} />
                     </AreaChart>
                   </ResponsiveContainer>
@@ -1165,7 +1258,7 @@ export default function RelatoriosPage() {
 
             <Card className="border-border/50 shadow-sm">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold">Deals M&A por Estágio</CardTitle>
+                <CardTitle className="text-sm font-semibold">{t("reports.maByStageKpi")}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-[240px]">
@@ -1174,7 +1267,7 @@ export default function RelatoriosPage() {
                       <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
                       <XAxis type="number" fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
                       <YAxis type="category" dataKey="name" fontSize={11} tickLine={false} axisLine={false} width={80} stroke="hsl(var(--muted-foreground))" />
-                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, "Deals"]} />
+                      <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, t("reports.tabDeals")]} />
                       <Bar dataKey="count" fill="hsl(var(--chart-4))" radius={[0, 4, 4, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -1185,7 +1278,7 @@ export default function RelatoriosPage() {
 
           <Card className="border-border/50 shadow-sm">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold">Top 8 Deals M&A por valor estimado</CardTitle>
+              <CardTitle className="text-sm font-semibold">{t("reports.top8MADealsKpi")}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
@@ -1199,8 +1292,8 @@ export default function RelatoriosPage() {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">{deal.title}</p>
                         <p className="text-xs text-muted-foreground">
-                          {deal.pipelineType === "INVESTOR" ? "Investidor" : "Ativo"}
-                          {deal.priority ? ` — Prioridade: ${deal.priority}` : ""}
+                          {deal.pipelineType === "INVESTOR" ? (lang === "en" ? "Investor" : "Investidor") : (lang === "en" ? "Asset" : "Ativo")}
+                          {deal.priority ? ` — ${lang === "en" ? "Priority" : "Prioridade"}: ${deal.priority}` : ""}
                         </p>
                       </div>
                       <span className="text-sm font-semibold text-emerald-600 shrink-0">
@@ -1210,7 +1303,7 @@ export default function RelatoriosPage() {
                   ))}
                 {maDeals.filter((d: any) => d.amountEstimate).length === 0 && (
                   <p className="text-xs text-muted-foreground text-center py-6">
-                    Nenhum deal M&A com valor estimado no período.
+                    {t("reports.noMADealsValuePeriod")}
                   </p>
                 )}
               </div>
@@ -1219,12 +1312,12 @@ export default function RelatoriosPage() {
 
           <Card className="border-border/50 shadow-sm">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold">Comparativo por Segmento</CardTitle>
+              <CardTitle className="text-sm font-semibold">{t("reports.segmentComparisonKpi")}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="p-4 rounded-lg bg-muted/30 space-y-1">
-                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">M&A / Negócios</p>
+                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{t("reports.maBusinessesKpi")}</p>
                   <p className="text-2xl font-bold">{maDeals.length}</p>
                   <p className="text-xs text-muted-foreground">
                     {maTotalValue >= 1_000_000
@@ -1243,7 +1336,7 @@ export default function RelatoriosPage() {
                   </p>
                 </div>
                 <div className="p-4 rounded-lg bg-muted/30 space-y-1">
-                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Mineração</p>
+                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{lang === "en" ? "Mining" : "Mineração"}</p>
                   <p className="text-2xl font-bold">{mineracaoDeals.length}</p>
                   <p className="text-xs text-muted-foreground">
                     {(() => {
@@ -1259,6 +1352,502 @@ export default function RelatoriosPage() {
 
         <TabsContent value="funil" className="mt-4 space-y-4">
           <FunilConversao deals={deals as any[]} assets={assets as any[]} companies={companies as any[]} />
+        </TabsContent>
+
+        {/* ── HONORÁRIOS ── */}
+        <TabsContent value="honorarios" className="space-y-5 mt-5">
+          {(() => {
+            const dealsComFee = (filteredDeals as any[]).filter(d => d.feeValue && d.feeValue > 0);
+            const feesTotal = dealsComFee.reduce((s: number, d: any) => s + (d.feeValue || 0), 0);
+            const feesRecebidos = dealsComFee
+              .filter(d => d.feeStatus === "recebido")
+              .reduce((s: number, d: any) => s + (d.feeValue || 0), 0);
+            const feesPendentes = feesTotal - feesRecebidos;
+            const ticketMedioFee = dealsComFee.length > 0 ? feesTotal / dealsComFee.length : 0;
+            const taxaRecebimento = feesTotal > 0 ? (feesRecebidos / feesTotal) * 100 : 0;
+
+            const feesByType = (() => {
+              const grouped: Record<string, { count: number; total: number }> = {};
+              dealsComFee.forEach(d => {
+                const tipo = d.feeType || (lang === "en" ? "Not defined" : "Não definido");
+                if (!grouped[tipo]) grouped[tipo] = { count: 0, total: 0 };
+                grouped[tipo].count++;
+                grouped[tipo].total += d.feeValue || 0;
+              });
+              return Object.entries(grouped).map(([name, v]) => ({
+                name: name === "percentual" ? "Percentual" : name === "fixo" ? "Fixo" : name === "success" ? "Success Fee" : name,
+                count: v.count,
+                total: v.total,
+              }));
+            })();
+
+            const feesByMonth = (() => {
+              const data: { name: string; recebido: number; pendente: number }[] = [];
+              for (let i = 5; i >= 0; i--) {
+                const d = new Date();
+                d.setMonth(d.getMonth() - i);
+                const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+                const label = format(d, "MMM/yy", { locale });
+                const matching = dealsComFee.filter(deal => deal.createdAt?.startsWith(key));
+                data.push({
+                  name: label,
+                  recebido: matching.filter(d => d.feeStatus === "recebido").reduce((s: number, d: any) => s + (d.feeValue || 0), 0),
+                  pendente: matching.filter(d => d.feeStatus !== "recebido").reduce((s: number, d: any) => s + (d.feeValue || 0), 0),
+                });
+              }
+              return data;
+            })();
+
+            const fmtFee = (v: number) => {
+              if (v >= 1_000_000) return `R$ ${(v / 1_000_000).toFixed(1)}M`;
+              if (v >= 1_000) return `R$ ${(v / 1_000).toFixed(0)}k`;
+              return `R$ ${v.toLocaleString("pt-BR")}`;
+            };
+
+            return (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                  <KpiTile label={t("reports.totalFees")} value={fmtFee(feesTotal)} icon={Banknote} />
+                  <KpiTile label={t("reports.receivedFees")} value={fmtFee(feesRecebidos)} sub={`${taxaRecebimento.toFixed(0)}% ${t("reports.ofTotal2")}`} icon={CheckCircle2} />
+                  <KpiTile label={lang === "en" ? "Pending fees" : "Fees pendentes"} value={fmtFee(feesPendentes)} icon={Clock} />
+                  <KpiTile label={lang === "en" ? "Avg fee ticket" : "Ticket médio fee"} value={fmtFee(ticketMedioFee)} icon={DollarSign} />
+                  <KpiTile label={lang === "en" ? "Deals with fee" : "Deals com fee"} value={dealsComFee.length} sub={`${filteredDeals.length} ${t("reports.tabDeals").toLowerCase()}`} icon={Percent} />
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <Card className="border-border/50 shadow-sm">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-semibold">{t("reports.feeEvolutionKpi")}</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="h-[240px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={feesByMonth}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                            <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" />
+                            <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
+                            <Tooltip contentStyle={tooltipStyle} formatter={(v: any, name: string) => [`R$ ${Number(v).toLocaleString("pt-BR")}`, name === "recebido" ? (lang === "en" ? "Received" : "Recebido") : (lang === "en" ? "Pending" : "Pendente")]} />
+                            <Legend formatter={(v) => v === "recebido" ? (lang === "en" ? "Received" : "Recebido") : (lang === "en" ? "Pending" : "Pendente")} />
+                            <Bar dataKey="recebido" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} stackId="stack" />
+                            <Bar dataKey="pendente" fill="hsl(var(--chart-3))" radius={[4, 4, 0, 0]} stackId="stack" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-border/50 shadow-sm">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-semibold">{t("reports.feesByTypeKpi")}</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="h-[240px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={feesByType}
+                              dataKey="total"
+                              nameKey="name"
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={50}
+                              outerRadius={80}
+                              paddingAngle={3}
+                              label={({ name, percent }: any) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                              labelLine={false}
+                              fontSize={11}
+                            >
+                              {feesByType.map((_, i) => (
+                                <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                              ))}
+                            </Pie>
+                            <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [`R$ ${Number(v).toLocaleString("pt-BR")}`, lang === "en" ? "Value" : "Valor"]} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <Card className="border-border/50 shadow-sm">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold">{t("reports.topDealsByFeeKpi")}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {[...dealsComFee]
+                        .sort((a, b) => (b.feeValue || 0) - (a.feeValue || 0))
+                        .slice(0, 10)
+                        .map((deal: any, i) => (
+                          <div key={deal.id} className="flex items-center gap-3 py-2 px-2 rounded-lg hover:bg-muted/40" data-testid={`row-fee-deal-${deal.id}`}>
+                            <span className="text-xs font-bold text-muted-foreground w-5 shrink-0">#{i + 1}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{deal.title}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {deal.feeType === "percentual" ? `${deal.feePercent}%` : deal.feeType || "—"}
+                                {deal.amountEstimate ? ` de ${deal.amountEstimate >= 1_000_000 ? `R$ ${(deal.amountEstimate / 1_000_000).toFixed(1)}M` : `R$ ${(deal.amountEstimate / 1_000).toFixed(0)}k`}` : ""}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <Badge className={cn("text-[10px]",
+                                deal.feeStatus === "recebido" ? "bg-green-100 text-green-700 dark:bg-green-900/30" :
+                                "bg-amber-100 text-amber-700 dark:bg-amber-900/30"
+                              )}>
+                                {deal.feeStatus === "recebido" ? (lang === "en" ? "Received" : "Recebido") : (lang === "en" ? "Pending" : "Pendente")}
+                              </Badge>
+                              <span className="text-sm font-semibold text-emerald-600">
+                                R$ {Number(deal.feeValue).toLocaleString("pt-BR")}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      {dealsComFee.length === 0 && (
+                        <p className="text-xs text-muted-foreground text-center py-6">
+                          {lang === "en" ? "No deals with fee in the selected period." : "Nenhum deal com fee no período selecionado."}
+                        </p>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
+            );
+          })()}
+        </TabsContent>
+
+        {/* ── GEOGRÁFICO ── */}
+        <TabsContent value="geografico" className="space-y-5 mt-5">
+          {(() => {
+            const assetsList = assets as any[];
+            const totalAreaHa = assetsList.reduce((s, a) => s + (a.areaHa || 0), 0);
+            const totalValue = assetsList.reduce((s, a) => s + (a.priceAsking || 0), 0);
+            const avgPriceHa = totalAreaHa > 0 ? totalValue / totalAreaHa : 0;
+
+            const byState = (() => {
+              const grouped: Record<string, { count: number; area: number; value: number }> = {};
+              assetsList.forEach(a => {
+                const uf = a.estado || "N/I";
+                if (!grouped[uf]) grouped[uf] = { count: 0, area: 0, value: 0 };
+                grouped[uf].count++;
+                grouped[uf].area += a.areaHa || 0;
+                grouped[uf].value += a.priceAsking || 0;
+              });
+              return Object.entries(grouped)
+                .map(([name, v]) => ({ name, ...v }))
+                .sort((a, b) => b.value - a.value);
+            })();
+
+            const byMunicipio = (() => {
+              const grouped: Record<string, number> = {};
+              assetsList.forEach(a => {
+                const mun = a.municipio || "N/I";
+                grouped[mun] = (grouped[mun] || 0) + 1;
+              });
+              return Object.entries(grouped)
+                .map(([name, value]) => ({ name, value }))
+                .sort((a, b) => b.value - a.value)
+                .slice(0, 12);
+            })();
+
+            const geoScored = assetsList.filter(a => a.geoScore != null);
+            const avgGeoScore = geoScored.length > 0 ? Math.round(geoScored.reduce((s, a) => s + a.geoScore, 0) / geoScored.length) : null;
+            const withWater = assetsList.filter(a => a.geoTemRio || a.geoTemLago).length;
+            const withEnergy = assetsList.filter(a => a.geoTemEnergia).length;
+            const withCAR = assetsList.filter(a => a.carCodImovel).length;
+            const withANM = assetsList.filter(a => a.anmProcesso).length;
+
+            const pricePerHaByState = byState
+              .filter(s => s.area > 0)
+              .map(s => ({ name: s.name, value: Math.round(s.value / s.area) }))
+              .sort((a, b) => b.value - a.value)
+              .slice(0, 10);
+
+            const fmtVal = (v: number) => {
+              if (v >= 1_000_000) return `R$ ${(v / 1_000_000).toFixed(1)}M`;
+              if (v >= 1_000) return `R$ ${(v / 1_000).toFixed(0)}k`;
+              return `R$ ${v.toLocaleString("pt-BR")}`;
+            };
+
+            return (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                  <KpiTile label={t("reports.totalAssetsKpi")} value={assetsList.length} icon={Layers} />
+                  <KpiTile label={lang === "en" ? "Total area" : "Área total"} value={`${totalAreaHa.toLocaleString("pt-BR")} ha`} icon={MapPin} />
+                  <KpiTile label={lang === "en" ? "Avg R$/ha" : "R$/ha médio"} value={fmtVal(avgPriceHa)} icon={DollarSign} />
+                  <KpiTile label={lang === "en" ? "Avg Geo Score" : "Score Geo médio"} value={avgGeoScore != null ? `${avgGeoScore}/100` : "—"} sub={`${geoScored.length} ${lang === "en" ? "assets analyzed" : "ativos analisados"}`} icon={Star} />
+                  <KpiTile label={lang === "en" ? "States covered" : "Estados cobertos"} value={byState.filter(s => s.name !== "N/I").length} icon={Globe} />
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <Card className="border-border/50 shadow-sm">
+                    <CardContent className="p-4 text-center">
+                      <p className="text-xs text-muted-foreground">{lang === "en" ? "Near river/stream" : "Próximo a rio/córrego"}</p>
+                      <p className="text-2xl font-bold mt-1">{withWater}</p>
+                      <p className="text-[10px] text-muted-foreground">{assetsList.length} {t("reports.ofTotal2")}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-border/50 shadow-sm">
+                    <CardContent className="p-4 text-center">
+                      <p className="text-xs text-muted-foreground">{lang === "en" ? "With nearby energy" : "Com energia próxima"}</p>
+                      <p className="text-2xl font-bold mt-1">{withEnergy}</p>
+                      <p className="text-[10px] text-muted-foreground">{assetsList.length} {t("reports.ofTotal2")}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-border/50 shadow-sm">
+                    <CardContent className="p-4 text-center">
+                      <p className="text-xs text-muted-foreground">{lang === "en" ? "With CAR" : "Com CAR"}</p>
+                      <p className="text-2xl font-bold mt-1">{withCAR}</p>
+                      <p className="text-[10px] text-muted-foreground">{assetsList.length} {t("reports.ofTotal2")}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-border/50 shadow-sm">
+                    <CardContent className="p-4 text-center">
+                      <p className="text-xs text-muted-foreground">{lang === "en" ? "With ANM process" : "Com processo ANM"}</p>
+                      <p className="text-2xl font-bold mt-1">{withANM}</p>
+                      <p className="text-[10px] text-muted-foreground">{assetsList.length} {t("reports.ofTotal2")}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <Card className="border-border/50 shadow-sm">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-semibold">{lang === "en" ? "Assets by Municipality (Top 12)" : "Ativos por Município (Top 12)"}</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="h-[280px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={byMunicipio} layout="vertical" margin={{ left: 10, right: 16 }}>
+                            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
+                            <XAxis type="number" fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
+                            <YAxis type="category" dataKey="name" fontSize={10} tickLine={false} axisLine={false} width={90} stroke="hsl(var(--muted-foreground))" />
+                            <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, t("reports.tabAssets")]} />
+                            <Bar dataKey="value" fill="hsl(var(--chart-1))" radius={[0, 4, 4, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-border/50 shadow-sm">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-semibold">{lang === "en" ? "R$/Hectare by State" : "R$/Hectare por Estado"}</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="h-[280px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={pricePerHaByState} layout="vertical" margin={{ left: 0, right: 16 }}>
+                            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
+                            <XAxis type="number" fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
+                            <YAxis type="category" dataKey="name" fontSize={11} tickLine={false} axisLine={false} width={30} stroke="hsl(var(--muted-foreground))" />
+                            <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [`R$ ${Number(v).toLocaleString("pt-BR")}`, "R$/ha"]} />
+                            <Bar dataKey="value" fill="hsl(var(--chart-4))" radius={[0, 4, 4, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <Card className="border-border/50 shadow-sm">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold">{lang === "en" ? "Summary by State" : "Resumo por Estado"}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b">
+                            <th className="text-left py-2 px-2 text-xs font-semibold text-muted-foreground">{lang === "en" ? "State" : "UF"}</th>
+                            <th className="text-right py-2 px-2 text-xs font-semibold text-muted-foreground">{t("reports.tabAssets")}</th>
+                            <th className="text-right py-2 px-2 text-xs font-semibold text-muted-foreground">{lang === "en" ? "Area (ha)" : "Área (ha)"}</th>
+                            <th className="text-right py-2 px-2 text-xs font-semibold text-muted-foreground">{lang === "en" ? "Total Value" : "Valor Total"}</th>
+                            <th className="text-right py-2 px-2 text-xs font-semibold text-muted-foreground">R$/ha</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {byState.map((s) => (
+                            <tr key={s.name} className="border-b border-border/30 hover:bg-muted/40">
+                              <td className="py-2 px-2 font-medium">{s.name}</td>
+                              <td className="py-2 px-2 text-right">{s.count}</td>
+                              <td className="py-2 px-2 text-right">{s.area.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}</td>
+                              <td className="py-2 px-2 text-right text-emerald-600 font-medium">{fmtVal(s.value)}</td>
+                              <td className="py-2 px-2 text-right">{s.area > 0 ? fmtVal(s.value / s.area) : "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
+            );
+          })()}
+        </TabsContent>
+
+        {/* ── LEADS ── */}
+        <TabsContent value="leads" className="space-y-5 mt-5">
+          {(() => {
+            const companiesList = filteredCompanies as any[];
+            const withLead = companiesList.filter(c => c.lead);
+            const leadNew = withLead.filter(c => c.lead?.status === "new").length;
+            const leadQualified = withLead.filter(c => c.lead?.status === "qualified").length;
+            const leadContacted = withLead.filter(c => c.lead?.status === "contacted").length;
+            const leadConverted = withLead.filter(c => c.lead?.status === "converted" || c.lead?.status === "won").length;
+            const leadLost = withLead.filter(c => c.lead?.status === "lost" || c.lead?.status === "disqualified").length;
+
+            const avgScore = (() => {
+              const scored = withLead.filter(c => c.lead?.score != null && c.lead.score > 0);
+              if (scored.length === 0) return null;
+              return Math.round(scored.reduce((s: number, c: any) => s + c.lead.score, 0) / scored.length);
+            })();
+
+            const leadsByScore = [
+              { name: lang === "en" ? "Hot (≥70)" : "Quente (≥70)", value: withLead.filter(c => c.lead?.score >= 70).length },
+              { name: lang === "en" ? "Warm (40-69)" : "Morno (40-69)", value: withLead.filter(c => c.lead?.score >= 40 && c.lead?.score < 70).length },
+              { name: lang === "en" ? "Cold (<40)" : "Frio (<40)", value: withLead.filter(c => c.lead?.score != null && c.lead?.score < 40).length },
+              { name: lang === "en" ? "No score" : "Sem score", value: withLead.filter(c => c.lead?.score == null || c.lead.score === 0).length },
+            ];
+
+            const leadStatusData = [
+              { name: lang === "en" ? "New" : "Novo", value: leadNew },
+              { name: lang === "en" ? "Contacted" : "Contatado", value: leadContacted },
+              { name: lang === "en" ? "Qualified" : "Qualificado", value: leadQualified },
+              { name: lang === "en" ? "Converted" : "Convertido", value: leadConverted },
+              { name: lang === "en" ? "Lost" : "Perdido", value: leadLost },
+            ].filter(d => d.value > 0);
+
+            const leadMonthly = buildMonthlyData(withLead.map(c => c.lead), "createdAt", 6);
+
+            const conversionRate = withLead.length > 0 ? (leadConverted / withLead.length) * 100 : 0;
+
+            return (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                  <KpiTile label={lang === "en" ? "Total leads" : "Total de leads"} value={withLead.length} icon={Users} />
+                  <KpiTile label={lang === "en" ? "New" : "Novos"} value={leadNew} sub={lang === "en" ? "awaiting contact" : "aguardando contato"} icon={CirclePlus} />
+                  <KpiTile label={lang === "en" ? "Qualified" : "Qualificados"} value={leadQualified} icon={CheckCircle2} />
+                  <KpiTile label={lang === "en" ? "Avg score" : "Score médio"} value={avgScore != null ? avgScore : "—"} icon={Star} />
+                  <KpiTile label={t("reports.closingRate")} value={`${conversionRate.toFixed(1)}%`} sub={`${leadConverted} ${lang === "en" ? "converted" : "convertidos"}`} icon={Target} />
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <Card className="border-border/50 shadow-sm">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-semibold">{lang === "en" ? "Leads by Score" : "Leads por Score"}</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="h-[240px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={leadsByScore}
+                              dataKey="value"
+                              nameKey="name"
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={50}
+                              outerRadius={80}
+                              paddingAngle={3}
+                              label={({ name, value }: any) => value > 0 ? `${name} (${value})` : ""}
+                              labelLine={false}
+                              fontSize={10}
+                            >
+                              <Cell fill="#10b981" />
+                              <Cell fill="#f59e0b" />
+                              <Cell fill="#6b7280" />
+                              <Cell fill="#d1d5db" />
+                            </Pie>
+                            <Tooltip contentStyle={tooltipStyle} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-border/50 shadow-sm">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-semibold">{lang === "en" ? "Leads by Status" : "Leads por Status"}</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="h-[240px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={leadStatusData}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                            <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" />
+                            <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
+                            <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, "Leads"]} />
+                            <Bar dataKey="value" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <Card className="border-border/50 shadow-sm">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold">{lang === "en" ? "Monthly Lead Evolution" : "Evolução Mensal de Leads"}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="h-[220px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={leadMonthly}>
+                          <defs>
+                            <linearGradient id="cgLeads" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="hsl(var(--chart-5))" stopOpacity={0.3} />
+                              <stop offset="95%" stopColor="hsl(var(--chart-5))" stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                          <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" />
+                          <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
+                          <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, "Leads"]} />
+                          <Area type="monotone" dataKey="value" stroke="hsl(var(--chart-5))" strokeWidth={2} fill="url(#cgLeads)" dot={{ r: 3, fill: "hsl(var(--chart-5))" }} />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-border/50 shadow-sm">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold">{lang === "en" ? "Top Leads by Score" : "Top Leads por Score"}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {[...withLead]
+                        .filter(c => c.lead?.score > 0)
+                        .sort((a, b) => (b.lead?.score || 0) - (a.lead?.score || 0))
+                        .slice(0, 10)
+                        .map((co: any, i) => (
+                          <div key={co.id} className="flex items-center gap-3 py-2 px-2 rounded-lg hover:bg-muted/40" data-testid={`row-lead-score-${co.id}`}>
+                            <span className="text-xs font-bold text-muted-foreground w-5 shrink-0">#{i + 1}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{co.tradeName || co.legalName}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {co.lead?.status || "—"} {co.address?.uf ? `— ${co.address.uf}` : ""}
+                              </p>
+                            </div>
+                            <Badge className={cn("text-[10px] shrink-0",
+                              co.lead?.score >= 70 ? "bg-green-100 text-green-700 dark:bg-green-900/30" :
+                              co.lead?.score >= 40 ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30" :
+                              "bg-gray-100 text-gray-500"
+                            )}>
+                              Score: {co.lead?.score}
+                            </Badge>
+                          </div>
+                        ))}
+                      {withLead.filter(c => c.lead?.score > 0).length === 0 && (
+                        <p className="text-xs text-muted-foreground text-center py-6">
+                          {lang === "en" ? "No leads with score." : "Nenhum lead com score."}
+                        </p>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
+            );
+          })()}
         </TabsContent>
 
         <TabsContent value="atividades" className="space-y-5 mt-5">

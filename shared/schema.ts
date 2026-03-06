@@ -40,6 +40,7 @@ export const connectors = pgTable("connectors", {
   configJson: jsonb("config_json").notNull().default({}),
   schedule: text("schedule"),
   lastRunAt: timestamp("last_run_at"),
+  lastError: text("last_error"),
 });
 
 export const rawIngests = pgTable("raw_ingests", {
@@ -101,8 +102,10 @@ export const leads = pgTable("leads", {
   score: integer("score").default(0),
   scoreBreakdownJson: jsonb("score_breakdown_json").default({}),
   source: text("source"),
+  notes: text("notes"),
   ownerUserId: integer("owner_user_id").references(() => users.id),
   lastEnrichedAt: timestamp("last_enriched_at"),
+  updatedAt: timestamp("updated_at").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -178,6 +181,7 @@ export const assets = pgTable("assets", {
   tags: jsonb("tags").default([]),
   attributesJson: jsonb("attributes_json").default({}),
   anmProcesso: text("anm_processo"),
+  carCodImovel: text("car_cod_imovel"),
   linkedCompanyId: integer("linked_company_id").references(() => companies.id),
   geoAltMed: doublePrecision("geo_alt_med"),
   geoAltMin: doublePrecision("geo_alt_min"),
@@ -196,6 +200,7 @@ export const assets = pgTable("assets", {
   exclusividadeEmpresaId: integer("exclusividade_empresa_id").references(() => companies.id),
   activityLog: jsonb("activity_log").default([]),
   camposEspecificos: jsonb("campos_especificos").default({}),
+  fotos: jsonb("fotos").default([]),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -650,3 +655,17 @@ export const norionFormularioCliente = pgTable("norion_formulario_cliente", {
 export const insertNorionFormularioSchema = createInsertSchema(norionFormularioCliente).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertNorionFormulario = z.infer<typeof insertNorionFormularioSchema>;
 export type NorionFormulario = typeof norionFormularioCliente.$inferSelect;
+
+export const sicarImoveisCache = pgTable("sicar_imoveis_cache", {
+  id: serial("id").primaryKey(),
+  codImovel: text("cod_imovel").notNull().unique(),
+  uf: text("uf").notNull(),
+  municipio: text("municipio"),
+  numArea: doublePrecision("num_area"),
+  indStatus: text("ind_status"),
+  indTipo: text("ind_tipo"),
+  geometry: jsonb("geometry"),
+  properties: jsonb("properties"),
+  fetchedAt: timestamp("fetched_at").defaultNow(),
+});
+export type SicarImovelCache = typeof sicarImoveisCache.$inferSelect;

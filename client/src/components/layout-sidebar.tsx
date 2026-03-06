@@ -5,13 +5,19 @@ import {
   LayoutDashboard, Briefcase, LogOut, Magnet, Zap,
   Telescope, Building2, Users, ChevronDown, Download, BadgeCheck,
   XCircle, FileText, FileSignature, Menu, X, Layers, TreePine, Pickaxe,
-  Home, Wheat, Factory, Target, Settings2, Plug, Map, BarChart3,
+  Home, Wheat, Factory, Target, Settings2, Plug, Map,
   KanbanSquare, BookOpen, Globe, AlertTriangle, Bug, Handshake,
-  Compass, FolderOpen, Network, Sprout,
+  DollarSign,
+  Network,
+  Landmark,
+  Sun, Moon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useServiceStatus } from "@/hooks/use-service-status";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { useTheme } from "@/components/theme-provider";
+import { LanguageSelector } from "@/components/language-selector";
+import { useI18n } from "@/lib/i18n";
 
 interface SidebarContextValue {
   open: boolean;
@@ -65,7 +71,7 @@ export function MobileTopBar() {
         <div className="w-6 h-6 rounded-md bg-sidebar-primary flex items-center justify-center">
           <Zap className="w-3.5 h-3.5 text-white fill-current" />
         </div>
-        Mavrion Conect
+        Mavrion Connect
       </div>
     </div>
   );
@@ -139,12 +145,14 @@ function SubLink({ href, icon: Icon, label, exact = false }: {
 }
 
 function ExpandableNav({
-  href, icon: Icon, label, children, exact = false,
+  href, icon: Icon, label, children, exact = false, activePaths,
 }: {
-  href: string; icon: any; label: string; children: React.ReactNode; exact?: boolean;
+  href: string; icon: any; label: string; children: React.ReactNode; exact?: boolean; activePaths?: string[];
 }) {
   const [location] = useLocation();
-  const isActive = exact ? location === href : location.startsWith(href);
+  const isActive = activePaths
+    ? activePaths.some(p => location === p || location.startsWith(p + "/"))
+    : (exact ? location === href : location.startsWith(href));
   const [expanded, setExpanded] = useState(isActive);
 
   return (
@@ -178,10 +186,25 @@ function ExpandableNav({
   );
 }
 
+function ThemeToggleButton() {
+  const { theme, toggleTheme } = useTheme();
+  return (
+    <button
+      onClick={toggleTheme}
+      className="p-1.5 rounded-md text-sidebar-foreground/50 hover:text-white hover:bg-white/10 transition-colors"
+      title={theme === "light" ? "Dark mode" : "Light mode"}
+      data-testid="btn-theme-toggle"
+    >
+      {theme === "light" ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+    </button>
+  );
+}
+
 export default function Sidebar() {
   const { user, logout } = useAuth();
   const { open, setOpen } = useSidebar();
   const { data: serviceStatus } = useServiceStatus();
+  const { t } = useI18n();
 
   const getInitials = (name: string) => name.substring(0, 2).toUpperCase();
 
@@ -192,7 +215,7 @@ export default function Sidebar() {
           <div className="w-8 h-8 rounded-lg bg-sidebar-primary flex items-center justify-center shrink-0">
             <Zap className="w-5 h-5 text-white fill-current" />
           </div>
-          Mavrion Conect
+          Mavrion Connect
         </div>
         <button
           onClick={() => setOpen(false)}
@@ -206,48 +229,12 @@ export default function Sidebar() {
       <div className="flex-1 py-3 px-3 overflow-y-auto space-y-0.5">
 
         {hasPermission(user, "dashboard") && (
-          <NavLink href="/" icon={LayoutDashboard} label="Dashboard" exact />
+          <NavLink href="/" icon={LayoutDashboard} label={t("nav.dashboard")} exact />
         )}
 
-        <SectionLabel label="Originação" />
-        {hasPermission(user, "prospeccao") && (
-          <NavLink href="/prospeccao" icon={Telescope} label="Prospecção CNPJ" />
-        )}
-        {hasPermission(user, "prospeccao") && (
-          <NavLink href="/ma" icon={Handshake} label="M&A — Fusões & Aquisições" />
-        )}
         {hasPermission(user, "ativos") && (
-          <NavLink href="/geo-rural" icon={TreePine} label="Prospecção Rural" status={serviceStatus?.sicar} />
-        )}
-        {hasPermission(user, "ativos") && (
-          <NavLink href="/anm" icon={Map} label="Portal ANM" status={serviceStatus?.anm} />
-        )}
-
-        <SectionLabel label="Pipeline Comercial" />
-        {hasPermission(user, "sdr") && (
-          <NavLink href="/sdr" icon={Magnet} label="Fila SDR" />
-        )}
-        {hasPermission(user, "empresas") && (
-          <ExpandableNav href="/empresas" icon={Building2} label="Empresas">
-            <SubLink href="/empresas" icon={Download} label="Todas as Empresas" exact />
-            <SubLink href="/empresas/leads" icon={BadgeCheck} label="Leads Ativas" />
-            <SubLink href="/empresas/desqualificadas" icon={XCircle} label="Desqualificadas" />
-          </ExpandableNav>
-        )}
-        {hasPermission(user, "crm") && (
-          <NavLink href="/crm" icon={KanbanSquare} label="Kanban de Deals" />
-        )}
-        {hasPermission(user, "propostas") && (
-          <NavLink href="/propostas" icon={FileText} label="Propostas" />
-        )}
-        {hasPermission(user, "propostas") && (
-          <NavLink href="/contratos" icon={FileSignature} label="Contratos" />
-        )}
-
-        <SectionLabel label="Portfólio & Matching" />
-        {hasPermission(user, "ativos") && (
-          <ExpandableNav href="/ativos" icon={Layers} label="Ativos">
-            <SubLink href="/ativos" icon={Layers} label="Todos os Ativos" exact />
+          <ExpandableNav href="/ativos" icon={Layers} label={t("nav.ativos")}>
+            <SubLink href="/ativos" icon={Layers} label={t("nav.ativos")} exact />
             <SubLink href="/ativos/tipo/TERRA" icon={TreePine} label="Terras & Fazendas" />
             <SubLink href="/ativos/tipo/MINA" icon={Pickaxe} label="Mineração" />
             <SubLink href="/ativos/tipo/NEGOCIO" icon={Briefcase} label="Negócios M&A" />
@@ -256,42 +243,65 @@ export default function Sidebar() {
             <SubLink href="/ativos/tipo/AGRO" icon={Wheat} label="Agronegócio" />
           </ExpandableNav>
         )}
+
         {hasPermission(user, "matching") && (
-          <NavLink href="/matching" icon={Target} label="Matching" />
+          <NavLink href="/matching" icon={Target} label={t("nav.matching")} exact />
         )}
+
         {hasPermission(user, "matching") && (
           <NavLink href="/mapa-conexoes" icon={Network} label="Mapa de Conexões" />
         )}
-        {hasPermission(user, "ativos") && (
-          <NavLink href="/inteligencia-agro" icon={Sprout} label="Inteligência Agro" />
-        )}
 
-        <SectionLabel label="Relacionamento" />
         {hasPermission(user, "crm") && (
-          <NavLink href="/portal-admin" icon={Globe} label="Portal Investidor" />
+          <ExpandableNav href="/crm" icon={KanbanSquare} label="CRM" activePaths={["/crm", "/empresas", "/sdr", "/propostas", "/contratos"]}>
+            <SubLink href="/crm" icon={KanbanSquare} label={t("nav.kanban")} exact />
+            <SubLink href="/empresas" icon={Building2} label={t("nav.empresas")} />
+            <SubLink href="/sdr" icon={Magnet} label={t("nav.filaSdr")} />
+            <SubLink href="/propostas" icon={FileText} label={t("nav.propostas")} />
+            <SubLink href="/contratos" icon={FileSignature} label={t("nav.contratos")} />
+          </ExpandableNav>
         )}
 
-        <SectionLabel label="Analytics" />
-        <NavLink href="/relatorios" icon={BarChart3} label="Relatórios" />
+        {hasPermission(user, "prospeccao") && (
+          <ExpandableNav href="/prospeccao" icon={Telescope} label={t("nav.prospeccao")} activePaths={["/prospeccao", "/ma", "/geo-rural", "/anm", "/fii-fundos"]}>
+            <SubLink href="/prospeccao" icon={Telescope} label={t("nav.cnpj")} exact />
+            <SubLink href="/ma" icon={Handshake} label={t("nav.maRadar")} />
+            <SubLink href="/geo-rural" icon={Map} label={t("nav.geoRural")} />
+            <SubLink href="/anm" icon={Pickaxe} label={t("nav.anmBusca")} />
+            <SubLink href="/fii-fundos" icon={Landmark} label="FII / Fundos" />
+          </ExpandableNav>
+        )}
 
-        {(user?.role === "admin" || user?.role === "manager") && (
-          <>
-            <SectionLabel label="Sistema" />
+        {hasPermission(user, "crm") && (
+          <NavLink href="/portal-admin" icon={Globe} label={t("nav.portal")} />
+        )}
+
+        {hasPermission(user, "crm") && (
+          <NavLink href="/honorarios" icon={DollarSign} label={t("nav.honorarios")} />
+        )}
+
+        {(user?.role === "admin" || user?.role === "manager") ? (
+          <ExpandableNav href="/configuracoes" icon={Settings2} label={t("nav.configuracoes")} activePaths={["/configuracoes", "/connectors", "/users", "/error-reports"]}>
+            <SubLink href="/configuracoes" icon={Settings2} label="Geral" exact />
             {hasPermission(user, "connectors") && (
-              <NavLink href="/connectors" icon={Plug} label="Connectors" />
+              <SubLink href="/connectors" icon={Plug} label="Connectors" />
             )}
             {hasPermission(user, "users") && (
-              <NavLink href="/users" icon={Users} label="Usuários" />
+              <SubLink href="/users" icon={Users} label="Usuários" />
             )}
-            <NavLink href="/configuracoes" icon={Settings2} label="Configurações" />
-            <NavLink href="/manual" icon={BookOpen} label="Manual" />
-            <NavLink href="/error-reports" icon={Bug} label="Erros & Relatórios" />
-          </>
+            <SubLink href="/error-reports" icon={Bug} label="Erros & Relatórios" />
+          </ExpandableNav>
+        ) : (
+          <NavLink href="/configuracoes" icon={Settings2} label={t("nav.configuracoes")} />
         )}
 
       </div>
 
-      <div className="p-4 border-t border-sidebar-border bg-sidebar-accent/30 shrink-0">
+      <div className="p-4 border-t border-sidebar-border bg-sidebar-accent/30 shrink-0 space-y-3">
+        <div className="flex items-center justify-between px-1">
+          <LanguageSelector />
+          <ThemeToggleButton />
+        </div>
         <div className="flex items-center gap-3">
           <Avatar className="h-9 w-9 border border-sidebar-border shadow-sm shrink-0">
             <AvatarFallback className="bg-sidebar-primary text-white font-bold text-sm">

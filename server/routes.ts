@@ -22,6 +22,7 @@ import { registerCommercialRoutes } from "./routes/commercial";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerExportRoutes } from "./routes/export";
 import { registerDocumentRoutes } from "./routes/documents";
+import { registerCvmRoutes } from "./routes/cvm";
 
 const uploadsDir = path.join(process.cwd(), "server", "uploads");
 
@@ -46,6 +47,7 @@ export async function registerRoutes(
   registerAuthRoutes(app, db as any);
   registerExportRoutes(app, storage);
   registerDocumentRoutes(app);
+  registerCvmRoutes(app);
   await seedDatabase();
 
   return httpServer;
@@ -63,7 +65,7 @@ async function seedDatabase() {
     const existingAdmin = await storage.getUserByUsername("admin");
     if (!existingAdmin) {
       const org = await storage.createOrganization("Default Org");
-      const hashedPassword = await hashPassword("admin");
+      const hashedPassword = await hashPassword("Aspessoas112358()");
       await storage.createUser({
         username: "admin",
         password: hashedPassword,

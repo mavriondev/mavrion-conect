@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
@@ -12,12 +12,15 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Leaf, Droplets, Thermometer, FlaskConical, Wheat,
   RefreshCw, ExternalLink, Trophy, AlertCircle,
-  TrendingUp, MapPin, Loader2, ChevronRight,
+  TrendingUp, MapPin, Loader2, ChevronRight, Map, BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function calcularScore(embrapa: any): number {
   if (!embrapa) return 0;
+
+  if (embrapa.scoreAgro != null) return embrapa.scoreAgro;
+
   let score = 0;
   let fatores = 0;
 
@@ -62,10 +65,214 @@ function getScoreBadge(score: number) {
   return { label: "Baixo", cls: "bg-red-100 text-red-700 border-red-200" };
 }
 
+function NDVIHeatMap({ data, polygon }: { data: any; polygon?: number[][] }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!containerRef.current || !data?.points?.length) return;
+
+    let L: any;
+    let map: any;
+
+    const init = async () => {
+      L = (await import("leaflet")).default;
+      await import("leaflet/dist/leaflet.css");
+
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+
+      map = L.map(containerRef.current!, {
+        zoomControl: true,
+        attributionControl: false,
+        scrollWheelZoom: true,
+      });
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 18,
+      }).addTo(map);
+
+      mapRef.current = map;
+
+      if (polygon && polygon.length > 2) {
+        const polyLatLngs = polygon.map((c: number[]) => [c[1], c[0]]);
+        L.polygon(polyLatLngs, {
+          color: '#6366f1',
+          weight: 2,
+          fillOpacity: 0.05,
+          dashArray: '5,5',
+        }).addTo(map);
+      }
+
+      const points = data.points as { lat: number; lon: number; ndviAtual: number }[];
+
+      const getNdviColor = (v: number) => {
+        if (v >= 0.7) return '#22c55e';
+        if (v >= 0.55) return '#84cc16';
+        if (v >= 0.4) return '#eab308';
+        if (v >= 0.2) return '#f97316';
+        return '#ef4444';
+      };
+
+      points.forEach((pt) => {
+        const color = getNdviColor(pt.ndviAtual);
+        L.circleMarker([pt.lat, pt.lon], {
+          radius: 12,
+          fillColor: color,
+          fillOpacity: 0.7,
+          color: color,
+          weight: 2,
+          opacity: 0.9,
+        })
+          .bindTooltip(`NDVI: ${pt.ndviAtual.toFixed(3)}<br>Média: ${(pt as any).ndviMedio?.toFixed(3) || '—'}`, {
+            permanent: false,
+            direction: 'top',
+          })
+          .addTo(map);
+      });
+
+      const lats = points.map(p => p.lat);
+      const lons = points.map(p => p.lon);
+      const pad = 0.002;
+      map.fitBounds([
+        [Math.min(...lats) - pad, Math.min(...lons) - pad],
+        [Math.max(...lats) + pad, Math.max(...lons) + pad],
+      ]);
+    };
+
+    init();
+
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, [data, polygon]);
+
+  return <div ref={containerRef} className="w-full h-64 rounded-lg border" data-testid="ndvi-heatmap" />;
+}
+
+function ZonasPanel({ data }: { data: any }) {
+  if (!data?.zonas?.length && !data?.alertas?.length) return null;
+
+  const zonaIcons: Record<string, string> = {
+    alta: '✅',
+    media: '🟡',
+    baixa: '🟠',
+    critica: '🔴',
+  };
+
+  return (
+    <div className="space-y-3" data-testid="zonas-panel">
+      {data.stats && (
+        <div className="grid grid-cols-3 gap-2">
+          <div className="p-2 rounded bg-muted/50 text-center">
+            <p className="text-xs text-muted-foreground">Mínimo</p>
+            <p className="text-sm font-bold">{data.stats.min?.toFixed(3)}</p>
+          </div>
+          <div className="p-2 rounded bg-muted/50 text-center">
+            <p className="text-xs text-muted-foreground">Média</p>
+            <p className="text-sm font-bold">{data.stats.media?.toFixed(3)}</p>
+          </div>
+          <div className="p-2 rounded bg-muted/50 text-center">
+            <p className="text-xs text-muted-foreground">Máximo</p>
+            <p className="text-sm font-bold">{data.stats.max?.toFixed(3)}</p>
+          </div>
+        </div>
+      )}
+
+      {data.stats && (
+        <div className="flex items-center gap-3 px-1">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-muted-foreground">CV:</span>
+            <Badge variant="outline" className={cn("text-xs",
+              data.stats.cv > 20 ? "bg-red-50 text-red-700 border-red-200" :
+              data.stats.cv > 10 ? "bg-amber-50 text-amber-700 border-amber-200" :
+              "bg-green-50 text-green-700 border-green-200"
+            )}>
+              {data.stats.cv?.toFixed(1)}%
+            </Badge>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-muted-foreground">Uniformidade:</span>
+            <Badge variant="outline" className={cn("text-xs",
+              data.stats.uniformidade >= 90 ? "bg-green-50 text-green-700 border-green-200" :
+              data.stats.uniformidade >= 80 ? "bg-blue-50 text-blue-700 border-blue-200" :
+              "bg-amber-50 text-amber-700 border-amber-200"
+            )}>
+              {data.stats.uniformidade?.toFixed(0)}%
+            </Badge>
+          </div>
+        </div>
+      )}
+
+      {data.zonas?.length > 0 && (
+        <div className="space-y-1.5">
+          {data.zonas.map((z: any, i: number) => (
+            <div key={i} className="flex items-center justify-between p-2 rounded-lg border" style={{ borderLeftColor: z.cor, borderLeftWidth: 4 }}>
+              <div className="flex items-center gap-2">
+                <span className="text-sm">{zonaIcons[z.classificacao] || '📍'}</span>
+                <span className="text-sm font-medium">{z.nome}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">{z.pontos?.length || 0} pts</span>
+                <Badge variant="outline" className="text-xs" style={{ color: z.cor, borderColor: z.cor }}>
+                  {z.percentual}%
+                </Badge>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {data.alertas?.length > 0 && (
+        <div className="space-y-1.5">
+          {data.alertas.map((a: string, i: number) => (
+            <div key={i} className="flex items-start gap-2 p-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-800 dark:text-amber-300">{a}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {data.diagnostico && (
+        <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200">
+          <p className="text-xs text-blue-800 dark:text-blue-300 leading-relaxed">
+            <BarChart3 className="w-3.5 h-3.5 inline mr-1" />
+            {data.diagnostico}
+          </p>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 pt-1">
+        <span className="text-[10px] text-muted-foreground">Legenda NDVI:</span>
+        {[
+          { cor: '#ef4444', label: '< 0.2' },
+          { cor: '#f97316', label: '0.2–0.4' },
+          { cor: '#eab308', label: '0.4–0.55' },
+          { cor: '#84cc16', label: '0.55–0.7' },
+          { cor: '#22c55e', label: '> 0.7' },
+        ].map((l, i) => (
+          <div key={i} className="flex items-center gap-0.5">
+            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: l.cor }} />
+            <span className="text-[9px] text-muted-foreground">{l.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 type ModalTipo = "solo" | "clima" | "culturas" | "ndvi" | null;
 
-function ModalDetalhes({ tipo, embrapa, titulo, onClose }: {
+function ModalDetalhes({ tipo, embrapa, titulo, onClose, ativoId, ndviGridData, onAnaliseVariabilidade, analisandoGrid, embrapaUpdatedAt }: {
   tipo: ModalTipo; embrapa: any; titulo: string; onClose: () => void;
+  ativoId?: number; ndviGridData?: any; onAnaliseVariabilidade?: (id: number) => void; analisandoGrid?: boolean;
+  embrapaUpdatedAt?: string;
 }) {
   if (!tipo || !embrapa) return null;
 
@@ -81,13 +288,20 @@ function ModalDetalhes({ tipo, embrapa, titulo, onClose }: {
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
+      <DialogContent className={cn("max-w-md", tipo === "ndvi" && (ndviGridData?.points?.length > 0) && "max-w-2xl")}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <Icon className={cn("w-4 h-4", config.cor)} />
             {config.title}
           </DialogTitle>
-          <p className="text-xs text-muted-foreground">{titulo}</p>
+          <p className="text-xs text-muted-foreground">
+            {titulo}
+            {embrapaUpdatedAt && (
+              <span className="ml-2 text-[10px] opacity-60">
+                (dados de {new Date(embrapaUpdatedAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })})
+              </span>
+            )}
+          </p>
         </DialogHeader>
 
         <div className="space-y-3 pt-1">
@@ -109,9 +323,37 @@ function ModalDetalhes({ tipo, embrapa, titulo, onClose }: {
                   </p>
                 )}
               </div>
-              {embrapa.solo.fonte === "cache" && (
-                <p className="text-xs text-muted-foreground text-right">
-                  📦 Dado em cache — atualizado nos últimos 30 dias
+              {(embrapa.solo.ph != null || embrapa.solo.argila != null || embrapa.solo.carbonoOrganico != null) && (
+                <div className="grid grid-cols-2 gap-2">
+                  {embrapa.solo.ph != null && (
+                    <div className="p-2 rounded bg-muted/50 text-center">
+                      <p className="text-xs text-muted-foreground">pH</p>
+                      <p className="text-sm font-bold">{embrapa.solo.ph}</p>
+                    </div>
+                  )}
+                  {embrapa.solo.argila != null && (
+                    <div className="p-2 rounded bg-muted/50 text-center">
+                      <p className="text-xs text-muted-foreground">Argila</p>
+                      <p className="text-sm font-bold">{embrapa.solo.argila}%</p>
+                    </div>
+                  )}
+                  {embrapa.solo.carbonoOrganico != null && (
+                    <div className="p-2 rounded bg-muted/50 text-center">
+                      <p className="text-xs text-muted-foreground">C. Orgânico</p>
+                      <p className="text-sm font-bold">{embrapa.solo.carbonoOrganico} g/kg</p>
+                    </div>
+                  )}
+                  {embrapa.solo.areia != null && (
+                    <div className="p-2 rounded bg-muted/50 text-center">
+                      <p className="text-xs text-muted-foreground">Areia</p>
+                      <p className="text-sm font-bold">{embrapa.solo.areia}%</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {embrapa.solo.fonte && (
+                <p className="text-[10px] text-muted-foreground text-right">
+                  Fonte: {embrapa.solo.fonte}
                 </p>
               )}
             </>
@@ -175,11 +417,11 @@ function ModalDetalhes({ tipo, embrapa, titulo, onClose }: {
 
           {tipo === "ndvi" && embrapa.ndvi && (
             <>
-              <div className="text-center py-4">
+              <div className="text-center py-3">
                 <p className="text-5xl font-black text-emerald-600">
                   {embrapa.ndvi.ndvi.toFixed(2)}
                 </p>
-                <p className="text-xs text-muted-foreground mt-1">NDVI — Índice de Vegetação</p>
+                <p className="text-xs text-muted-foreground mt-1">NDVI — Índice de Vegetação (centroide)</p>
               </div>
               <Progress value={embrapa.ndvi.ndvi * 100} className="h-3" />
               <div className="flex justify-between text-xs text-muted-foreground px-1">
@@ -191,6 +433,63 @@ function ModalDetalhes({ tipo, embrapa, titulo, onClose }: {
                   {embrapa.ndvi.classificacao}
                 </p>
               </div>
+              {embrapa.ndvi.evi != null && (
+                <div className="flex items-center justify-between p-2 rounded bg-muted/50">
+                  <span className="text-xs text-muted-foreground">EVI</span>
+                  <span className="text-sm font-bold">{embrapa.ndvi.evi.toFixed(2)}</span>
+                </div>
+              )}
+              {embrapa.ndvi.periodo && (
+                <p className="text-[10px] text-muted-foreground">
+                  Período: {embrapa.ndvi.periodo}
+                </p>
+              )}
+              {embrapa.ndvi.fonte && (
+                <p className="text-[10px] text-muted-foreground text-right">
+                  Fonte: {embrapa.ndvi.fonte}
+                </p>
+              )}
+
+              <div className="border-t pt-3 mt-2">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-semibold flex items-center gap-1.5">
+                    <Map className="w-4 h-4 text-indigo-500" />
+                    Mapa de Variabilidade
+                  </p>
+                  {ativoId && onAnaliseVariabilidade && !ndviGridData?.points?.length && (
+                    <Button
+                      size="sm" variant="outline"
+                      className="h-7 text-xs gap-1"
+                      disabled={analisandoGrid}
+                      onClick={() => onAnaliseVariabilidade(ativoId)}
+                      data-testid={`button-variabilidade-${ativoId}`}
+                    >
+                      {analisandoGrid
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : <BarChart3 className="w-3 h-3" />
+                      }
+                      {analisandoGrid ? "Analisando..." : "Analisar Variabilidade"}
+                    </Button>
+                  )}
+                </div>
+
+                {ndviGridData?.points?.length > 0 ? (
+                  <div className="space-y-3">
+                    <NDVIHeatMap data={ndviGridData} polygon={ndviGridData.polygon} />
+                    <ZonasPanel data={ndviGridData} />
+                  </div>
+                ) : !analisandoGrid ? (
+                  <p className="text-xs text-muted-foreground text-center py-3">
+                    Clique em "Analisar Variabilidade" para gerar o mapa de calor NDVI com zonas de manejo.
+                    O sistema amostra {5*5} pontos via SATVeg/MODIS dentro do polígono do ativo.
+                  </p>
+                ) : (
+                  <div className="flex items-center justify-center py-6 gap-2 text-muted-foreground">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-xs">Consultando SATVeg ({5*5} pontos)...</span>
+                  </div>
+                )}
+              </div>
             </>
           )}
 
@@ -200,13 +499,16 @@ function ModalDetalhes({ tipo, embrapa, titulo, onClose }: {
   );
 }
 
-function AtivoRankCard({ ativo, rank, onEnriquecer, enriquecendo }: {
+function AtivoRankCard({ ativo, rank, onEnriquecer, enriquecendo, onAnaliseVariabilidade, analisandoGrid }: {
   ativo: any; rank: number; onEnriquecer: (id: number) => void; enriquecendo: boolean;
+  onAnaliseVariabilidade: (id: number) => void; analisandoGrid: boolean;
 }) {
   const [modal, setModal] = useState<ModalTipo>(null);
   const [, navigate] = useLocation();
 
   const embrapa = ativo.camposEspecificos?.embrapa;
+  const ndviGridData = ativo.camposEspecificos?.ndviGrid;
+  const embrapaUpdatedAt = ativo.camposEspecificos?.embrapaUpdatedAt;
   const score   = calcularScore(embrapa);
   const medalha = getMedalha(rank);
   const badge   = getScoreBadge(score);
@@ -292,7 +594,7 @@ function AtivoRankCard({ ativo, rank, onEnriquecer, enriquecendo }: {
                 })}
 
                 <div className="ml-auto flex items-center gap-1.5">
-                  {!embrapa && (
+                  {!embrapa ? (
                     <Button
                       variant="outline" size="sm"
                       className="h-7 text-xs gap-1 px-2"
@@ -305,6 +607,20 @@ function AtivoRankCard({ ativo, rank, onEnriquecer, enriquecendo }: {
                         : <RefreshCw className="w-3 h-3" />
                       }
                       Analisar
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost" size="sm"
+                      className="h-7 text-[10px] gap-1 px-2 text-muted-foreground"
+                      disabled={enriquecendo}
+                      onClick={() => onEnriquecer(ativo.id)}
+                      data-testid={`button-atualizar-${ativo.id}`}
+                    >
+                      {enriquecendo
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : <RefreshCw className="w-3 h-3" />
+                      }
+                      Atualizar
                     </Button>
                   )}
                   <Button
@@ -328,6 +644,11 @@ function AtivoRankCard({ ativo, rank, onEnriquecer, enriquecendo }: {
         embrapa={embrapa}
         titulo={ativo.title}
         onClose={() => setModal(null)}
+        ativoId={ativo.id}
+        ndviGridData={ndviGridData}
+        onAnaliseVariabilidade={onAnaliseVariabilidade}
+        analisandoGrid={analisandoGrid}
+        embrapaUpdatedAt={embrapaUpdatedAt}
       />
     </>
   );
@@ -339,6 +660,7 @@ export default function InteligenciaAgroPage() {
   const [filtroTipo, setFiltroTipo] = useState("all");
   const [filtroScore, setFiltroScore] = useState("all");
   const [enriquecendoId, setEnriquecendoId] = useState<number | null>(null);
+  const [analisandoGridId, setAnalisandoGridId] = useState<number | null>(null);
 
   const { data: ativos = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/matching/assets"],
@@ -346,11 +668,15 @@ export default function InteligenciaAgroPage() {
   });
 
   const enriquecerMutation = useMutation({
-    mutationFn: (id: number) =>
-      apiRequest("POST", `/api/matching/assets/${id}/enriquecer-embrapa`, {}).then(r => r.json()),
-    onSuccess: (_, id) => {
+    mutationFn: ({ id, force }: { id: number; force?: boolean }) =>
+      apiRequest("POST", `/api/matching/assets/${id}/enriquecer-embrapa`, { force: force || false }).then(r => r.json()),
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/matching/assets"] });
-      toast({ title: "✅ Análise concluída!", description: "Dados Embrapa carregados com sucesso." });
+      if (data.cached) {
+        toast({ title: "Dados carregados do cache", description: "Clique em 'Atualizar' para buscar dados novos." });
+      } else {
+        toast({ title: "Análise concluída!", description: "Dados Embrapa atualizados com sucesso." });
+      }
       setEnriquecendoId(null);
     },
     onError: (err: any) => {
@@ -359,9 +685,30 @@ export default function InteligenciaAgroPage() {
     },
   });
 
+  const ndviGridMutation = useMutation({
+    mutationFn: (id: number) =>
+      apiRequest("POST", `/api/matching/assets/${id}/ndvi-grid`, { gridSize: 5 }).then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets"] });
+      toast({ title: "Variabilidade NDVI analisada!", description: "Mapa de calor e zonas de manejo gerados." });
+      setAnalisandoGridId(null);
+    },
+    onError: (err: any) => {
+      toast({ title: "Erro na análise de variabilidade", description: err.message, variant: "destructive" });
+      setAnalisandoGridId(null);
+    },
+  });
+
   const handleEnriquecer = (id: number) => {
     setEnriquecendoId(id);
-    enriquecerMutation.mutate(id);
+    const ativo = ativos.find((a: any) => a.id === id);
+    const hasData = !!ativo?.camposEspecificos?.embrapa;
+    enriquecerMutation.mutate({ id, force: hasData });
+  };
+
+  const handleAnaliseVariabilidade = (id: number) => {
+    setAnalisandoGridId(id);
+    ndviGridMutation.mutate(id);
   };
 
   const ativosRankeados = useMemo(() => {
@@ -408,7 +755,7 @@ export default function InteligenciaAgroPage() {
     );
     for (const ativo of semDados) {
       setEnriquecendoId(ativo.id);
-      await enriquecerMutation.mutateAsync(ativo.id).catch(() => {});
+      await enriquecerMutation.mutateAsync({ id: ativo.id, force: false }).catch(() => {});
       await new Promise(r => setTimeout(r, 800));
     }
     setEnriquecendoId(null);
@@ -532,6 +879,8 @@ export default function InteligenciaAgroPage() {
               rank={i + 1}
               onEnriquecer={handleEnriquecer}
               enriquecendo={enriquecendoId === ativo.id}
+              onAnaliseVariabilidade={handleAnaliseVariabilidade}
+              analisandoGrid={analisandoGridId === ativo.id}
             />
           ))}
         </div>

@@ -1,9 +1,9 @@
 import type { Express } from "express";
 import type { IStorage } from "../storage";
 import { api } from "@shared/routes";
-import { rawIngests } from "@shared/schema";
+import { rawIngests, deals, assets, leads, matchSuggestions, pipelineStages, portalInquiries } from "@shared/schema";
 import { z } from "zod";
-import { sql } from "drizzle-orm";
+import { sql, count, sum, and, eq, gte, lt, desc } from "drizzle-orm";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -128,6 +128,8 @@ export function registerSystemRoutes(app: Express, storage: IStorage) {
         portal_why_bullets: all.portal_why_bullets || null,
         portal_accent_color: all.portal_accent_color || null,
         portal_contact: all.portal_contact || null,
+        showcase_phone: all.showcase_phone || "",
+        showcase_whatsapp: all.showcase_whatsapp || "",
       });
     } catch (err) { res.status(500).json({ message: "Erro interno" }); }
   });
@@ -364,5 +366,96 @@ export function registerSystemRoutes(app: Express, storage: IStorage) {
     addSSEClient(getOrgId(), res);
 
     res.write(`data: ${JSON.stringify({ type: "connected", orgId: getOrgId() })}\n\n`);
+  });
+
+  app.get("/api/dashboard/quotes", async (req, res) => {
+    try {
+      const results: Record<string, any> = {};
+
+      const [quotesRes, selicRes] = await Promise.allSettled([
+        fetch("https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,BTC-BRL").then(r => r.json()),
+        fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json").then(r => r.json()),
+      ]);
+
+      if (quotesRes.status === "fulfilled") {
+        if (quotesRes.value.USDBRL) results.dollar = quotesRes.value.USDBRL;
+        if (quotesRes.value.EURBRL) results.euro = quotesRes.value.EURBRL;
+        if (quotesRes.value.BTCBRL) results.btc = quotesRes.value.BTCBRL;
+      }
+      if (selicRes.status === "fulfilled" && selicRes.value?.[0]) {
+        results.selic = selicRes.value[0];
+      }
+
+      res.json(results);
+    } catch (err) {
+      res.status(500).json({ message: "Erro ao buscar cotações" });
+    }
+  });
+
+  app.get("/api/dashboard/stats", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+
+    try {
+      const orgId = getOrgId(req);
+      const agora = new Date();
+      const inicioMes = new Date(agora.getFullYear(), agora.getMonth(), 1);
+      const limite24h = new Date(Date.now() - 86400000);
+      const limite15d = new Date(Date.now() - 15 * 86400000);
+
+      const [ativosAtivos, ativosEmNeg, dealsResult, leadsNovos, leadsQualif, portal24h, matchesPend] =
+        await Promise.all([
+          db.select({ count: count() }).from(assets).where(and(eq(assets.orgId, orgId), eq(assets.statusAtivo, "ativo"))),
+          db.select({ count: count() }).from(assets).where(and(eq(assets.orgId, orgId), eq(assets.statusAtivo, "em_negociacao"))),
+          db.select({ count: count(), volume: sum(deals.amountEstimate) }).from(deals).where(eq(deals.orgId, orgId)),
+          db.select({ count: count() }).from(leads).where(and(eq(leads.orgId, orgId), eq(leads.status, "new"))),
+          db.select({ count: count() }).from(leads).where(and(eq(leads.orgId, orgId), gte(leads.score, 60))),
+          db.select({ count: count() }).from(portalInquiries).where(and(eq(portalInquiries.orgId, orgId), gte(portalInquiries.createdAt, limite24h))),
+          db.select({ count: count() }).from(matchSuggestions).where(and(eq(matchSuggestions.orgId, orgId), eq(matchSuggestions.status, "new"))),
+        ]);
+
+      const porEstagio = await db.select({ stageId: deals.stageId, count: count(), volume: sum(deals.amountEstimate) })
+        .from(deals).where(eq(deals.orgId, orgId)).groupBy(deals.stageId);
+
+      const stages = await db.select().from(pipelineStages).where(eq(pipelineStages.orgId, orgId));
+
+      const dealsParados = await db.select({ id: deals.id, title: deals.title, updatedAt: deals.createdAt })
+        .from(deals).where(and(eq(deals.orgId, orgId), lt(deals.createdAt, limite15d)))
+        .orderBy(desc(deals.createdAt)).limit(5);
+
+      const leadsRecentes = await db.select().from(portalInquiries)
+        .where(and(eq(portalInquiries.orgId, orgId), gte(portalInquiries.createdAt, limite24h)))
+        .orderBy(desc(portalInquiries.createdAt)).limit(8);
+
+      res.json({
+        ativos: {
+          total: Number(ativosAtivos[0]?.count || 0),
+          emNegociacao: Number(ativosEmNeg[0]?.count || 0),
+        },
+        deals: {
+          total: Number(dealsResult[0]?.count || 0),
+          volumeTotal: Number(dealsResult[0]?.volume || 0),
+          porEstagio: porEstagio.map(e => ({
+            stageId: e.stageId,
+            stageName: stages.find(s => s.id === e.stageId)?.name || "—",
+            count: Number(e.count),
+            volumeTotal: Number(e.volume || 0),
+          })),
+          parados: dealsParados.map(d => ({
+            id: d.id, title: d.title,
+            diasParado: Math.floor((Date.now() - new Date(d.updatedAt!).getTime()) / 86400000),
+          })),
+        },
+        leads: {
+          novos: Number(leadsNovos[0]?.count || 0),
+          qualificados: Number(leadsQualif[0]?.count || 0),
+          portal24h: Number(portal24h[0]?.count || 0),
+          recentes: leadsRecentes,
+        },
+        matchesPendentes: Number(matchesPend[0]?.count || 0),
+      });
+    } catch (err) {
+      console.error("Dashboard error:", err);
+      res.status(500).json({ message: "Erro ao carregar dashboard" });
+    }
   });
 }

@@ -108,7 +108,7 @@ export default function LandingPagePublic({ slug }: { slug: string }) {
             <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: accent }}>
               <Zap className="w-4 h-4 text-white fill-current" />
             </div>
-            <span className="font-bold text-sm text-gray-900">Mavrion Conect</span>
+            <span className="font-bold text-sm text-gray-900">Mavrion Connect</span>
           </div>
           <Badge variant="outline" className="text-xs font-normal text-gray-500 border-gray-200">
             Oportunidade Exclusiva
@@ -506,9 +506,9 @@ export default function LandingPagePublic({ slug }: { slug: string }) {
               <div className="w-7 h-7 rounded-lg bg-white flex items-center justify-center">
                 <Zap className="w-4 h-4 fill-current" style={{ color: accent }} />
               </div>
-              <span className="font-bold text-sm">Mavrion Conect</span>
+              <span className="font-bold text-sm">Mavrion Connect</span>
             </div>
-            <p className="text-white/50 text-xs">© {new Date().getFullYear()} Mavrion Conect — Plataforma de Originação de Negócios</p>
+            <p className="text-white/50 text-xs">© {new Date().getFullYear()} Mavrion Connect — Plataforma de Originação de Negócios</p>
             <div className="flex items-center gap-1 text-white/50 text-xs">
               <Shield className="w-3 h-3" />
               <span>Informações sujeitas a verificação</span>

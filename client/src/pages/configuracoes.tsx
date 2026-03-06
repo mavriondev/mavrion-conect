@@ -14,6 +14,7 @@ import {
 import {
   Settings, Upload, Building2, HardDrive, CheckCircle2, XCircle,
   Link, Image, Save, ExternalLink, Crop, ZoomIn, RotateCw, Trash2,
+  Phone, MessageCircle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -28,12 +29,20 @@ export default function ConfiguracoesPage() {
 
   const [companyName, setCompanyName] = useState("");
   const [currentLogo, setCurrentLogo] = useState("");
+  const [showcasePhone, setShowcasePhone] = useState("");
+  const [showcaseWhatsapp, setShowcaseWhatsapp] = useState("");
+  const [showcasePhoneLoaded, setShowcasePhoneLoaded] = useState(false);
 
   if (settings && companyName === "" && (settings as any).company_name) {
     setCompanyName((settings as any).company_name || "");
   }
   if (settings && currentLogo === "" && (settings as any).logo_url) {
     setCurrentLogo((settings as any).logo_url || "");
+  }
+  if (settings && !showcasePhoneLoaded) {
+    setShowcasePhone((settings as any).showcase_phone || "");
+    setShowcaseWhatsapp((settings as any).showcase_whatsapp || "");
+    setShowcasePhoneLoaded(true);
   }
 
   const saveSetting = async (key: string, value: any) => {
@@ -96,6 +105,54 @@ export default function ConfiguracoesPage() {
             }}
             onRemoveLogo={removeLogo}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Phone className="w-4 h-4 text-muted-foreground" /> Contato da Vitrine
+          </CardTitle>
+          <CardDescription>Telefone e WhatsApp exibidos na página pública de vitrine dos ativos</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="space-y-2">
+            <Label>Telefone de contato</Label>
+            <div className="flex gap-2">
+              <Input
+                value={showcasePhone}
+                onChange={e => setShowcasePhone(e.target.value)}
+                placeholder="Ex: (11) 99999-9999"
+                data-testid="input-showcase-phone"
+              />
+              <Button variant="outline" onClick={() => saveSetting("showcase_phone", showcasePhone)} data-testid="btn-save-showcase-phone">
+                <Save className="w-4 h-4 mr-1.5" /> Salvar
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Número de telefone exibido na vitrine pública do ativo
+            </p>
+          </div>
+
+          <Separator />
+
+          <div className="space-y-2">
+            <Label>WhatsApp</Label>
+            <div className="flex gap-2">
+              <Input
+                value={showcaseWhatsapp}
+                onChange={e => setShowcaseWhatsapp(e.target.value)}
+                placeholder="Ex: 5511999999999"
+                data-testid="input-showcase-whatsapp"
+              />
+              <Button variant="outline" onClick={() => saveSetting("showcase_whatsapp", showcaseWhatsapp)} data-testid="btn-save-showcase-whatsapp">
+                <Save className="w-4 h-4 mr-1.5" /> Salvar
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Número do WhatsApp com código do país (sem +). Ex: 5511999999999. Usado no botão de contato da vitrine.
+            </p>
+          </div>
         </CardContent>
       </Card>
 

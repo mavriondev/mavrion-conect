@@ -1,82 +1,79 @@
+import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { StatCard } from "@/components/stat-card";
+import { useLocation } from "wouter";
+import { format, formatDistanceToNow } from "date-fns";
+import { useI18n, getDateLocale, formatDatePattern } from "@/lib/i18n";
 import {
-  Magnet, Briefcase, Layers, Zap, Building2, ArrowRight, CalendarDays,
-  TreePine, Pickaxe, Home, Factory, Wheat, DollarSign, Target, TrendingUp,
-  BarChart3, AlertTriangle, Clock,
+  TreePine, Briefcase, DollarSign, Zap, Clock, Users, ArrowRight,
+  TrendingUp, Target, BarChart3, Layers, Building2,
+  AlertTriangle, Calendar, MapPin, Star, Activity,
+  Sun, CloudRain, Wind, Thermometer, Droplets, ArrowUpRight, ArrowDownRight,
+  Globe, Percent, Hash,
 } from "lucide-react";
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, AreaChart, Area, Cell,
-} from "recharts";
+import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Link } from "wouter";
-import { cn } from "@/lib/utils";
-import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
+import { Button } from "@/components/ui/button";
+import {
+  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from "recharts";
 
-const DIAS_SEMANA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const CHART_COLORS = [
+  "hsl(var(--chart-1))", "hsl(var(--chart-2))", "hsl(var(--chart-3))",
+  "hsl(var(--chart-4))", "hsl(var(--chart-5))",
+];
 
-function buildWeeklyData(items: any[], dateField = "createdAt") {
-  const today = new Date();
-  const data = DIAS_SEMANA.map((name, i) => {
-    const d = new Date(today);
-    d.setDate(today.getDate() - (6 - i));
-    const dateStr = d.toISOString().slice(0, 10);
-    return { name, value: 0, date: dateStr };
-  });
-  for (const item of items) {
-    if (!item[dateField]) continue;
-    const itemDate = new Date(item[dateField]).toISOString().slice(0, 10);
-    const entry = data.find(d => d.date === itemDate);
-    if (entry) entry.value++;
-  }
-  return data;
+const tooltipStyle = {
+  backgroundColor: "hsl(var(--card))",
+  borderColor: "hsl(var(--border))",
+  borderRadius: "8px",
+  fontSize: "12px",
+};
+
+function fmt(v: number) {
+  if (v >= 1_000_000) return `R$ ${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `R$ ${(v / 1_000).toFixed(0)}k`;
+  return `R$ ${v.toLocaleString("pt-BR")}`;
 }
 
-const PRIORITY_COLOR: Record<string, string> = {
-  urgent: "bg-red-500", high: "bg-amber-500", medium: "bg-blue-500", low: "bg-slate-400",
+const WMO_KEYS: Record<number, string> = {
+  0: "dash.clearSky",
+  1: "dash.partlyCloudy",
+  2: "dash.cloudy",
+  3: "dash.overcast",
+  45: "dash.fog",
+  51: "dash.lightDrizzle",
+  53: "dash.drizzle",
+  61: "dash.lightRain",
+  63: "dash.moderateRain",
+  65: "dash.heavyRain",
+  80: "dash.showers",
+  95: "dash.thunderstorm",
 };
 
-const PRIORITY_CHART_COLOR: Record<string, string> = {
-  urgent: "#ef4444", high: "#f59e0b", medium: "#3b82f6", low: "#94a3b8",
+const WMO_ICON: Record<number, typeof Sun> = {
+  0: Sun, 1: Sun, 2: CloudRain, 3: CloudRain, 45: CloudRain,
+  51: CloudRain, 53: CloudRain, 61: CloudRain, 63: CloudRain,
+  65: CloudRain, 80: CloudRain, 95: CloudRain,
 };
-
-const PRIORITY_LABEL: Record<string, string> = {
-  urgent: "Urgente", high: "Alta", medium: "Média", low: "Baixa",
-};
-
-const TIPO_ATIVO: Record<string, { label: string; color: string }> = {
-  TERRA:           { label: "Terras",    color: "text-green-600 bg-green-50 dark:bg-green-900/20" },
-  MINA:            { label: "Mineração", color: "text-orange-600 bg-orange-50 dark:bg-orange-900/20" },
-  NEGOCIO:         { label: "M&A",       color: "text-blue-600 bg-blue-50 dark:bg-blue-900/20" },
-  FII_CRI:         { label: "FII/CRI",   color: "text-purple-600 bg-purple-50 dark:bg-purple-900/20" },
-  DESENVOLVIMENTO: { label: "Desenv.",   color: "text-pink-600 bg-pink-50 dark:bg-pink-900/20" },
-  AGRO:            { label: "Agro",      color: "text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20" },
-  ENERGIA:         { label: "Energia",   color: "text-cyan-600 bg-cyan-50 dark:bg-cyan-900/20" },
-};
-
-function formatBRL(value: number): string {
-  if (value >= 1_000_000) return `R$ ${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `R$ ${(value / 1_000).toFixed(0)}K`;
-  return `R$ ${value.toFixed(0)}`;
-}
 
 export default function Dashboard() {
-  const { data: stats, isLoading: statsLoading } = useQuery({
-    queryKey: ["/api/stats/dashboard"],
-    queryFn: () => apiRequest("GET", "/api/stats/dashboard").then(r => {
-      if (!r.ok) throw new Error("Falha ao carregar estatísticas");
-      return r.json();
-    }),
-    retry: 1,
-  });
+  const [, navigate] = useLocation();
+  const [now, setNow] = useState(new Date());
+  const { t, lang } = useI18n();
+  const locale = getDateLocale(lang);
 
-  const { data: recentDeals = [] } = useQuery({
-    queryKey: ["/api/crm/deals"],
-    queryFn: () => apiRequest("GET", "/api/crm/deals").then(r => r.json()),
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const { data: s, isLoading } = useQuery({
+    queryKey: ["/api/dashboard/stats"],
+    queryFn: () => apiRequest("GET", "/api/dashboard/stats").then(r => r.json()),
+    refetchInterval: 60000,
   });
 
   const { data: companies = [] } = useQuery({
@@ -84,358 +81,717 @@ export default function Dashboard() {
     queryFn: () => apiRequest("GET", "/api/crm/companies").then(r => r.json()),
   });
 
-  const { data: assets = [] } = useQuery({
+  const { data: allDeals = [] } = useQuery({
+    queryKey: ["/api/crm/deals"],
+    queryFn: () => apiRequest("GET", "/api/crm/deals").then(r => r.json()),
+  });
+
+  const { data: allAssets = [] } = useQuery({
     queryKey: ["/api/matching/assets"],
     queryFn: () => apiRequest("GET", "/api/matching/assets").then(r => r.json()),
   });
 
-  const weeklyDeals = buildWeeklyData(recentDeals as any[], "createdAt");
-  const weeklyCompanies = buildWeeklyData(companies as any[], "createdAt");
+  const { data: logs = [] } = useQuery({
+    queryKey: ["/api/audit-logs"],
+    queryFn: () => apiRequest("GET", "/api/audit-logs?limit=20").then(r => r.json()),
+  });
 
-  const latestDeals = [...(recentDeals as any[])]
-    .sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())
-    .slice(0, 6);
+  const [dollar, setDollar] = useState<any>(null);
+  const [euro, setEuro] = useState<any>(null);
+  const [btc, setBtc] = useState<any>(null);
+  const [weather, setWeather] = useState<any>(null);
+  const [selic, setSelic] = useState<any>(null);
 
-  const latestCompanies = [...(companies as any[])]
-    .sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())
-    .slice(0, 5);
+  useEffect(() => {
+    apiRequest("GET", "/api/dashboard/quotes")
+      .then(r => r.json())
+      .then(d => {
+        if (d.dollar) setDollar(d.dollar);
+        if (d.euro) setEuro(d.euro);
+        if (d.btc) setBtc(d.btc);
+        if (d.selic) setSelic(d.selic);
+      })
+      .catch(() => {});
 
-  const assetCounts = (assets as any[]).reduce((acc: any, a: any) => {
-    acc[a.type] = (acc[a.type] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
+    fetch("https://api.open-meteo.com/v1/forecast?latitude=-23.55&longitude=-46.63&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=America/Sao_Paulo&forecast_days=3")
+      .then(r => r.json())
+      .then(d => setWeather(d))
+      .catch(() => {});
+  }, []);
 
-  const ruralCount = (assets as any[]).filter((a: any) => {
-    const attrs = a.attributesJson as Record<string, any> | null;
-    return attrs?.carCodImovel;
-  }).length;
+  const monthlyDeals = useMemo(() => {
+    const data: { name: string; count: number; value: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const label = format(d, "MMM", { locale });
+      const matching = (allDeals as any[]).filter(deal => deal.createdAt?.startsWith(key));
+      data.push({
+        name: label,
+        count: matching.length,
+        value: matching.reduce((s: number, deal: any) => s + (deal.amountEstimate || 0), 0),
+      });
+    }
+    return data;
+  }, [allDeals, locale]);
 
-  const priorityData = stats?.dealsPorPrioridade
-    ? Object.entries(stats.dealsPorPrioridade)
-        .filter(([, v]) => (v as number) > 0)
-        .map(([key, value]) => ({
-          name: PRIORITY_LABEL[key] || key,
-          value: value as number,
-          fill: PRIORITY_CHART_COLOR[key] || "#94a3b8",
-        }))
-    : [];
+  const monthlyCompanies = useMemo(() => {
+    const data: { name: string; value: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const label = format(d, "MMM", { locale });
+      data.push({
+        name: label,
+        value: (companies as any[]).filter(c => c.createdAt?.startsWith(key)).length,
+      });
+    }
+    return data;
+  }, [companies, locale]);
 
-  if (statsLoading) {
-    return (
-      <div className="p-4 md:p-8 space-y-6 animate-pulse">
-        <div className="h-10 w-64 bg-muted rounded-lg" />
-        <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-          {[1, 2, 3, 4].map(i => <div key={i} className="h-32 bg-muted rounded-xl" />)}
-        </div>
-        <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-          {[1, 2, 3, 4].map(i => <div key={i} className="h-32 bg-muted rounded-xl" />)}
-        </div>
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div className="h-64 bg-muted rounded-xl" />
-          <div className="h-64 bg-muted rounded-xl" />
-        </div>
+  const TIPO_LABEL: Record<string, string> = {
+    TERRA: t("dash.lands"), MINA: t("dash.mining"), NEGOCIO: t("dash.ma"),
+    FII_CRI: t("dash.fiiCri"), DESENVOLVIMENTO: t("dash.dev"), AGRO: t("dash.agro"),
+  };
+
+  const assetsByType = useMemo(() => {
+    const grouped: Record<string, number> = {};
+    (allAssets as any[]).forEach(a => {
+      const key = TIPO_LABEL[a.type] || a.type;
+      grouped[key] = (grouped[key] || 0) + 1;
+    });
+    return Object.entries(grouped).map(([name, value]) => ({ name, value }));
+  }, [allAssets, lang]);
+
+  const dealsByPriority = useMemo(() => {
+    const grouped: Record<string, number> = {};
+    grouped[t("dash.priorityHigh")] = 0;
+    grouped[t("dash.priorityMedium")] = 0;
+    grouped[t("dash.priorityLow")] = 0;
+    (allDeals as any[]).forEach(d => {
+      if (d.priority === "high" || d.priority === "urgent") grouped[t("dash.priorityHigh")]++;
+      else if (d.priority === "medium") grouped[t("dash.priorityMedium")]++;
+      else grouped[t("dash.priorityLow")]++;
+    });
+    return Object.entries(grouped).map(([name, value]) => ({ name, value }));
+  }, [allDeals, lang]);
+
+  const assetsByState = useMemo(() => {
+    const grouped: Record<string, number> = {};
+    (allAssets as any[]).forEach(a => {
+      const uf = a.estado || "N/I";
+      grouped[uf] = (grouped[uf] || 0) + 1;
+    });
+    return Object.entries(grouped)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  }, [allAssets]);
+
+  const totalPortfolioValue = useMemo(() =>
+    (allAssets as any[]).reduce((s, a) => s + (a.priceAsking || 0), 0),
+    [allAssets]
+  );
+
+  const totalArea = useMemo(() =>
+    (allAssets as any[]).reduce((s, a) => s + (a.areaHa || 0), 0),
+    [allAssets]
+  );
+
+  const avgGeoScore = useMemo(() => {
+    const scored = (allAssets as any[]).filter(a => a.geoScore != null);
+    if (scored.length === 0) return null;
+    return Math.round(scored.reduce((s, a) => s + a.geoScore, 0) / scored.length);
+  }, [allAssets]);
+
+  const closingSoonDeals = useMemo(() =>
+    (allDeals as any[])
+      .filter(d => d.expectedCloseDate)
+      .sort((a, b) => new Date(a.expectedCloseDate).getTime() - new Date(b.expectedCloseDate).getTime())
+      .slice(0, 5),
+    [allDeals]
+  );
+
+  const highPriorityDeals = useMemo(() =>
+    (allDeals as any[])
+      .filter(d => d.priority === "high" || d.priority === "urgent")
+      .slice(0, 5),
+    [allDeals]
+  );
+
+  const maxDeals = Math.max(...(s?.deals?.porEstagio?.map((e: any) => e.count) || [1]), 1);
+
+  if (isLoading) return (
+    <div className="p-6 space-y-4">
+      <div className="h-8 w-48 bg-muted animate-pulse rounded-lg" />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[...Array(4)].map((_, i) => <div key={i} className="h-28 bg-muted animate-pulse rounded-xl" />)}
       </div>
-    );
-  }
+      <div className="grid md:grid-cols-2 gap-4">
+        {[...Array(4)].map((_, i) => <div key={i} className="h-52 bg-muted animate-pulse rounded-xl" />)}
+      </div>
+    </div>
+  );
 
-  const leadsTrend = stats?.crescimentoLeads ?? 0;
-  const leadsTrendStr = leadsTrend > 0 ? `+${leadsTrend}%` : `${leadsTrend}%`;
+  const kpis = [
+    { label: t("dash.availableAssets"), value: s?.ativos?.total ?? 0, sub: `${s?.ativos?.emNegociacao ?? 0} ${t("dash.inNegotiation")}`, icon: TreePine, color: "text-green-600", bg: "bg-green-50 dark:bg-green-900/20", onClick: () => navigate("/ativos") },
+    { label: t("dash.activeDeals"), value: s?.deals?.total ?? 0, sub: `${s?.leads?.novos ?? 0} ${t("dash.newLeads")}`, icon: Briefcase, color: "text-purple-600", bg: "bg-purple-50 dark:bg-purple-900/20", onClick: () => navigate("/crm") },
+    { label: t("dash.pipelineVolume"), value: fmt(s?.deals?.volumeTotal ?? 0), sub: `${(allDeals as any[]).filter(d => d.feeValue).length} ${t("dash.withFee")}`, icon: DollarSign, color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-900/20", isText: true },
+    { label: t("dash.pendingMatches"), value: s?.matchesPendentes ?? 0, sub: `${s?.leads?.portal24h ?? 0} ${t("dash.portalLeads24h")}`, icon: Zap, color: "text-amber-600", bg: "bg-amber-50 dark:bg-amber-900/20", onClick: () => navigate("/matching") },
+  ];
+
+  const kpis2 = [
+    { label: t("dash.crmCompanies"), value: (companies as any[]).length, icon: Building2, color: "text-blue-600", bg: "bg-blue-50 dark:bg-blue-900/20", onClick: () => navigate("/crm") },
+    { label: t("dash.portfolioValue"), value: fmt(totalPortfolioValue), icon: Layers, color: "text-indigo-600", bg: "bg-indigo-50 dark:bg-indigo-900/20", isText: true },
+    { label: t("dash.totalArea"), value: `${totalArea.toLocaleString("pt-BR")} ha`, icon: MapPin, color: "text-teal-600", bg: "bg-teal-50 dark:bg-teal-900/20", isText: true },
+    { label: t("dash.qualifiedLeads"), value: s?.leads?.qualificados ?? 0, sub: `score ≥ 60`, icon: Target, color: "text-rose-600", bg: "bg-rose-50 dark:bg-rose-900/20" },
+  ];
+
+  const feesTotal = (allDeals as any[]).reduce((s: number, d: any) => s + (d.feeValue || 0), 0);
+  const feesRecebidos = (allDeals as any[])
+    .filter((d: any) => d.feeStatus === "recebido")
+    .reduce((s: number, d: any) => s + (d.feeValue || 0), 0);
 
   return (
-    <div className="p-4 md:p-8 space-y-6 max-w-7xl mx-auto">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl md:text-3xl font-display font-bold" data-testid="text-dashboard-title">Visão Geral</h1>
-        <p className="text-sm text-muted-foreground flex items-center gap-1.5">
-          <CalendarDays className="w-3.5 h-3.5" />
-          {format(new Date(), "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
-        </p>
-      </div>
-
-      {(stats?.dealsVencidos > 0 || stats?.dealsVencendo > 0) && (
-        <div className="space-y-2" data-testid="alerts-section">
-          {stats.dealsVencidos > 0 && (
-            <Link href="/crm">
-              <div className="flex items-center gap-3 rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 px-4 py-3 cursor-pointer hover:bg-red-100 dark:hover:bg-red-950/50 transition-colors" data-testid="alert-deals-vencidos">
-                <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400 shrink-0" />
-                <span className="text-sm font-medium text-red-800 dark:text-red-300">
-                  {stats.dealsVencidos} deal{stats.dealsVencidos > 1 ? "s" : ""} com prazo vencido
-                </span>
-                <ArrowRight className="w-4 h-4 text-red-400 ml-auto" />
-              </div>
-            </Link>
-          )}
-          {stats.dealsVencendo > 0 && (
-            <Link href="/crm">
-              <div className="flex items-center gap-3 rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors" data-testid="alert-deals-vencendo">
-                <Clock className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
-                <span className="text-sm font-medium text-amber-800 dark:text-amber-300">
-                  {stats.dealsVencendo} deal{stats.dealsVencendo > 1 ? "s" : ""} vencendo em 7 dias
-                </span>
-                <ArrowRight className="w-4 h-4 text-amber-400 ml-auto" />
-              </div>
-            </Link>
+    <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold" data-testid="text-dashboard-title">{t("dash.title")}</h1>
+          <p className="text-sm text-muted-foreground">{format(now, formatDatePattern(lang), { locale })}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {weather?.current && (
+            <div className="hidden md:flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 px-3 py-1.5 rounded-full" data-testid="widget-weather-mini">
+              <Thermometer className="w-3.5 h-3.5" />
+              <span className="font-medium">{weather.current.temperature_2m}°C</span>
+              <span className="text-xs">São Paulo</span>
+            </div>
           )}
         </div>
-      )}
-
-      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          title="Valor do Pipeline"
-          value={formatBRL(stats?.pipelineValue ?? 0)}
-          icon={DollarSign}
-          index={0}
-          data-testid="stat-pipeline-value"
-        />
-        <StatCard
-          title="Forecast (Ponderado)"
-          value={formatBRL(stats?.forecastValue ?? 0)}
-          icon={TrendingUp}
-          index={1}
-          data-testid="stat-forecast"
-        />
-        <StatCard
-          title="Conversão Lead → Deal"
-          value={`${stats?.conversionRate ?? 0}%`}
-          icon={Target}
-          index={2}
-          data-testid="stat-conversion"
-        />
-        <StatCard
-          title="Ticket Médio"
-          value={formatBRL(stats?.avgTicket ?? 0)}
-          icon={BarChart3}
-          index={3}
-          data-testid="stat-avg-ticket"
-        />
       </div>
 
-      <div className="grid gap-4 grid-cols-2 lg:grid-cols-5">
-        <StatCard
-          title="Leads Ativos"
-          value={stats?.leadsCount ?? 0}
-          icon={Magnet}
-          trend={leadsTrend !== 0 ? leadsTrendStr : undefined}
-          trendUp={leadsTrend > 0}
-          index={4}
-          data-testid="stat-leads"
-        />
-        <StatCard
-          title="Deals em Andamento"
-          value={stats?.activeDealsCount ?? 0}
-          icon={Briefcase}
-          index={5}
-          data-testid="stat-deals"
-        />
-        <StatCard
-          title="Ativos no Portfólio"
-          value={stats?.assetsCount ?? 0}
-          icon={Layers}
-          index={6}
-          data-testid="stat-assets"
-        />
-        <StatCard
-          title="Matches Sugeridos"
-          value={stats?.matchesCount ?? 0}
-          icon={Zap}
-          index={7}
-          data-testid="stat-matches"
-        />
-        <Link href="/geo-rural">
-          <StatCard
-            title="Oport. Rurais (CAR)"
-            value={ruralCount}
-            icon={TreePine}
-            index={8}
-            data-testid="stat-rural"
-          />
-        </Link>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {kpis.map((k, i) => (
+          <Card key={i} className={cn("transition-all duration-200 border-border/50", k.onClick ? "cursor-pointer hover:shadow-md hover:-translate-y-0.5" : "")} onClick={k.onClick} data-testid={`card-kpi-${i}`}>
+            <CardContent className="p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center", k.bg)}>
+                  <k.icon className={cn("w-5 h-5", k.color)} />
+                </div>
+                {k.onClick && <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />}
+              </div>
+              <p className={cn("font-bold", k.isText ? "text-xl" : "text-3xl")} data-testid={`kpi-value-${i}`}>{k.value}</p>
+              <p className="text-xs font-medium text-muted-foreground">{k.label}</p>
+              {k.sub && <p className="text-[10px] text-muted-foreground">{k.sub}</p>}
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-7">
-        <Card className="col-span-full lg:col-span-4 border-border/50 shadow-sm">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {kpis2.map((k, i) => (
+          <Card key={i} className={cn("transition-all duration-200 border-border/50", k.onClick ? "cursor-pointer hover:shadow-md hover:-translate-y-0.5" : "")} onClick={k.onClick} data-testid={`card-kpi2-${i}`}>
+            <CardContent className="p-3 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <div className={cn("w-7 h-7 rounded-md flex items-center justify-center", k.bg)}>
+                  <k.icon className={cn("w-4 h-4", k.color)} />
+                </div>
+                <p className="text-xs font-medium text-muted-foreground">{k.label}</p>
+              </div>
+              <p className={cn("font-bold", k.isText ? "text-lg" : "text-2xl")}>{k.value}</p>
+              {k.sub && <p className="text-[10px] text-muted-foreground">{k.sub}</p>}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card className="border-border/50">
+          <CardContent className="p-3 space-y-1">
+            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{t("dash.totalFees")}</p>
+            <p className="text-lg font-bold text-amber-600" data-testid="kpi-fees-total">{fmt(feesTotal)}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50">
+          <CardContent className="p-3 space-y-1">
+            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{t("dash.receivedFees")}</p>
+            <p className="text-lg font-bold text-green-600" data-testid="kpi-fees-recebidos">{fmt(feesRecebidos)}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50">
+          <CardContent className="p-3 space-y-1">
+            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{t("dash.avgGeoScore")}</p>
+            <p className="text-lg font-bold" data-testid="kpi-geo-score">{avgGeoScore != null ? `${avgGeoScore}/100` : "—"}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50">
+          <CardContent className="p-3 space-y-1">
+            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{t("dash.avgPriceHa")}</p>
+            <p className="text-lg font-bold" data-testid="kpi-preco-ha">
+              {totalArea > 0 ? fmt(totalPortfolioValue / totalArea) : "—"}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid md:grid-cols-4 gap-4">
+        <Card className="md:col-span-2 border-border/50">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold">Empresas Importadas — Últimos 7 dias</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-muted-foreground" /> {t("dash.dealPipeline")}
+              </CardTitle>
+              <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => navigate("/crm")} data-testid="button-ver-crm">
+                {t("dash.viewCRM")} <ArrowRight className="w-3 h-3" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {(s?.deals?.porEstagio || []).length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-4">{t("dash.noDealsYet")}</p>
+            )}
+            {(s?.deals?.porEstagio || []).map((e: any, i: number) => (
+              <div key={i} className="space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium truncate max-w-[180px]">{e.stageName}</span>
+                  <div className="flex gap-2 items-center">
+                    <span className="text-muted-foreground">{e.count} deal{e.count !== 1 ? "s" : ""}</span>
+                    {e.volumeTotal > 0 && <span className="text-emerald-600 font-medium">{fmt(e.volumeTotal)}</span>}
+                  </div>
+                </div>
+                <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+                  <div className="h-full bg-primary/70 rounded-full transition-all" style={{ width: `${(e.count / maxDeals) * 100}%` }} />
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Layers className="w-4 h-4 text-muted-foreground" /> {t("dash.assetsByType")}
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-[220px]">
+            {assetsByType.length > 0 ? (
+              <div className="h-[180px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={assetsByType}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={40}
+                      outerRadius={70}
+                      paddingAngle={3}
+                      fontSize={10}
+                      label={({ name, value }: any) => `${name} (${value})`}
+                      labelLine={false}
+                    >
+                      {assetsByType.map((_, i) => (
+                        <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={tooltipStyle} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-8">{t("dash.noAssetsRegistered")}</p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Target className="w-4 h-4 text-muted-foreground" /> {t("dash.dealsByPriority")}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {dealsByPriority.some(d => d.value > 0) ? (
+              <div className="h-[180px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={dealsByPriority}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={40}
+                      outerRadius={70}
+                      paddingAngle={3}
+                      fontSize={10}
+                      label={({ name, value }: any) => value > 0 ? `${name} (${value})` : ""}
+                      labelLine={false}
+                    >
+                      <Cell fill="#ef4444" />
+                      <Cell fill="#f59e0b" />
+                      <Cell fill="#6b7280" />
+                    </Pie>
+                    <Tooltip contentStyle={tooltipStyle} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-8">{t("dash.noDeals")}</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-muted-foreground" /> {t("dash.dealsPerMonth")}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[200px]">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={weeklyCompanies}>
+                <AreaChart data={monthlyDeals}>
                   <defs>
-                    <linearGradient id="colorEmpresas" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                    <linearGradient id="cgDeals" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="hsl(var(--chart-2))" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="hsl(var(--chart-2))" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                  <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "8px", fontSize: "12px" }}
-                    formatter={(v: any) => [v, "Empresas"]}
-                  />
-                  <Area type="monotone" dataKey="value" stroke="hsl(var(--primary))" strokeWidth={2} fillOpacity={1} fill="url(#colorEmpresas)" dot={{ fill: "hsl(var(--primary))", r: 3 }} />
+                  <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" />
+                  <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
+                  <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, "Deals"]} />
+                  <Area type="monotone" dataKey="count" stroke="hsl(var(--chart-2))" strokeWidth={2} fill="url(#cgDeals)" dot={{ r: 3, fill: "hsl(var(--chart-2))" }} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="col-span-full lg:col-span-3 border-border/50 shadow-sm">
+        <Card className="border-border/50">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold">Deals por Prioridade</CardTitle>
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <Building2 className="w-4 h-4 text-muted-foreground" /> {t("dash.companiesPerMonth")}
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-[220px]" data-testid="chart-priority">
-              {priorityData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={priorityData} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
-                    <XAxis type="number" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-                    <YAxis type="category" dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} width={60} />
-                    <Tooltip
-                      contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "8px", fontSize: "12px" }}
-                      formatter={(v: any) => [v, "Deals"]}
-                    />
-                    <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                      {priorityData.map((entry, i) => (
-                        <Cell key={i} fill={entry.fill} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                  Nenhum deal cadastrado ainda.
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-7">
-        <Card className="col-span-full lg:col-span-4 border-border/50 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold">Deals Criados — Últimos 7 dias</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[220px]">
+            <div className="h-[200px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={weeklyDeals}>
+                <BarChart data={monthlyCompanies}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                  <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-                  <Tooltip
-                    cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
-                    contentStyle={{ backgroundColor: "hsl(var(--card))", borderColor: "hsl(var(--border))", borderRadius: "8px", fontSize: "12px" }}
-                    formatter={(v: any) => [v, "Deals"]}
-                  />
-                  <Bar dataKey="value" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                  <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" />
+                  <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
+                  <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, t("common.companies")]} />
+                  <Bar dataKey="value" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </CardContent>
         </Card>
+      </div>
 
-        <Card className="col-span-full lg:col-span-3 border-border/50 shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between pb-3">
-            <CardTitle className="text-sm font-semibold">Últimas Empresas Importadas</CardTitle>
-            <Link href="/empresas" className="text-xs text-primary hover:underline flex items-center gap-1">
-              Ver todas <ArrowRight className="w-3 h-3" />
-            </Link>
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <Card className="border-border/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Clock className="w-4 h-4 text-amber-600" /> {t("dash.stalledDeals")}
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-1">
-            {latestCompanies.length === 0
-              ? <p className="text-xs text-muted-foreground text-center py-6">Nenhuma empresa importada ainda.</p>
-              : latestCompanies.map((co: any) => (
-                <Link key={co.id} href={`/empresas/${co.id}`}
-                  className="flex items-center gap-3 py-2 px-2 rounded-lg hover:bg-muted/50 transition-colors block">
-                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                    <Building2 className="w-4 h-4 text-primary" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{co.tradeName || co.legalName}</p>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {co.cnpj ? `CNPJ ${co.cnpj}` : "Sem CNPJ"}
-                      {co.address?.municipio ? ` — ${co.address.municipio}/${co.address.uf || "?"}` : ""}
-                    </p>
-                  </div>
-                  {co.porte && <Badge variant="outline" className="text-[10px] h-4 px-1.5 shrink-0">{co.porte}</Badge>}
-                </Link>
-              ))}
+          <CardContent className="space-y-2">
+            {(s?.deals?.parados || []).length === 0 && <p className="text-xs text-muted-foreground text-center py-3">{t("dash.noStalledDeals")}</p>}
+            {(s?.deals?.parados || []).map((d: any) => (
+              <div key={d.id} className="flex items-center justify-between gap-2 text-sm" data-testid={`row-deal-parado-${d.id}`}>
+                <span className="truncate flex-1 text-xs">{d.title}</span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">{d.diasParado}d</Badge>
+                  <Button size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={() => navigate("/crm")}>{t("common.view")}</Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-500" /> {t("dash.highUrgentPriority")}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {highPriorityDeals.length === 0 && <p className="text-xs text-muted-foreground text-center py-3">{t("dash.noUrgentDeals")}</p>}
+            {highPriorityDeals.map((d: any) => (
+              <div key={d.id} className="flex items-center justify-between gap-2 text-sm" data-testid={`row-priority-${d.id}`}>
+                <span className="truncate flex-1 text-xs">{d.title}</span>
+                <Badge className={cn("text-[10px] shrink-0", d.priority === "urgent" ? "bg-red-100 text-red-700 dark:bg-red-900/30" : "bg-orange-100 text-orange-700 dark:bg-orange-900/30")}>
+                  {d.priority === "urgent" ? t("dash.urgent") : t("dash.high")}
+                </Badge>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Users className="w-4 h-4 text-blue-600" /> {t("dash.portalLeads")}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {(s?.leads?.recentes || []).length === 0 && <p className="text-xs text-muted-foreground text-center py-3">{t("dash.noLeads24h")}</p>}
+            {(s?.leads?.recentes || []).slice(0, 5).map((l: any) => (
+              <div key={l.id} className="flex items-center justify-between gap-2 text-sm" data-testid={`row-lead-${l.id}`}>
+                <span className="truncate flex-1 text-xs">{l.name}</span>
+                <Badge className={cn("text-[10px] shrink-0",
+                  l.intentScore >= 70 ? "bg-green-100 text-green-700" :
+                  l.intentScore >= 40 ? "bg-amber-100 text-amber-700" :
+                  "bg-gray-100 text-gray-500"
+                )}>
+                  {l.intentScore >= 70 ? t("dash.hot") : l.intentScore >= 40 ? t("dash.warm") : t("dash.cold")} {l.intentScore}
+                </Badge>
+              </div>
+            ))}
           </CardContent>
         </Card>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="border-border/50 shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between pb-3">
-            <CardTitle className="text-sm font-semibold">Deals Recentes</CardTitle>
-            <Link href="/crm" className="text-xs text-primary hover:underline flex items-center gap-1">
-              Ver todos <ArrowRight className="w-3 h-3" />
-            </Link>
+      <div className="grid md:grid-cols-2 gap-4">
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-muted-foreground" /> {t("dash.upcomingClosings")}
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-1">
-            {latestDeals.length === 0
-              ? <p className="text-xs text-muted-foreground text-center py-6">Nenhum deal cadastrado ainda.</p>
-              : latestDeals.map((deal: any) => (
-                <div key={deal.id} className="flex items-center gap-3 py-2 px-2 rounded-lg hover:bg-muted/50 transition-colors" data-testid={`row-deal-${deal.id}`}>
-                  <div className={cn("w-2 h-2 rounded-full shrink-0", PRIORITY_COLOR[deal.priority || "medium"])} />
+          <CardContent className="space-y-2">
+            {closingSoonDeals.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">{t("dash.noClosingDate")}</p>}
+            {closingSoonDeals.map((d: any) => {
+              const closeDate = new Date(d.expectedCloseDate);
+              const isPast = closeDate < now;
+              return (
+                <div key={d.id} className="flex items-center justify-between gap-2 py-1.5" data-testid={`row-closing-${d.id}`}>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{deal.title}</p>
-                    {deal.company && (
-                      <p className="text-xs text-muted-foreground truncate flex items-center gap-1">
-                        <Building2 className="w-2.5 h-2.5" />
-                        {deal.company.tradeName || deal.company.legalName}
-                      </p>
-                    )}
+                    <p className="text-xs font-medium truncate">{d.title}</p>
+                    {d.amountEstimate > 0 && <p className="text-[10px] text-emerald-600">{fmt(d.amountEstimate)}</p>}
                   </div>
-                  <Badge variant="outline" className="text-[10px] h-4 px-1.5 shrink-0">
-                    {deal.pipelineType === "INVESTOR" ? "Investidor" : "Ativo"}
+                  <Badge variant={isPast ? "destructive" : "outline"} className="text-[10px] shrink-0">
+                    {isPast ? t("dash.overdue") : format(closeDate, "dd/MM")}
                   </Badge>
                 </div>
-              ))}
+              );
+            })}
           </CardContent>
         </Card>
 
-        {Object.keys(assetCounts).length > 0 && (
-          <Card className="border-border/50 shadow-sm">
-            <CardHeader className="flex flex-row items-center justify-between pb-3">
-              <CardTitle className="text-sm font-semibold">Composição do Portfólio</CardTitle>
-              <Link href="/ativos" className="text-xs text-primary hover:underline flex items-center gap-1">
-                Gerenciar <ArrowRight className="w-3 h-3" />
-              </Link>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap gap-3">
-                {Object.entries(assetCounts).map(([type, cnt]: [string, any]) => {
-                  const cfg = TIPO_ATIVO[type] || { label: type, color: "text-muted-foreground bg-muted" };
-                  const total = (assets as any[]).length;
-                  const pct = Math.round(((cnt as number) / total) * 100);
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-muted-foreground" /> {t("dash.assetsByState")}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {assetsByState.length > 0 ? (
+              <div className="h-[180px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={assetsByState} layout="vertical" margin={{ left: 0, right: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
+                    <XAxis type="number" fontSize={11} tickLine={false} axisLine={false} stroke="hsl(var(--muted-foreground))" allowDecimals={false} />
+                    <YAxis type="category" dataKey="name" fontSize={11} tickLine={false} axisLine={false} width={28} stroke="hsl(var(--muted-foreground))" />
+                    <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => [v, t("common.assets")]} />
+                    <Bar dataKey="value" fill="hsl(var(--chart-4))" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-8">{t("dash.noDataShort")}</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="border-border/50">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Activity className="w-4 h-4 text-muted-foreground" /> {t("dash.recentActivity")}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {(logs as any[]).length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-4">{t("dash.noRecentActivity")}</p>
+          ) : (
+            <div className="space-y-1.5">
+              {(logs as any[]).slice(0, 8).map((log: any) => (
+                <div key={log.id} className="flex items-center gap-3 py-1.5 text-xs" data-testid={`activity-${log.id}`}>
+                  <div className={cn(
+                    "w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-white",
+                    log.action === "created" ? "bg-green-500" :
+                    log.action === "deleted" ? "bg-red-500" :
+                    log.action === "stage_changed" ? "bg-purple-500" : "bg-blue-500"
+                  )}>
+                    {log.action === "created" ? "+" : log.action === "deleted" ? "−" : "↻"}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <span className="font-medium">{log.userName}</span>
+                    <span className="text-muted-foreground"> {log.action === "created" ? t("dash.created") : log.action === "deleted" ? t("dash.deleted") : t("dash.updated")} </span>
+                    <span className="font-medium">{log.entityTitle || log.entity}</span>
+                  </div>
+                  <span className="text-muted-foreground shrink-0">
+                    {formatDistanceToNow(new Date(log.createdAt), { addSuffix: true, locale })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {weather?.current && (
+        <Card className="border-border/50" data-testid="section-weather">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Sun className="w-4 h-4 text-amber-500" /> {t("dash.weatherSP")}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="p-3 rounded-lg bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-900/10 text-center">
+                <Thermometer className="w-4 h-4 text-blue-600 mx-auto mb-1" />
+                <p className="text-xl font-bold">{weather.current.temperature_2m}°C</p>
+                <p className="text-[10px] text-muted-foreground">{t("dash.temperature")}</p>
+              </div>
+              <div className="p-3 rounded-lg bg-gradient-to-br from-cyan-50 to-cyan-100 dark:from-cyan-900/20 dark:to-cyan-900/10 text-center">
+                <Droplets className="w-4 h-4 text-cyan-600 mx-auto mb-1" />
+                <p className="text-xl font-bold">{weather.current.relative_humidity_2m}%</p>
+                <p className="text-[10px] text-muted-foreground">{t("dash.humidity")}</p>
+              </div>
+              <div className="p-3 rounded-lg bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800/30 dark:to-gray-800/10 text-center">
+                <Wind className="w-4 h-4 text-gray-600 mx-auto mb-1" />
+                <p className="text-xl font-bold">{weather.current.wind_speed_10m} km/h</p>
+                <p className="text-[10px] text-muted-foreground">{t("dash.wind")}</p>
+              </div>
+              <div className="p-3 rounded-lg bg-gradient-to-br from-amber-50 to-amber-100 dark:from-amber-900/20 dark:to-amber-900/10 text-center">
+                {(() => {
+                  const wmoKey = WMO_KEYS[weather.current.weather_code] || "dash.clearSky";
+                  const WIcon = WMO_ICON[weather.current.weather_code] || Sun;
                   return (
-                    <Link key={type} href={`/ativos/tipo/${type}`}>
-                      <div className={cn("flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer hover:opacity-80 transition-opacity", cfg.color)} data-testid={`asset-type-${type}`}>
-                        <span className="text-sm font-bold">{cnt}</span>
-                        <span className="text-xs font-medium">{cfg.label}</span>
-                        <span className="text-xs opacity-60">{pct}%</span>
-                      </div>
-                    </Link>
+                    <>
+                      <WIcon className="w-4 h-4 text-amber-600 mx-auto mb-1" />
+                      <p className="text-sm font-bold">{t(wmoKey)}</p>
+                      <p className="text-[10px] text-muted-foreground">{t("dash.condition")}</p>
+                    </>
                   );
-                })}
-                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-muted/50 ml-auto">
-                  <span className="text-sm font-bold">{(assets as any[]).length}</span>
-                  <span className="text-xs text-muted-foreground">total</span>
-                  {(assets as any[]).length > 0 && (
-                    <span className="text-xs font-semibold text-emerald-600 ml-1">
-                      R$ {formatBRL((assets as any[]).reduce((s: number, a: any) => s + (a.priceAsking || 0), 0))}
-                    </span>
-                  )}
+                })()}
+              </div>
+            </div>
+            {weather.daily && (
+              <div className="mt-3">
+                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-2">{t("dash.forecast3d")}</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {weather.daily.time?.map((day: string, i: number) => (
+                    <div key={day} className="p-2 rounded-lg bg-muted/50 text-center text-xs">
+                      <p className="font-medium">{new Date(day + "T12:00:00").toLocaleDateString(lang === "en" ? "en-US" : "pt-BR", { weekday: "short", day: "numeric" })}</p>
+                      <p className="text-muted-foreground mt-0.5">
+                        {weather.daily.temperature_2m_min?.[i]?.toFixed(0)}° — {weather.daily.temperature_2m_max?.[i]?.toFixed(0)}°
+                      </p>
+                      {weather.daily.precipitation_sum?.[i] > 0 && (
+                        <p className="text-blue-600 mt-0.5">{weather.daily.precipitation_sum[i].toFixed(1)} mm</p>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3" data-testid="section-quotes">
+        {dollar && (
+          <Card className="border-border/50 bg-gradient-to-br from-green-50/50 to-transparent dark:from-green-900/10">
+            <CardContent className="p-3 space-y-1">
+              <div className="flex items-center gap-1.5">
+                <DollarSign className="w-3.5 h-3.5 text-green-600" />
+                <span className="text-[10px] font-medium text-muted-foreground uppercase">{t("dash.dollar")}</span>
+              </div>
+              <p className="text-lg font-bold" data-testid="quote-dollar">R$ {Number(dollar.bid).toFixed(2)}</p>
+              <p className={cn("text-[10px] flex items-center gap-0.5",
+                Number(dollar.pctChange) >= 0 ? "text-green-600" : "text-red-500"
+              )}>
+                {Number(dollar.pctChange) >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                {dollar.pctChange}%
+              </p>
             </CardContent>
           </Card>
         )}
+
+        {euro && (
+          <Card className="border-border/50 bg-gradient-to-br from-blue-50/50 to-transparent dark:from-blue-900/10">
+            <CardContent className="p-3 space-y-1">
+              <div className="flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-blue-600" />
+                <span className="text-[10px] font-medium text-muted-foreground uppercase">{t("dash.euro")}</span>
+              </div>
+              <p className="text-lg font-bold" data-testid="quote-euro">R$ {Number(euro.bid).toFixed(2)}</p>
+              <p className={cn("text-[10px] flex items-center gap-0.5",
+                Number(euro.pctChange) >= 0 ? "text-green-600" : "text-red-500"
+              )}>
+                {Number(euro.pctChange) >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                {euro.pctChange}%
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {btc && (
+          <Card className="border-border/50 bg-gradient-to-br from-orange-50/50 to-transparent dark:from-orange-900/10">
+            <CardContent className="p-3 space-y-1">
+              <div className="flex items-center gap-1.5">
+                <Hash className="w-3.5 h-3.5 text-orange-600" />
+                <span className="text-[10px] font-medium text-muted-foreground uppercase">{t("dash.bitcoin")}</span>
+              </div>
+              <p className="text-lg font-bold" data-testid="quote-btc">R$ {Number(Number(btc.bid).toFixed(0)).toLocaleString("pt-BR")}</p>
+              <p className={cn("text-[10px] flex items-center gap-0.5",
+                Number(btc.pctChange) >= 0 ? "text-green-600" : "text-red-500"
+              )}>
+                {Number(btc.pctChange) >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                {btc.pctChange}%
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {selic && (
+          <Card className="border-border/50 bg-gradient-to-br from-purple-50/50 to-transparent dark:from-purple-900/10">
+            <CardContent className="p-3 space-y-1">
+              <div className="flex items-center gap-1.5">
+                <Percent className="w-3.5 h-3.5 text-purple-600" />
+                <span className="text-[10px] font-medium text-muted-foreground uppercase">{t("dash.selic")}</span>
+              </div>
+              <p className="text-lg font-bold" data-testid="quote-selic">{selic.valor}%</p>
+              <p className="text-[10px] text-muted-foreground">{selic.data}</p>
+            </CardContent>
+          </Card>
+        )}
+
+        <Card className="border-border/50 bg-gradient-to-br from-teal-50/50 to-transparent dark:from-teal-900/10">
+          <CardContent className="p-3 space-y-1">
+            <div className="flex items-center gap-1.5">
+              <BarChart3 className="w-3.5 h-3.5 text-teal-600" />
+              <span className="text-[10px] font-medium text-muted-foreground uppercase">{t("dash.cdi")}</span>
+            </div>
+            <p className="text-lg font-bold" data-testid="quote-cdi">{selic ? `${(Number(selic.valor) * 0.9).toFixed(2)}%` : "—"}</p>
+            <p className="text-[10px] text-muted-foreground">~90% Selic</p>
+          </CardContent>
+        </Card>
       </div>
+
+      <p className="text-[10px] text-center text-muted-foreground pb-4">
+        {t("dash.realTimeData")} • {format(now, "HH:mm", { locale })}
+      </p>
     </div>
   );
 }

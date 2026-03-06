@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useLeads, useUpdateLead } from "@/hooks/use-sdr";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@shared/routes";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,9 +23,11 @@ import {
 import {
   CheckCircle2, XCircle, Search, Building2,
   MapPin, Phone, Mail, Users, Loader2, Plus, AlertCircle,
-  TrendingUp, ExternalLink, Globe, Landmark, Factory, UserCheck, X, Download, DollarSign
+  TrendingUp, ExternalLink, Globe, Landmark, Factory, UserCheck, X, Download, DollarSign,
+  Calendar, Clock, MessageSquare, Save, FileText, Briefcase,
 } from "lucide-react";
-import { format } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
 import { Link, useLocation } from "wouter";
 import {
@@ -56,6 +58,8 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 
 type CnpjResult = {
   legalName: string;
@@ -89,15 +93,103 @@ function formatCnpj(value: string) {
     .replace(/(\d{4})(\d)/, "$1-$2");
 }
 
+const SOURCE_LABELS: Record<string, { label: string; color: string }> = {
+  portal: { label: "Portal", color: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400" },
+  PORTAL: { label: "Portal", color: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400" },
+  prospeccao_ativo: { label: "Prospecção", color: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400" },
+  prospeccao_reversa: { label: "Prospecção", color: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400" },
+  PROSPECCAO: { label: "Prospecção", color: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400" },
+  ma_radar: { label: "M&A Radar", color: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400" },
+  caf: { label: "CAF", color: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400" },
+  CAF: { label: "CAF", color: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400" },
+  caf_crawler: { label: "CAF Crawler", color: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400" },
+  cnpj_import: { label: "CNPJ Import", color: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400" },
+  SDR: { label: "SDR", color: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-400" },
+};
 
-function PromoteToDealDialog({ lead }: { lead: any }) {
+function getSourceInfo(source: string | null) {
+  if (!source) return { label: "Manual", color: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400" };
+  return SOURCE_LABELS[source] || { label: source, color: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400" };
+}
+
+function getDaysIdle(lead: any): { days: number; label: string; color: string } {
+  const ref = lead.updatedAt || lead.createdAt;
+  if (!ref) return { days: 0, label: "hoje", color: "text-green-600 dark:text-green-400" };
+  const diff = Date.now() - new Date(ref).getTime();
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  if (days === 0) return { days: 0, label: "hoje", color: "text-green-600 dark:text-green-400" };
+  if (days <= 3) return { days, label: `${days}d`, color: "text-green-600 dark:text-green-400" };
+  if (days <= 7) return { days, label: `${days}d`, color: "text-amber-600 dark:text-amber-400" };
+  return { days, label: `${days}d`, color: "text-red-600 dark:text-red-400" };
+}
+
+
+function InlineNotes({ lead }: { lead: any }) {
+  const [notes, setNotes] = useState(lead.notes || "");
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    setNotes(lead.notes || "");
+    setDirty(false);
+  }, [lead.notes]);
+
+  const saveNotes = async () => {
+    setSaving(true);
+    try {
+      await apiRequest("PATCH", `/api/sdr/leads/${lead.id}/notes`, { notes });
+      setDirty(false);
+      queryClient.invalidateQueries({ queryKey: [api.sdr.queue.path] });
+      toast({ title: "Anotação salva" });
+    } catch {
+      toast({ title: "Erro ao salvar anotação", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <Input
+        placeholder="Anotação rápida..."
+        value={notes}
+        onChange={e => { setNotes(e.target.value); setDirty(true); }}
+        onKeyDown={e => { if (e.key === "Enter" && dirty) saveNotes(); }}
+        className="h-7 text-xs flex-1"
+        data-testid={`input-notes-${lead.id}`}
+      />
+      {dirty && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 w-7 p-0 shrink-0"
+          onClick={saveNotes}
+          disabled={saving}
+          data-testid={`button-save-notes-${lead.id}`}
+        >
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+
+function CreateDealDialog({ lead }: { lead: any }) {
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const { data: stages } = useStages();
   const [pipeline, setPipeline] = useState<string>("INVESTOR");
-  const [isPromoting, setIsPromoting] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [selectedAssetId, setSelectedAssetId] = useState<string>("");
+
+  const { data: assets = [] } = useQuery<any[]>({
+    queryKey: ["/api/assets"],
+  });
 
   const vc = (lead.company as any)?.verifiedContacts || {};
   const hasVerified = !!(vc.phone || vc.email || vc.whatsapp || vc.contactName);
@@ -118,7 +210,7 @@ function PromoteToDealDialog({ lead }: { lead: any }) {
   const form = useForm({
     resolver: zodResolver(insertDealSchema),
     defaultValues: {
-      title: `Deal: ${lead.company?.legalName}`,
+      title: `Deal: ${lead.company?.tradeName || lead.company?.legalName}`,
       pipelineType: "INVESTOR",
       stageId: 0,
       companyId: lead.companyId,
@@ -142,9 +234,9 @@ function PromoteToDealDialog({ lead }: { lead: any }) {
       toast({ title: "Selecione um estágio", variant: "destructive" });
       return;
     }
-    setIsPromoting(true);
+    setIsCreating(true);
     try {
-      const res = await apiRequest("POST", `/api/sdr/leads/${lead.id}/promote`, {
+      const payload: any = {
         title: data.title,
         pipelineType: data.pipelineType,
         stageId: data.stageId,
@@ -152,7 +244,11 @@ function PromoteToDealDialog({ lead }: { lead: any }) {
         probability: data.probability,
         source: data.source,
         description: data.description,
-      });
+      };
+
+      if (selectedAssetId) payload.assetId = Number(selectedAssetId);
+
+      const res = await apiRequest("POST", `/api/sdr/leads/${lead.id}/promote`, payload);
       setOpen(false);
       toast({
         title: "Deal criado!",
@@ -162,9 +258,9 @@ function PromoteToDealDialog({ lead }: { lead: any }) {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
       navigate("/crm");
     } catch (err: any) {
-      toast({ title: "Erro ao promover lead", description: err?.message, variant: "destructive" });
+      toast({ title: "Erro ao criar deal", description: err?.message, variant: "destructive" });
     } finally {
-      setIsPromoting(false);
+      setIsCreating(false);
     }
   };
 
@@ -175,15 +271,15 @@ function PromoteToDealDialog({ lead }: { lead: any }) {
           size="sm"
           variant="outline"
           className="bg-primary/5 hover:bg-primary/10 text-primary border-primary/20"
-          data-testid={`button-promote-${lead.id}`}
+          data-testid={`button-create-deal-${lead.id}`}
         >
-          <TrendingUp className="w-4 h-4 mr-1" />
-          Promover a Deal
+          <Briefcase className="w-4 h-4 mr-1" />
+          Criar Deal
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
-          <DialogTitle>Promover a Deal</DialogTitle>
+          <DialogTitle>Criar Deal no CRM</DialogTitle>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
@@ -206,12 +302,12 @@ function PromoteToDealDialog({ lead }: { lead: any }) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Pipeline</FormLabel>
-                  <Select 
+                  <Select
                     onValueChange={(val) => {
                       field.onChange(val);
                       setPipeline(val);
                       form.setValue("stageId", 0);
-                    }} 
+                    }}
                     defaultValue={field.value}
                   >
                     <FormControl>
@@ -234,8 +330,8 @@ function PromoteToDealDialog({ lead }: { lead: any }) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Estágio</FormLabel>
-                  <Select 
-                    onValueChange={(val) => field.onChange(Number(val))} 
+                  <Select
+                    onValueChange={(val) => field.onChange(Number(val))}
                     value={field.value ? String(field.value) : undefined}
                   >
                     <FormControl>
@@ -253,6 +349,38 @@ function PromoteToDealDialog({ lead }: { lead: any }) {
                 </FormItem>
               )}
             />
+
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">Vincular Ativo (opcional)</Label>
+              <Select value={selectedAssetId} onValueChange={setSelectedAssetId}>
+                <SelectTrigger data-testid="select-asset">
+                  <SelectValue placeholder="Nenhum ativo vinculado" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Nenhum</SelectItem>
+                  {assets.map((a: any) => (
+                    <SelectItem key={a.id} value={String(a.id)}>
+                      {a.title || a.type} — {a.municipio}/{a.estado}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <FormField
+              control={form.control}
+              name="amountEstimate"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Valor Estimado (R$)</FormLabel>
+                  <FormControl>
+                    <Input type="number" {...field} onChange={e => field.onChange(Number(e.target.value))} data-testid="input-deal-amount" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
             {hasVerified && (
               <div className="rounded-lg border border-green-200 dark:border-green-700 bg-green-50/50 dark:bg-green-900/10 p-3 space-y-1" data-testid="promote-verified-info">
                 <p className="text-xs font-semibold text-green-700 dark:text-green-400 flex items-center gap-1">
@@ -264,7 +392,6 @@ function PromoteToDealDialog({ lead }: { lead: any }) {
                   {vc.email && <p>Email: {vc.email}</p>}
                   {vc.whatsapp && <p>WhatsApp: {vc.whatsapp}</p>}
                 </div>
-                <p className="text-[10px] text-muted-foreground mt-1">Estes dados serão incluídos na descrição do deal.</p>
               </div>
             )}
             {!hasVerified && (
@@ -275,8 +402,8 @@ function PromoteToDealDialog({ lead }: { lead: any }) {
               </div>
             )}
             <DialogFooter>
-              <Button type="submit" disabled={isPromoting} data-testid="button-submit-deal">
-                {isPromoting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              <Button type="submit" disabled={isCreating} data-testid="button-submit-deal">
+                {isCreating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Criar Deal
               </Button>
             </DialogFooter>
@@ -287,11 +414,13 @@ function PromoteToDealDialog({ lead }: { lead: any }) {
   );
 }
 
+
 export default function SdrQueue() {
   const queryClient = useQueryClient();
   const { data: leads, isLoading } = useLeads();
   const { mutate: updateLead, isPending } = useUpdateLead();
   const { toast } = useToast();
+  const [, navigate] = useLocation();
 
   const [cnpjInput, setCnpjInput] = useState("");
   const [isSearching, setIsSearching] = useState(false);
@@ -305,6 +434,26 @@ export default function SdrQueue() {
   const [leadUf, setLeadUf] = useState("all");
   const [leadPorte, setLeadPorte] = useState("all");
   const [leadVerified, setLeadVerified] = useState("all");
+  const [leadSource, setLeadSource] = useState("all");
+
+  const { data: existingDeals = [] } = useQuery<any[]>({
+    queryKey: ["/api/crm/deals"],
+  });
+
+  const companyDealMap = useMemo(() => {
+    const map = new Map<number, boolean>();
+    existingDeals.forEach((d: any) => {
+      if (d.companyId) map.set(d.companyId, true);
+    });
+    return map;
+  }, [existingDeals]);
+
+  const availableSources = useMemo(() => {
+    if (!leads) return [];
+    const sources = new Set<string>();
+    leads.forEach(l => { if (l.source) sources.add(l.source); });
+    return Array.from(sources).sort();
+  }, [leads]);
 
   const handleStatusChange = (id: number, status: string) => {
     updateLead({ id, status });
@@ -369,6 +518,38 @@ export default function SdrQueue() {
     }
   };
 
+  const filteredLeads = useMemo(() => {
+    if (!leads) return [];
+    return leads.filter(lead => {
+      if (leadSearch.trim()) {
+        const q = leadSearch.toLowerCase();
+        const name = (lead.company?.tradeName || lead.company?.legalName || "").toLowerCase();
+        const cnae = (lead.company?.cnaePrincipal || "").toLowerCase();
+        if (!name.includes(q) && !(lead.company?.cnpj || "").includes(q) && !cnae.includes(q)) return false;
+      }
+      if (leadStatus !== "all" && lead.status !== leadStatus) return false;
+      if (leadMinScore > 0 && (lead.score || 0) < leadMinScore) return false;
+      if (leadUf !== "all") {
+        const addr = (lead.company?.address as any) || {};
+        if (addr.state !== leadUf) return false;
+      }
+      if (leadPorte !== "all") {
+        const p = (lead.company?.porte || "").toUpperCase();
+        if (leadPorte === "DEMAIS" ? (p === "ME" || p === "EPP") : p !== leadPorte) return false;
+      }
+      if (leadVerified !== "all") {
+        const vc = (lead.company as any)?.verifiedContacts || {};
+        const hasV = !!(vc.phone || vc.email || vc.whatsapp || vc.contactName);
+        if (leadVerified === "verified" && !hasV) return false;
+        if (leadVerified === "not_verified" && hasV) return false;
+      }
+      if (leadSource !== "all" && lead.source !== leadSource) return false;
+      return true;
+    });
+  }, [leads, leadSearch, leadStatus, leadMinScore, leadUf, leadPorte, leadVerified, leadSource]);
+
+  const hasActiveFilters = leadSearch || leadStatus !== "all" || leadMinScore > 0 || leadUf !== "all" || leadPorte !== "all" || leadVerified !== "all" || leadSource !== "all";
+
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6 max-w-7xl mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -378,7 +559,6 @@ export default function SdrQueue() {
         </div>
       </div>
 
-      {/* CNPJ Search Panel */}
       <Card className="border-primary/20 shadow-sm">
         <CardHeader className="pb-4">
           <CardTitle className="flex items-center gap-2 text-base">
@@ -536,7 +716,6 @@ export default function SdrQueue() {
         </CardContent>
       </Card>
 
-      {/* Lead Queue */}
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <h2 className="text-xl font-bold flex items-center gap-2">
@@ -596,6 +775,18 @@ export default function SdrQueue() {
                 <SelectItem value="90">Score ≥ 90</SelectItem>
               </SelectContent>
             </Select>
+            <Select value={leadSource} onValueChange={setLeadSource}>
+              <SelectTrigger className="h-8 text-sm w-36" data-testid="select-lead-source">
+                <SelectValue placeholder="Origem" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas origens</SelectItem>
+                {availableSources.map(s => {
+                  const info = getSourceInfo(s);
+                  return <SelectItem key={s} value={s}>{info.label}</SelectItem>;
+                })}
+              </SelectContent>
+            </Select>
             <Select value={leadUf} onValueChange={setLeadUf}>
               <SelectTrigger className="h-8 text-sm w-28" data-testid="select-lead-uf">
                 <SelectValue placeholder="UF" />
@@ -628,11 +819,11 @@ export default function SdrQueue() {
                 <SelectItem value="not_verified">Não verificados</SelectItem>
               </SelectContent>
             </Select>
-            {(leadSearch || leadStatus !== "all" || leadMinScore > 0 || leadUf !== "all" || leadPorte !== "all" || leadVerified !== "all") && (
+            {hasActiveFilters && (
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => { setLeadSearch(""); setLeadStatus("all"); setLeadMinScore(0); setLeadUf("all"); setLeadPorte("all"); setLeadVerified("all"); }}
+                onClick={() => { setLeadSearch(""); setLeadStatus("all"); setLeadMinScore(0); setLeadUf("all"); setLeadPorte("all"); setLeadVerified("all"); setLeadSource("all"); }}
                 className="h-8 px-2 text-xs text-muted-foreground"
                 data-testid="button-clear-lead-filters"
               >
@@ -656,38 +847,17 @@ export default function SdrQueue() {
           </Card>
         ) : (
           <div className="grid md:grid-cols-2 gap-4">
-            {leads?.filter(lead => {
-              if (leadSearch.trim()) {
-                const q = leadSearch.toLowerCase();
-                const name = (lead.company?.tradeName || lead.company?.legalName || "").toLowerCase();
-                const cnae = (lead.company?.cnaePrincipal || "").toLowerCase();
-                if (!name.includes(q) && !(lead.company?.cnpj || "").includes(q) && !cnae.includes(q)) return false;
-              }
-              if (leadStatus !== "all" && lead.status !== leadStatus) return false;
-              if (leadMinScore > 0 && (lead.score || 0) < leadMinScore) return false;
-              if (leadUf !== "all") {
-                const addr = (lead.company?.address as any) || {};
-                if (addr.state !== leadUf) return false;
-              }
-              if (leadPorte !== "all") {
-                const p = (lead.company?.porte || "").toUpperCase();
-                if (leadPorte === "DEMAIS" ? (p === "ME" || p === "EPP") : p !== leadPorte) return false;
-              }
-              if (leadVerified !== "all") {
-                const vc = (lead.company as any)?.verifiedContacts || {};
-                const hasV = !!(vc.phone || vc.email || vc.whatsapp || vc.contactName);
-                if (leadVerified === "verified" && !hasV) return false;
-                if (leadVerified === "not_verified" && hasV) return false;
-              }
-              return true;
-            }).map((lead) => {
+            {filteredLeads.map((lead) => {
               const enrichment = (lead.company?.enrichmentData as any)?.merged || {};
               const vc = (lead.company as any)?.verifiedContacts || {};
               const hasVerified = !!(vc.phone || vc.email || vc.whatsapp || vc.contactName);
               const phones = Array.from(new Set([...(lead.company?.phones as string[] || []), ...(enrichment.phones || [])]));
               const emails = Array.from(new Set([...(lead.company?.emails as string[] || []), ...(enrichment.emails || [])]));
               const address = (lead.company?.address as any) || {};
-              
+              const idle = getDaysIdle(lead);
+              const sourceInfo = getSourceInfo(lead.source);
+              const hasDeal = companyDealMap.has(lead.companyId!);
+
               return (
                 <Card key={lead.id} data-testid={`card-lead-${lead.id}`} className="hover-elevate overflow-visible">
                   <CardHeader className="pb-3">
@@ -704,6 +874,9 @@ export default function SdrQueue() {
                           <Badge className={`text-[10px] h-4 uppercase ${getStatusBadge(lead.status)}`}>
                             {lead.status}
                           </Badge>
+                          <Badge className={`text-[10px] h-4 ${sourceInfo.color}`} data-testid={`badge-source-${lead.id}`}>
+                            {sourceInfo.label}
+                          </Badge>
                           {lead.company?.porte && (
                             <Badge variant="outline" className="text-[10px] h-4">{lead.company.porte}</Badge>
                           )}
@@ -716,10 +889,21 @@ export default function SdrQueue() {
                               <AlertCircle className="w-3 h-3 mr-0.5" /> Não verificado
                             </Badge>
                           )}
+                          {hasDeal && (
+                            <Badge variant="outline" className="text-[10px] h-4 bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-900/20 dark:text-emerald-400" data-testid={`badge-has-deal-${lead.id}`}>
+                              <Briefcase className="w-3 h-3 mr-0.5" /> Já no CRM
+                            </Badge>
+                          )}
                         </div>
                       </div>
-                      <div className="text-right text-xs text-muted-foreground">
-                        {lead.createdAt ? format(new Date(lead.createdAt), "dd/MM/yyyy") : "–"}
+                      <div className="text-right shrink-0 space-y-1">
+                        <p className="text-xs text-muted-foreground">
+                          {lead.createdAt ? format(new Date(lead.createdAt), "dd/MM/yyyy") : "–"}
+                        </p>
+                        <div className={cn("flex items-center gap-1 text-[10px] font-medium justify-end", idle.color)} data-testid={`badge-idle-${lead.id}`}>
+                          <Clock className="w-3 h-3" />
+                          {idle.label} sem atividade
+                        </div>
                       </div>
                     </div>
                   </CardHeader>
@@ -743,7 +927,7 @@ export default function SdrQueue() {
                           </div>
                         )}
                       </div>
-                      
+
                       <div className="space-y-3">
                         <div className="space-y-1">
                           <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
@@ -771,7 +955,7 @@ export default function SdrQueue() {
                             )}
                             {phones.slice(0, 2).map((p, i) => (
                               <p key={i} className="text-xs flex items-center gap-1.5 text-muted-foreground">
-                                <span className="w-1 h-1 rounded-full bg-primary/40" /> {p} {!hasVerified && i === 0 ? "" : ""}
+                                <span className="w-1 h-1 rounded-full bg-primary/40" /> {p}
                               </p>
                             ))}
                             {emails.slice(0, 1).map((e, i) => (
@@ -785,6 +969,13 @@ export default function SdrQueue() {
                           </div>
                         </div>
                       </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                        <MessageSquare className="w-3 h-3" /> Anotação
+                      </p>
+                      <InlineNotes lead={lead} />
                     </div>
 
                     <Separator className="opacity-50" />
@@ -813,9 +1004,18 @@ export default function SdrQueue() {
                           <XCircle className="w-4 h-4 mr-1" />
                           Rejeitar
                         </Button>
-
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 px-2"
+                          onClick={() => navigate(`/empresas/${lead.companyId}`)}
+                          data-testid={`button-ver-empresa-${lead.id}`}
+                        >
+                          <Building2 className="w-4 h-4 mr-1" />
+                          Ver empresa
+                        </Button>
                       </div>
-                      {lead.status !== "converted" && <PromoteToDealDialog lead={lead} />}
+                      {lead.status !== "converted" && <CreateDealDialog lead={lead} />}
                       {lead.status === "converted" && (
                         <Badge variant="outline" className="text-emerald-700 border-emerald-300 dark:text-emerald-400 dark:border-emerald-700" data-testid={`badge-converted-${lead.id}`}>
                           <CheckCircle2 className="w-3 h-3 mr-1" /> Convertido em Deal

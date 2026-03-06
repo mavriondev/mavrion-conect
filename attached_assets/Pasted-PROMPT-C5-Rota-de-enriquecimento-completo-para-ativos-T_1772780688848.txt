@@ -1,0 +1,83 @@
+PROMPT C5 — Rota de enriquecimento completo para ativos TERRA/AGRO
+Arquivo: server/routes/assets.ts
+No arquivo server/routes/assets.ts, adicione a rota:
+POST /api/matching/assets/:id/enriquecer-completo
+
+Esta rota chama IBAMA, MapBiomas e Sentinel Hub em paralelo
+e salva tudo no banco:
+
+import { consultarEmbargoIbama, consultarEmbargoIbamaCoordenadas } from "../lib/ibama";
+import { getUsoTerraMapBiomas } from "../lib/mapbiomas";
+import { getNDVISentinel } from "../lib/sentinel";
+
+app.post("/api/matching/assets/:id/enriquecer-completo", async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+  
+  const asset = await storage.getAsset(Number(req.params.id));
+  if (!asset) return res.status(404).json({ message: "Ativo não encontrado" });
+
+  const campos = (asset.camposEspecificos as any) || {};
+  const lat = Number(campos.latitude);
+  const lon = Number(campos.longitude);
+  const polygon = campos.geoPolygon || null;
+  const cpfCnpjProprietario = campos.cpfProprietario || campos.cnpjProprietario || null;
+
+  const resultados: any = { enriquecidoEm: new Date().toISOString() };
+  const erros: string[] = [];
+
+  // Rodar em paralelo
+  const [ibamaCnpj, ibamaGeo, mapbiomas, sentinelNdvi] = await Promise.allSettled([
+    cpfCnpjProprietario
+      ? consultarEmbargoIbama(cpfCnpjProprietario)
+      : Promise.resolve(null),
+    lat && lon
+      ? consultarEmbargoIbamaCoordenadas(lat, lon)
+      : Promise.resolve(null),
+    lat && lon
+      ? getUsoTerraMapBiomas(lat, lon)
+      : Promise.resolve(null),
+    lat && lon
+      ? getNDVISentinel(lat, lon, polygon)
+      : Promise.resolve(null),
+  ]);
+
+  if (ibamaCnpj.status === "fulfilled" && ibamaCnpj.value) {
+    resultados.ibamaProprietario = ibamaCnpj.value;
+  } else erros.push("IBAMA CPF/CNPJ");
+
+  if (ibamaGeo.status === "fulfilled" && ibamaGeo.value) {
+    resultados.ibamaGeo = ibamaGeo.value;
+  } else erros.push("IBAMA Geo");
+
+  if (mapbiomas.status === "fulfilled" && mapbiomas.value) {
+    resultados.mapbiomas = mapbiomas.value;
+  } else erros.push("MapBiomas");
+
+  if (sentinelNdvi.status === "fulfilled" && sentinelNdvi.value) {
+    resultados.ndviHD = sentinelNdvi.value;
+  } else erros.push("Sentinel NDVI");
+
+  // Verificar alertas críticos
+  const temEmbargoIbama =
+    resultados.ibamaProprietario?.temEmbargo ||
+    resultados.ibamaGeo?.temEmbargo || false;
+
+  // Salvar no banco
+  const camposAtualizados = {
+    ...campos,
+    enriquecimentoCompleto: resultados,
+    temEmbargoIbama,
+    enriquecimentoCompletoEm: new Date().toISOString(),
+  };
+
+  await storage.updateAsset(asset.id, { camposEspecificos: camposAtualizados });
+
+  res.json({
+    message: `Enriquecimento concluído${erros.length > 0 ? ` (${erros.join(", ")} indisponíveis)` : ""}`,
+    resultados,
+    temEmbargoIbama,
+    erros,
+  });
+});
+
+Não altere nada mais no arquivo.

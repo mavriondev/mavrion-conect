@@ -167,6 +167,7 @@ interface SearchResult {
   state: string | null;
   founded: string | null;
   alreadySaved: boolean;
+  alreadyAsset?: boolean;
 }
 
 interface SearchState {
@@ -227,6 +228,7 @@ export default function MADealsPage() {
   const [dealDescription, setDealDescription] = useState("");
   const [dealStage, setDealStage] = useState("");
   const [importing, setImporting] = useState(false);
+  const [savingTaxId, setSavingTaxId] = useState<string | null>(null);
 
   const { data: stages = [] } = useQuery<any[]>({
     queryKey: ["/api/crm/stages"],
@@ -357,6 +359,59 @@ export default function MADealsPage() {
       toast({ title: "Erro ao criar deal", description: err.message || "Erro desconhecido", variant: "destructive" });
     } finally {
       setImporting(false);
+    }
+  };
+
+  const saveAsLead = async (company: SearchResult) => {
+    setSavingTaxId(company.taxId);
+    try {
+      const importRes = await apiRequest("POST", `/api/cnpj/${company.taxId}/import`);
+      let companyId: number | undefined;
+      if (importRes.ok) {
+        const d = await importRes.json() as any;
+        companyId = d.company?.id;
+      } else if (importRes.status === 409) {
+        const d = await importRes.json().catch(() => ({})) as any;
+        companyId = d.company?.id || d.companyId;
+      } else {
+        const d = await importRes.json().catch(() => ({})) as any;
+        throw new Error(d.message || "Falha ao importar empresa");
+      }
+      if (!companyId) throw new Error("Não foi possível obter o ID da empresa");
+
+      const leadRes = await apiRequest("POST", `/api/companies/${companyId}/lead`, { source: "ma_radar" });
+      if (!leadRes.ok && leadRes.status !== 409) {
+        const d = await leadRes.json().catch(() => ({})) as any;
+        throw new Error(d.message || "Falha ao criar lead");
+      }
+
+      queryClient.invalidateQueries({ queryKey: ["/api/sdr/queue"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
+      toast({ title: "Empresa salva!", description: "Lead criado na fila SDR com origem M&A Radar." });
+      setResults(prev => prev.map(r =>
+        r.taxId === company.taxId ? { ...r, alreadySaved: true } : r
+      ));
+    } catch (err: any) {
+      toast({ title: "Erro ao salvar", description: err.message, variant: "destructive" });
+    } finally {
+      setSavingTaxId(null);
+    }
+  };
+
+  const cadastrarComoAtivo = async (empresa: SearchResult) => {
+    const cnpj = (empresa.taxId || "").replace(/\D/g, "");
+    try {
+      await apiRequest("POST", `/api/cnpj/${cnpj}/import-as-asset`, {});
+      setResults((prev: SearchResult[]) =>
+        prev.map(e => e.taxId === empresa.taxId ? { ...e, alreadyAsset: true } : e)
+      );
+      toast({
+        title: "Ativo criado",
+        description: `${empresa.tradeName || empresa.legalName} cadastrado como ativo NEGOCIO`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets"] });
+    } catch {
+      toast({ title: "Erro ao criar ativo", variant: "destructive" });
     }
   };
 
@@ -714,17 +769,52 @@ export default function MADealsPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       {r.alreadySaved ? (
-                        <Badge className="bg-green-100 text-green-700 border-green-200">
-                          <Check className="w-3 h-3 mr-1" /> No CRM
+                        <Badge className="bg-green-100 text-green-700 border-green-200" data-testid={`badge-no-crm-${i}`}>
+                          <Check className="w-3 h-3 mr-1" /> Já no CRM
                         </Badge>
                       ) : (
-                        <Button
-                          size="sm"
-                          onClick={() => openDealDialog(r)}
-                          data-testid={`button-iniciar-tratativa-${i}`}
-                        >
-                          <PlayCircle className="w-4 h-4 mr-1" /> Iniciar Tratativa
-                        </Button>
+                        <div className="flex items-center gap-1.5 justify-end">
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-xs"
+                                  onClick={() => saveAsLead(r)}
+                                  disabled={savingTaxId === r.taxId}
+                                  data-testid={`button-salvar-empresa-${i}`}
+                                >
+                                  {savingTaxId === r.taxId ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Users className="w-3.5 h-3.5" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Salvar empresa como lead SDR</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                          <Button
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => openDealDialog(r)}
+                            data-testid={`button-iniciar-tratativa-${i}`}
+                          >
+                            <PlayCircle className="w-3.5 h-3.5 mr-1" /> Iniciar Tratativa
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-xs gap-1 text-emerald-600"
+                            onClick={() => cadastrarComoAtivo(r)}
+                            disabled={r.alreadyAsset}
+                            data-testid={`button-cadastrar-ativo-${i}`}
+                          >
+                            <Building2 className="w-3 h-3" />
+                            {r.alreadyAsset ? "Já é ativo" : "Cadastrar ativo"}
+                          </Button>
+                        </div>
                       )}
                     </TableCell>
                   </TableRow>

@@ -781,14 +781,14 @@ function AtivoCard({ ativo, onEdit, onDelete }: { ativo: any; onEdit: () => void
               const attrs = ativo.attributesJson as Record<string, any> | null;
               if (!attrs?.carCodImovel) return null;
               return (
-                <div className="mt-2 rounded-lg border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-900/10 p-2.5 space-y-1.5" data-testid={`car-info-${ativo.id}`}>
+                <div className="mt-2 rounded-lg border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-900/10 p-2.5 space-y-1.5 overflow-hidden" data-testid={`car-info-${ativo.id}`}>
                   <Link
                     href="/geo-rural"
                     className="flex items-center gap-1.5 text-xs font-semibold text-green-600 hover:text-green-700"
                     data-testid={`badge-car-${ativo.id}`}
                   >
                     <TreePine className="w-3.5 h-3.5 shrink-0" />
-                    CAR: <span className="font-mono">{attrs.carCodImovel}</span>
+                    <span className="truncate min-w-0">CAR: <span className="font-mono">{attrs.carCodImovel}</span></span>
                   </Link>
                   <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
                     {attrs.carMunicipio && <p><span className="font-medium">Município:</span> {attrs.carMunicipio}</p>}

@@ -3,7 +3,7 @@ import type { IStorage } from "../storage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { companies, assets, investorProfiles } from "@shared/schema";
 import { eq } from "drizzle-orm";
-import { uploadToDrive, testDriveConnection } from "../google-drive";
+import { uploadToDrive, testDriveConnection } from "../lib/google-drive";
 import { getOrgId } from "../lib/tenant";
 
 export function registerCommercialRoutes(app: Express, storage: IStorage, db: NodePgDatabase<any>) {
@@ -195,7 +195,7 @@ export function registerCommercialRoutes(app: Express, storage: IStorage, db: No
         </body></html>
       `;
 
-      const fromAddress = "Mavrion Conect <noreply@mavrion.com.br>";
+      const fromAddress = "Mavrion Connect <noreply@mavrion.com.br>";
 
       const result = await resend.emails.send({
         from: fromAddress,
@@ -321,7 +321,7 @@ export function registerCommercialRoutes(app: Express, storage: IStorage, db: No
 
       const orgSettingsData = await storage.getOrgSetting(getOrgId(), "company");
       const orgData = (orgSettingsData?.value as any) || {};
-      vars["minha_empresa.nome"] = orgData.name || "Mavrion Conect";
+      vars["minha_empresa.nome"] = orgData.name || "Mavrion Connect";
       vars["minha_empresa.cnpj"] = orgData.cnpj || "";
       vars["minha_empresa.endereco"] = orgData.address || "";
 
@@ -386,7 +386,7 @@ export function registerCommercialRoutes(app: Express, storage: IStorage, db: No
       const folderName = type === "proposal" ? "Propostas" : "Contratos";
       const fileName = `${name || type}_${id}.pdf`;
 
-      const result = await uploadToDrive(buffer, fileName, "application/pdf", ["Mavrion Conect", folderName]);
+      const result = await uploadToDrive(buffer, fileName, "application/pdf", ["Mavrion Connect", folderName]);
       if (!result || !result.fileId) throw new Error("Resposta inválida do Google Drive");
 
       if (type === "proposal") {

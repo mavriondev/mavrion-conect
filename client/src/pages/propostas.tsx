@@ -907,7 +907,7 @@ export default function PropostasPage() {
       });
       const data = await result.json();
       queryClient.invalidateQueries({ queryKey: ["/api/proposals"] });
-      toast({ title: "Salvo no Google Drive!", description: "Arquivo disponível na pasta Mavrion Conect / Propostas." });
+      toast({ title: "Salvo no Google Drive!", description: "Arquivo disponível na pasta Mavrion Connect / Propostas." });
     } catch (e) {
       toast({ title: "Erro ao salvar no Drive", description: String(e), variant: "destructive" });
     } finally {

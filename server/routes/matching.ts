@@ -3,8 +3,8 @@ import type { IStorage } from "../storage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { matchSuggestions, deals, pipelineStages } from "@shared/schema";
-import { eq, and, asc } from "drizzle-orm";
+import { matchSuggestions, deals, pipelineStages, assets, companies, leads } from "@shared/schema";
+import { eq, and, asc, desc, isNull } from "drizzle-orm";
 import { sendNotification, notifId } from "../notifications";
 import { getOrgId } from "../lib/tenant";
 
@@ -52,7 +52,8 @@ export function matchesRegion(assetLocation: string | null, investorRegions: str
 export function registerMatchingRoutes(app: Express, storage: IStorage, db: NodePgDatabase<any>) {
   app.get(api.matching.investors.list.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
-    const investors = await storage.getInvestors();
+    const orgId = getOrgId(req);
+    const investors = await storage.getInvestors(orgId);
     res.json(investors);
   });
 
@@ -71,6 +72,9 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
   app.patch("/api/matching/investors/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
+      const orgId = getOrgId(req);
+      const investor = await storage.getInvestor(Number(req.params.id));
+      if (!investor || investor.orgId !== orgId) return res.status(404).json({ message: "Investidor não encontrado" });
       const updated = await storage.updateInvestor(Number(req.params.id), req.body);
       res.json(updated);
     } catch (err) { res.status(500).json({ message: "Erro interno" }); }
@@ -79,6 +83,9 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
   app.delete("/api/matching/investors/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
+      const orgId = getOrgId(req);
+      const investor = await storage.getInvestor(Number(req.params.id));
+      if (!investor || investor.orgId !== orgId) return res.status(404).json({ message: "Investidor não encontrado" });
       await storage.deleteInvestor(Number(req.params.id));
       res.status(204).end();
     } catch (err) { res.status(500).json({ message: "Erro interno" }); }
@@ -86,14 +93,19 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
 
   app.get(api.matching.suggestions.list.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
-    const suggestions = await storage.getMatchSuggestions();
+    const orgId = getOrgId(req);
+    const suggestions = await storage.getMatchSuggestions(orgId);
     res.json(suggestions);
   });
 
   app.patch("/api/matching/suggestions/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
+      const orgId = getOrgId(req);
       const { status } = req.body;
+      const [existing] = await db.select().from(matchSuggestions)
+        .where(and(eq(matchSuggestions.id, Number(req.params.id)), eq(matchSuggestions.orgId, orgId)));
+      if (!existing) return res.status(404).json({ message: "Sugestão não encontrada" });
       const [updated] = await db.update(matchSuggestions)
         .set({ status })
         .where(eq(matchSuggestions.id, Number(req.params.id)))
@@ -101,6 +113,20 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
       res.json(updated);
     } catch (err) {
       res.status(500).json({ message: "Internal Error" });
+    }
+  });
+
+  app.delete("/api/matching/suggestions/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const orgId = getOrgId(req);
+      const [existing] = await db.select().from(matchSuggestions)
+        .where(and(eq(matchSuggestions.id, Number(req.params.id)), eq(matchSuggestions.orgId, orgId)));
+      if (!existing) return res.status(404).json({ message: "Sugestão não encontrada" });
+      await db.delete(matchSuggestions).where(eq(matchSuggestions.id, Number(req.params.id)));
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ message: "Erro ao remover sugestão" });
     }
   });
 
@@ -137,8 +163,9 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
       }
 
       const asset = await storage.getAsset(suggestion.assetId!);
-      const investors = await storage.getInvestors();
-      const investor = investors.find(i => i.id === suggestion.investorProfileId);
+      if (asset && asset.orgId !== orgId) return res.status(404).json({ message: "Ativo não encontrado" });
+      const investor = suggestion.investorProfileId ? await storage.getInvestor(suggestion.investorProfileId) : null;
+      if (investor && investor.orgId !== orgId) return res.status(404).json({ message: "Investidor não encontrado" });
 
       const dealTitle = title || `Match: ${asset?.title || "Ativo"} ↔ ${investor?.name || "Investidor"}`;
 
@@ -168,11 +195,20 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
   app.post(api.matching.suggestions.run.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
-      const allAssets = await storage.getAssets();
-      const allInvestors = await storage.getInvestors();
+      const orgId = getOrgId(req);
+      const allAssets = await storage.getAssets(orgId);
+      const allInvestors = await storage.getInvestors(orgId);
       let matchesFound = 0;
 
       for (const asset of allAssets) {
+        // Ativo fechado, arquivado ou em negociação: não gerar novas sugestões,
+        // pois o deal já está concluído ou em andamento exclusivo com outro comprador
+        if (["fechado", "arquivado", "em_negociacao"].includes(asset.statusAtivo || "")) continue;
+
+        // Exclusividade ativa: durante o período de exclusividade contratual,
+        // o ativo não deve ser oferecido a outros investidores/compradores
+        if (asset.exclusivoAte && new Date(asset.exclusivoAte) > new Date()) continue;
+
         for (const investor of allInvestors) {
           const existing = await db.select().from(matchSuggestions)
             .where(
@@ -275,8 +311,7 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
         }
       }
 
-      const orgId = getOrgId(req);
-      const allCompanies = await storage.getCompanies?.() ?? [];
+      const allCompanies = await storage.getCompanies?.(orgId) ?? [];
       const compradores = allCompanies.filter((c: any) => {
         const prefs = (c.enrichmentData as any) || {};
         return prefs.buyerType === "estrategico" || ((prefs.cnaeInteresse || []).length > 0);
@@ -292,6 +327,10 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
       };
 
       for (const asset of allAssets) {
+        // Mesmas regras de skip: ativo indisponível ou em exclusividade
+        if (["fechado", "arquivado", "em_negociacao"].includes(asset.statusAtivo || "")) continue;
+        if (asset.exclusivoAte && new Date(asset.exclusivoAte) > new Date()) continue;
+
         for (const comprador of compradores) {
           const enrichment = (comprador.enrichmentData as any) || {};
           const cnaeInteresse: string[] = enrichment.cnaeInteresse || [];
@@ -364,6 +403,217 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
     } catch (err) {
       console.error("Matching engine error:", err);
       res.status(500).json({ message: "Matching failed" });
+    }
+  });
+
+  app.post("/api/matching/assets/:assetId/add-buyer", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const assetId = parseInt(req.params.assetId);
+    if (isNaN(assetId)) return res.status(400).json({ message: "assetId inválido" });
+
+    const schema = z.object({ companyId: z.number().int().positive(), companyName: z.string().optional(), source: z.string().optional() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "companyId (número) obrigatório" });
+    const { companyId, companyName, source } = parsed.data;
+
+    const orgId = getOrgId(req);
+    try {
+      const [asset] = await db.select({ id: assets.id }).from(assets).where(and(eq(assets.id, assetId), eq(assets.orgId, orgId))).limit(1);
+      if (!asset) return res.status(404).json({ message: "Ativo não encontrado" });
+
+      const [company] = await db.select({ id: companies.id, legalName: companies.legalName }).from(companies).where(and(eq(companies.id, companyId), eq(companies.orgId, orgId))).limit(1);
+      if (!company) return res.status(404).json({ message: "Empresa não encontrada" });
+
+      const existing = await db.select().from(matchSuggestions).where(
+        and(eq(matchSuggestions.assetId, assetId), eq(matchSuggestions.orgId, orgId))
+      );
+      const alreadyLinked = existing.some(e => (e.reasonsJson as any)?.compradorId === companyId);
+      if (alreadyLinked) {
+        return res.status(200).json({ alreadyLinked: true });
+      }
+
+      const buyerName = companyName || company.legalName || "Empresa";
+      const [suggestion] = await db.insert(matchSuggestions).values({
+        orgId,
+        assetId,
+        investorProfileId: null,
+        score: 70,
+        reasonsJson: {
+          tipo: "estrategico",
+          compradorId: companyId,
+          compradorNome: buyerName,
+          reasons: ["Importado da Prospecção Reversa"],
+          source: source || "manual_import",
+        },
+        status: "new",
+      }).returning();
+
+      res.status(201).json(suggestion);
+    } catch (err) {
+      console.error("Add buyer error:", err);
+      res.status(500).json({ message: "Erro ao vincular comprador ao ativo" });
+    }
+  });
+
+  app.post("/api/matching/assets/:assetId/importar-comprador", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const assetId = parseInt(req.params.assetId);
+    if (isNaN(assetId)) return res.status(400).json({ message: "assetId inválido" });
+
+    const schema = z.object({
+      cnpj: z.string().min(11),
+      tradeName: z.string().optional(),
+      legalName: z.string().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "CNPJ obrigatório", errors: parsed.error.errors });
+    const { cnpj, tradeName, legalName } = parsed.data;
+
+    const orgId = getOrgId(req);
+    try {
+      const [asset] = await db.select().from(assets).where(and(eq(assets.id, assetId), eq(assets.orgId, orgId))).limit(1);
+      if (!asset) return res.status(404).json({ message: "Ativo não encontrado" });
+
+      const cnpjClean = cnpj.replace(/\D/g, "");
+      const [existingCompany] = await db.select().from(companies)
+        .where(and(eq(companies.cnpj, cnpjClean), eq(companies.orgId, orgId))).limit(1);
+
+      let company = existingCompany;
+      if (!company) {
+        const [created] = await db.insert(companies).values({
+          orgId,
+          cnpj: cnpjClean,
+          legalName: legalName || tradeName || cnpjClean,
+          tradeName: tradeName || null,
+          source: "prospeccao_ativo",
+        } as any).returning();
+        company = created;
+      }
+
+      const [existingLead] = await db.select().from(leads)
+        .where(and(eq(leads.companyId, company.id), eq(leads.orgId, orgId), eq(leads.source, "prospeccao_ativo"))).limit(1);
+
+      let lead = existingLead;
+      if (!lead) {
+        const [created] = await db.insert(leads).values({
+          orgId,
+          companyId: company.id,
+          source: "prospeccao_ativo",
+          status: "new",
+          score: 60,
+        }).returning();
+        lead = created;
+      }
+
+      const [firstStage] = await db.select().from(pipelineStages)
+        .where(eq(pipelineStages.pipelineType, "ASSET"))
+        .orderBy(asc(pipelineStages.order))
+        .limit(1);
+
+      if (!firstStage) return res.status(400).json({ message: "Nenhum estágio ASSET configurado no pipeline" });
+
+      const companyName = tradeName || legalName || company.legalName || "Empresa";
+      const dealTitle = `${companyName} — Interesse em ${asset.title || "Ativo"}`;
+
+      const [existingDeal] = await db.select().from(deals)
+        .where(and(
+          eq(deals.assetId, assetId),
+          eq(deals.companyId, company.id),
+          eq(deals.orgId, orgId),
+          eq(deals.pipelineType, "ASSET")
+        )).limit(1);
+
+      let deal = existingDeal;
+      if (!deal) {
+        const [created] = await db.insert(deals).values({
+          orgId,
+          pipelineType: "ASSET",
+          stageId: firstStage.id,
+          title: dealTitle,
+          assetId,
+          companyId: company.id,
+          source: "PROSPECCAO",
+          amountEstimate: asset.priceAsking || null,
+          labels: ["Prospecção"],
+        } as any).returning();
+        deal = created;
+      }
+
+      const existingMatch = await db.select().from(matchSuggestions).where(
+        and(eq(matchSuggestions.assetId, assetId), eq(matchSuggestions.orgId, orgId))
+      );
+      const alreadyLinked = existingMatch.some(e => (e.reasonsJson as any)?.compradorId === company.id);
+      if (!alreadyLinked) {
+        await db.insert(matchSuggestions).values({
+          orgId,
+          assetId,
+          investorProfileId: null,
+          score: 70,
+          reasonsJson: {
+            tipo: "estrategico",
+            compradorId: company.id,
+            compradorNome: companyName,
+            reasons: ["Importado da Prospecção Reversa"],
+            source: "prospeccao_ativo",
+          },
+          status: "new",
+        });
+      }
+
+      res.status(201).json({ company, lead, deal, alreadyExisted: !!existingCompany });
+    } catch (err) {
+      console.error("Importar comprador error:", err);
+      res.status(500).json({ message: "Erro ao importar comprador" });
+    }
+  });
+
+  app.get("/api/matching/assets/:id/suggestions", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const orgId = getOrgId(req);
+    const assetId = Number(req.params.id);
+
+    try {
+      const suggestions = await db
+        .select()
+        .from(matchSuggestions)
+        .where(
+          and(
+            eq(matchSuggestions.assetId, assetId),
+            eq(matchSuggestions.orgId, orgId)
+          )
+        )
+        .orderBy(desc(matchSuggestions.score));
+
+      const enriched = await Promise.all(
+        suggestions.map(async (s) => {
+          let investorName: string | null = null;
+          let investorCnpj: string | null = null;
+          let companyId: number | null = null;
+
+          if (s.investorProfileId) {
+            const inv = await storage.getInvestorProfile(s.investorProfileId).catch(() => null);
+            if (inv) {
+              investorName = inv.name;
+              companyId = (inv as any).companyId || null;
+            }
+          }
+
+          if (!investorName && (s as any).companyId) {
+            const co = await storage.getCompany((s as any).companyId).catch(() => null);
+            if (co) {
+              investorName = co.tradeName || co.legalName;
+              investorCnpj = co.cnpj || null;
+              companyId = co.id;
+            }
+          }
+
+          return { ...s, investorName, investorCnpj, companyId };
+        })
+      );
+
+      res.json(enriched);
+    } catch (err) {
+      res.status(500).json({ message: "Erro ao buscar matches" });
     }
   });
 }

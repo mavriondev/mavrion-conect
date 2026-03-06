@@ -31,6 +31,45 @@ function getOrgId(req: Request): number {
 
 const varredurasAtivas = new Map<string, CafCrawlerJob>();
 
+function calcularScoreCaf(registro: any): { score: number; breakdown: Record<string, any> } {
+  let score = 0;
+  const breakdown: Record<string, any> = {};
+
+  if (registro.areaHa && registro.areaHa > 100) {
+    score += 30;
+    breakdown.areaHaGrande = true;
+  }
+
+  const pronaf = typeof registro.enquadramentoPronaf === "string"
+    ? registro.enquadramentoPronaf.toLowerCase() === "sim"
+    : !!registro.enquadramentoPronaf;
+  if (pronaf) {
+    score += 20;
+    breakdown.pronaf = true;
+  }
+
+  if (registro.rendaBrutaAnual && registro.rendaBrutaAnual > 100000) {
+    score += 20;
+    breakdown.rendaAlta = true;
+  }
+
+  const grupo = (registro.grupo || "").toUpperCase().trim();
+  if (grupo === "V" || grupo === "A/C") {
+    score += 15;
+    breakdown.grupoRelevante = grupo;
+  }
+
+  if (registro.numImoveis && registro.numImoveis > 1) {
+    score += 15;
+    breakdown.multiplosImoveis = registro.numImoveis;
+  }
+
+  breakdown.areaHa = registro.areaHa;
+  breakdown.norionProfile = registro.norionProfile;
+
+  return { score: Math.min(score, 100), breakdown };
+}
+
 function mapLeadToRegistro(lead: CafLead, orgId: number) {
   return {
     orgId,
@@ -116,9 +155,7 @@ async function enviarParaSdr(registroId: number, orgId: number) {
     })
     .returning();
 
-  const score =
-    registro.norionProfile === "alto" ? 80 :
-    registro.norionProfile === "medio" ? 50 : 20;
+  const { score, breakdown } = calcularScoreCaf(registro);
 
   const [lead] = await db
     .insert(leads)
@@ -128,12 +165,12 @@ async function enviarParaSdr(registroId: number, orgId: number) {
       status: "new",
       score,
       scoreBreakdownJson: {
-        norionProfile: registro.norionProfile,
-        areaHa: registro.areaHa,
+        ...breakdown,
         pronaf: registro.enquadramentoPronaf === "Sim",
         situacao: registro.status,
+        origem: "caf_crawler",
       },
-      source: "CAF",
+      source: "caf_crawler",
     })
     .returning();
 
@@ -421,7 +458,16 @@ export function registerCafExtratorRoutes(app: Express) {
         .where(eq(norionCafRegistros.id, parseInt(req.params.id)))
         .returning();
 
-      res.json({ success: true, data: atualizado });
+      let sdrResult = null;
+      if (classificacao === "qualificado" && !atualizado.companyId) {
+        try {
+          sdrResult = await enviarParaSdr(parseInt(req.params.id), orgId);
+        } catch (sdrErr: any) {
+          console.error(`[CAF] Auto-envio ao SDR falhou para registro ${req.params.id}:`, sdrErr.message);
+        }
+      }
+
+      res.json({ success: true, data: atualizado, sdrEnviado: !!sdrResult, sdrResult });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

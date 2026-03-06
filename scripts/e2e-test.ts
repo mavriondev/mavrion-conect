@@ -1045,7 +1045,7 @@ function generateHtmlReport(
   </style>
 </head>
 <body>
-  <h1>Mavrion Conect — Relatório E2E</h1>
+  <h1>Mavrion Connect — Relatório E2E</h1>
   <p class="sub">Gerado em ${new Date().toLocaleString("pt-BR")} · Duração: ${(summary.totalTime / 1000).toFixed(1)}s</p>
   <div class="summary">
     <div class="card"><div class="val rate">${summary.rate}%</div><div class="lbl">Taxa de sucesso</div></div>

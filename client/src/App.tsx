@@ -1,10 +1,12 @@
 import { Switch, Route, useLocation } from "wouter";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/use-auth";
+import { ThemeProvider } from "@/components/theme-provider";
+import { I18nContext, type Lang, getTranslation } from "@/lib/i18n";
 
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
@@ -35,6 +37,9 @@ import ErrorReportsPage from "@/pages/error-reports";
 import ArquiteturaPage from "@/pages/arquitetura";
 import MADealsPage from "@/pages/ma-deals";
 import MapaConexoesPage from "@/pages/mapa-conexoes";
+import HonorariosPage from "@/pages/honorarios";
+import FiiFundosPage from "@/pages/fii-fundos";
+import ShowcasePublico from "@/pages/showcase-publico";
 import Sidebar, { SidebarProvider, MobileTopBar } from "@/components/layout-sidebar";
 import TopBar from "@/components/top-bar";
 import { useErrorCapture } from "@/hooks/use-error-capture";
@@ -170,6 +175,10 @@ function Router() {
         {() => <PrivateRoute component={GeoRuralPage} />}
       </Route>
 
+      <Route path="/fii-fundos">
+        {() => <PrivateRoute component={FiiFundosPage} />}
+      </Route>
+
       <Route path="/analise-agro">
         {() => <PrivateRoute component={AnaliseAgroPage} />}
       </Route>
@@ -198,6 +207,14 @@ function Router() {
         {() => <PrivateRoute component={MapaConexoesPage} />}
       </Route>
 
+      <Route path="/honorarios">
+        {() => <PrivateRoute component={HonorariosPage} />}
+      </Route>
+
+      <Route path="/vitrine/:id">
+        {(params) => <ShowcasePublico id={params.id} />}
+      </Route>
+
       <Route path="/lp/:slug">
         {(params) => <LandingPagePublic slug={params.slug} />}
       </Route>
@@ -223,13 +240,39 @@ function Router() {
   );
 }
 
+function I18nProvider({ children }: { children: any }) {
+  const [lang, setLangState] = useState<Lang>(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("mavrion-lang") as Lang) || "pt";
+    }
+    return "pt";
+  });
+
+  const setLang = (l: Lang) => {
+    setLangState(l);
+    localStorage.setItem("mavrion-lang", l);
+  };
+
+  const t = (key: string, ...args: (string | number)[]) => getTranslation(lang, key, ...args);
+
+  return (
+    <I18nContext.Provider value={{ lang, setLang, t }}>
+      {children}
+    </I18nContext.Provider>
+  );
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Router />
-        <Toaster />
-      </TooltipProvider>
+      <ThemeProvider>
+        <I18nProvider>
+          <TooltipProvider>
+            <Router />
+            <Toaster />
+          </TooltipProvider>
+        </I18nProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

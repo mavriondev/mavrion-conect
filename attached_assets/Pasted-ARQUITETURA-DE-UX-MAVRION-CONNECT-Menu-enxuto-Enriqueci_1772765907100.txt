@@ -1,0 +1,86 @@
+ARQUITETURA DE UX — MAVRION CONNECT
+Menu enxuto + Enriquecimento dentro do ativo e da empresa
+
+PRINCÍPIOS
+
+Menu lateral com o mínimo necessário — navegação principal
+Ferramentas de enriquecimento vivem dentro do ativo ou da empresa
+Ferramentas que servem descoberta E enriquecimento têm dois pontos de entrada:
+
+No menu: modo descoberta (busca livre)
+Dentro do ativo/empresa: modo enriquecimento (contexto já carregado)
+
+
+
+
+MENU LATERAL — ANTES E DEPOIS
+ANTES (atual)                 DEPOIS (proposto)
+─────────────────────         ─────────────────────
+Dashboard                     Dashboard
+Ativos                        Ativos
+Matching                      Matching
+CRM                           CRM
+Prospecção                    Prospecção
+M&A Radar                     Portal
+SDR                           Honorários
+Geo Rural          ←fica      Configurações
+Inteligência Agro  ←dentro
+ANM                ←do
+CAF Crawler        ←ativo
+Portal
+Propostas
+Contratos
+Honorários
+Configurações
+Error Reports
+Geo Rural, Inteligência Agro, ANM e CAF Crawler saem do menu principal.
+Ficam acessíveis apenas dentro do ativo correspondente.
+
+FERRAMENTAS QUE SERVEM OS DOIS LADOS
+Algumas ferramentas têm dupla função.
+A solução é manter no menu apenas o modo descoberta,
+e dentro do ativo/empresa o modo enriquecimento:
+FerramentaNo menu (descoberta)Dentro do ativo (enriquecimento)ANMBuscar processos por UF/substância → importar como ativo MINAAtivo MINA: dados daquele processo específicoSICARBuscar imóveis rurais por região → importar como ativo TERRAAtivo TERRA: validar CAR, área, situaçãoCAFBuscar produtores rurais por UF/municípioAtivo AGRO/TERRA: produtores próximosCNPJAProspecção de empresas por CNAE/estadoEmpresa: enriquecer dados cadastraisCVMBuscar fundos ativos → importar como ativo FII_CRIAtivo FII_CRI: dados do fundo específicoBCB/SICORMunicípios com alto crédito rural (descoberta de regiões)Ativo TERRA/AGRO: crédito rural da regiãoEmbrapa— (não é descoberta)Ativo TERRA/AGRO: solo, NDVI, ZARC, clima
+
+ABAS POR TIPO DE ATIVO
+ATIVO TERRA / AGRO
+├── Informações      dados básicos, preço, área, docs
+├── Documentos       checklist, uploads, Google Drive
+├── Matches          investidores compatíveis
+├── Geo & SICAR      mapa, shapefile, validação CAR, relevo, acesso hídrico
+├── Embrapa          solo, NDVI, ZARC por cultura, clima, score agro
+└── CAF / PRONAF     produtores rurais próximos, crédito rural (SICOR)
+
+ATIVO MINA
+├── Informações
+├── Documentos
+├── Matches
+├── ANM              processo, substância, fase, eventos, validade
+└── Geo              mapa, polígono de lavra, relevo
+
+ATIVO NEGOCIO / M&A
+├── Informações
+├── Documentos
+├── Matches
+└── Empresa          CNPJA: sócios, faturamento, CNAE, situação, valuation
+
+ATIVO FII_CRI
+├── Informações
+├── Documentos
+├── Matches
+└── CVM / ANBIMA     dados do fundo, DY, PVP, patrimônio, cotistas
+
+ATIVO DESENVOLVIMENTO
+├── Informações
+├── Documentos
+├── Matches
+└── Geo              mapa, polígono, alvará, VGV
+
+ABAS DENTRO DA EMPRESA (comprador/investidor)
+EMPRESA
+├── Dados            razão social, CNPJ, contato, endereço
+├── Enriquecimento   botão "Consultar CNPJA" → preenche sócios, faturamento, CNAE
+├── Negociações      histórico de deals vinculados a essa empresa
+├── Leads & SDR      leads gerados por essa empresa
+└── Agro (condicional — se CNAE for agrícola)
+                     BCB/SICOR: crédito rural contratado por essa empresa/região

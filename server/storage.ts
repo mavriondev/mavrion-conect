@@ -38,16 +38,16 @@ export interface IStorage {
   updateConnector(id: number, data: Partial<Connector>): Promise<Connector>;
   deleteConnector(id: number): Promise<void>;
 
-  getCompanies(): Promise<Company[]>;
+  getCompanies(orgId?: number): Promise<Company[]>;
   createCompany(company: InsertCompany): Promise<Company>;
 
-  getContacts(): Promise<Contact[]>;
+  getContacts(orgId?: number): Promise<Contact[]>;
   createContact(contact: InsertContact): Promise<Contact>;
 
-  getLeadsQueue(): Promise<(Lead & { company: Company })[]>;
-  updateLead(id: number, status: string): Promise<Lead>;
+  getLeadsQueue(orgId?: number): Promise<(Lead & { company: Company })[]>;
+  updateLead(id: number, status: string, notes?: string): Promise<Lead>;
 
-  getDeals(pipelineType?: string, orgId?: number): Promise<(Deal & { company: Company | null })[]>;
+  getDeals(pipelineType?: string, orgId?: number, companyId?: number): Promise<(Deal & { company: Company | null })[]>;
   getDeal(id: number): Promise<(Deal & { company: Company | null }) | undefined>;
   createDeal(deal: InsertDeal): Promise<Deal>;
   updateDeal(id: number, deal: Partial<InsertDeal>): Promise<Deal>;
@@ -67,13 +67,13 @@ export interface IStorage {
   updateAsset(id: number, data: Partial<InsertAsset>): Promise<Asset>;
   deleteAsset(id: number): Promise<void>;
 
-  getInvestors(): Promise<InvestorProfile[]>;
+  getInvestors(orgId?: number): Promise<InvestorProfile[]>;
   getInvestor(id: number): Promise<InvestorProfile | undefined>;
   createInvestor(investor: InsertInvestorProfile): Promise<InvestorProfile>;
   updateInvestor(id: number, data: Partial<InsertInvestorProfile>): Promise<InvestorProfile>;
   deleteInvestor(id: number): Promise<void>;
 
-  getMatchSuggestions(): Promise<(MatchSuggestion & { asset: Asset, investor: InvestorProfile })[]>;
+  getMatchSuggestions(orgId: number): Promise<(MatchSuggestion & { asset: Asset, investor: InvestorProfile })[]>;
 
   getProposalTemplates(orgId: number): Promise<ProposalTemplate[]>;
   getProposalTemplate(id: number): Promise<ProposalTemplate | undefined>;
@@ -188,7 +188,10 @@ export class DatabaseStorage implements IStorage {
     await db.delete(connectors).where(eq(connectors.id, id));
   }
 
-  async getCompanies(): Promise<Company[]> {
+  async getCompanies(orgId?: number): Promise<Company[]> {
+    if (orgId) {
+      return await db.select().from(companies).where(eq(companies.orgId, orgId)).orderBy(desc(companies.createdAt));
+    }
     return await db.select().from(companies).orderBy(desc(companies.createdAt));
   }
 
@@ -197,7 +200,10 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getContacts(): Promise<Contact[]> {
+  async getContacts(orgId?: number): Promise<Contact[]> {
+    if (orgId) {
+      return await db.select().from(contacts).where(eq(contacts.orgId, orgId)).orderBy(desc(contacts.createdAt));
+    }
     return await db.select().from(contacts).orderBy(desc(contacts.createdAt));
   }
 
@@ -206,31 +212,38 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getLeadsQueue(): Promise<(Lead & { company: Company })[]> {
-    const rows = await db.select({ lead: leads, company: companies })
+  async getLeadsQueue(orgId?: number): Promise<(Lead & { company: Company })[]> {
+    let query = db.select({ lead: leads, company: companies })
       .from(leads)
       .innerJoin(companies, eq(leads.companyId, companies.id))
       .orderBy(desc(leads.createdAt));
+    if (orgId) {
+      query = query.where(eq(leads.orgId, orgId)) as any;
+    }
+    const rows = await query;
     return rows.map(r => ({ ...r.lead, company: r.company }));
   }
 
-  async updateLead(id: number, status: string): Promise<Lead> {
-    const [updated] = await db.update(leads).set({ status }).where(eq(leads.id, id)).returning();
+  async updateLead(id: number, status: string, notes?: string): Promise<Lead> {
+    const updates: any = { status, updatedAt: new Date() };
+    if (notes !== undefined) updates.notes = notes;
+    const [updated] = await db.update(leads).set(updates).where(eq(leads.id, id)).returning();
     return updated;
   }
 
-  async getDeals(pipelineType?: string, orgId?: number): Promise<(Deal & { company: Company | null })[]> {
+  async getDeals(pipelineType?: string, orgId?: number, companyId?: number): Promise<(Deal & { company: Company | null })[]> {
     const conditions: any[] = [];
     if (pipelineType) conditions.push(eq(deals.pipelineType, pipelineType));
     if (orgId) conditions.push(eq(deals.orgId, orgId));
+    if (companyId) conditions.push(eq(deals.companyId, companyId));
     let query = db.select({ deal: deals, company: companies })
       .from(deals)
       .leftJoin(companies, eq(deals.companyId, companies.id))
       .orderBy(desc(deals.createdAt));
     if (conditions.length === 1) {
       query = query.where(conditions[0]) as any;
-    } else if (conditions.length === 2) {
-      query = query.where(and(conditions[0], conditions[1])) as any;
+    } else if (conditions.length > 1) {
+      query = query.where(and(...conditions)) as any;
     }
     const rows = await query;
     return rows.map(r => ({ ...r.deal, company: r.company }));
@@ -326,7 +339,10 @@ export class DatabaseStorage implements IStorage {
     await db.delete(assets).where(eq(assets.id, id));
   }
 
-  async getInvestors(): Promise<InvestorProfile[]> {
+  async getInvestors(orgId?: number): Promise<InvestorProfile[]> {
+    if (orgId) {
+      return await db.select().from(investorProfiles).where(eq(investorProfiles.orgId, orgId)).orderBy(desc(investorProfiles.createdAt));
+    }
     return await db.select().from(investorProfiles).orderBy(desc(investorProfiles.createdAt));
   }
 
@@ -350,12 +366,13 @@ export class DatabaseStorage implements IStorage {
     await db.delete(investorProfiles).where(eq(investorProfiles.id, id));
   }
 
-  async getMatchSuggestions(): Promise<(MatchSuggestion & { asset: Asset, investor: InvestorProfile })[]> {
-    const rows = await db.select({ match: matchSuggestions, asset: assets, investor: investorProfiles })
+  async getMatchSuggestions(orgId: number): Promise<(MatchSuggestion & { asset: Asset, investor: InvestorProfile })[]> {
+    const rows = await db.selectDistinctOn([matchSuggestions.assetId, matchSuggestions.investorProfileId], { match: matchSuggestions, asset: assets, investor: investorProfiles })
       .from(matchSuggestions)
       .innerJoin(assets, eq(matchSuggestions.assetId, assets.id))
       .innerJoin(investorProfiles, eq(matchSuggestions.investorProfileId, investorProfiles.id))
-      .orderBy(desc(matchSuggestions.createdAt));
+      .where(eq(matchSuggestions.orgId, orgId))
+      .orderBy(matchSuggestions.assetId, matchSuggestions.investorProfileId, desc(matchSuggestions.createdAt));
     return rows.map(r => ({ ...r.match, asset: r.asset, investor: r.investor }));
   }
 

@@ -3,8 +3,8 @@ import type { IStorage } from "../storage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { dealComments } from "@shared/schema";
-import { sql } from "drizzle-orm";
+import { dealComments, assets, matchSuggestions, portalListings } from "@shared/schema";
+import { sql, eq, and } from "drizzle-orm";
 import { audit, diff } from "../audit";
 import { sendNotification, notifId } from "../notifications";
 import { getOrgId } from "../lib/tenant";
@@ -13,7 +13,8 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
   app.get(api.crm.deals.list.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     const user = req.user as any;
-    const dealsList = await storage.getDeals(req.query.pipelineType as string | undefined, user?.orgId);
+    const companyIdParam = req.query.companyId ? Number(req.query.companyId) : undefined;
+    const dealsList = await storage.getDeals(req.query.pipelineType as string | undefined, user?.orgId, companyIdParam);
     const commentCounts = await db
       .select({ dealId: dealComments.dealId, count: sql<number>`count(*)::int` })
       .from(dealComments)
@@ -48,7 +49,7 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
         }
       }
 
-      const data = await storage.createDeal({ ...input, orgId: getOrgId() });
+      const data = await storage.createDeal({ ...input, orgId: getOrgId(req) });
       const user = req.user as any;
       if (user) {
         await audit({
@@ -67,8 +68,10 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
   app.patch(api.crm.deals.update.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
+      const orgId = getOrgId(req);
       const id = Number(req.params.id);
       const before = await storage.getDeal(id);
+      if (!before || before.orgId !== orgId) return res.status(404).json({ message: "Deal não encontrado" });
       const input = api.crm.deals.update.input.parse(req.body);
       const data = await storage.updateDeal(id, input);
       const user = req.user as any;
@@ -85,16 +88,47 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
           if (changes.stageId) {
             const stages = await storage.getPipelineStages();
             const newStage = stages.find(s => s.id === data.stageId);
-            if (newStage?.name === "Fechamento") {
+            const stageName = newStage?.name || "";
+
+            if (stageName === "Fechamento") {
               sendNotification({
                 id: notifId(),
                 type: "deal_stage",
-                orgId: getOrgId(),
+                orgId: getOrgId(req),
                 title: "Deal chegou ao Fechamento",
                 message: `"${data.title}" entrou na etapa de Fechamento!`,
                 link: "/crm",
                 createdAt: new Date().toISOString(),
               });
+
+              if (data.assetId) {
+                await db.update(assets)
+                  .set({ statusAtivo: "fechado" } as any)
+                  .where(and(eq(assets.id, data.assetId), eq(assets.orgId, orgId)));
+
+                await db.update(matchSuggestions)
+                  .set({ status: "dismissed" })
+                  .where(and(
+                    eq(matchSuggestions.assetId, data.assetId),
+                    eq(matchSuggestions.orgId, orgId),
+                    eq(matchSuggestions.status, "new")
+                  ));
+
+                await db.update(portalListings)
+                  .set({ status: "archived" } as any)
+                  .where(and(
+                    eq(portalListings.assetId, data.assetId),
+                    eq(portalListings.orgId, orgId),
+                    eq(portalListings.status, "published")
+                  ));
+              }
+            }
+
+            const negotiationStages = ["Due Diligence", "LOI / Carta de Intenção", "LOI", "Negociação Final"];
+            if (negotiationStages.includes(stageName) && data.assetId) {
+              await db.update(assets)
+                .set({ statusAtivo: "em_negociacao" } as any)
+                .where(and(eq(assets.id, data.assetId), eq(assets.orgId, orgId)));
             }
           }
         }
@@ -109,8 +143,9 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
   app.get("/api/crm/deals/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
+      const orgId = getOrgId(req);
       const deal = await storage.getDeal(Number(req.params.id));
-      if (!deal) return res.status(404).json({ message: "Deal não encontrado" });
+      if (!deal || deal.orgId !== orgId) return res.status(404).json({ message: "Deal não encontrado" });
       res.json(deal);
     } catch (err) { res.status(500).json({ message: "Erro interno" }); }
   });
@@ -118,11 +153,13 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
   app.delete("/api/crm/deals/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
+      const orgId = getOrgId(req);
       const id = Number(req.params.id);
       const deal = await storage.getDeal(id);
+      if (!deal || deal.orgId !== orgId) return res.status(404).json({ message: "Deal não encontrado" });
       await storage.deleteDeal(id);
       const user = req.user as any;
-      if (user && deal) {
+      if (user) {
         await audit({
           userId: user.id, userName: user.username,
           entity: "deal", entityId: id, entityTitle: deal.title,
@@ -158,12 +195,12 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
 
     if (needsInvestorSeed && investorStages.length === 0) {
       for (let i = 0; i < investorWorkflow.length; i++) {
-        await storage.createPipelineStage({ orgId: getOrgId(), pipelineType: "INVESTOR", name: investorWorkflow[i], order: i + 1, color: null });
+        await storage.createPipelineStage({ orgId: getOrgId(req), pipelineType: "INVESTOR", name: investorWorkflow[i], order: i + 1, color: null });
       }
     }
     if (needsMaSeed && assetStages.length === 0) {
       for (let i = 0; i < maWorkflow.length; i++) {
-        await storage.createPipelineStage({ orgId: getOrgId(), pipelineType: "ASSET", name: maWorkflow[i].name, order: i + 1, color: maWorkflow[i].color });
+        await storage.createPipelineStage({ orgId: getOrgId(req), pipelineType: "ASSET", name: maWorkflow[i].name, order: i + 1, color: maWorkflow[i].color });
       }
       console.log("✓ Estágios M&A criados no pipeline de Ativos");
     }
@@ -183,7 +220,7 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
       const stages = await storage.getPipelineStages();
       const sameType = stages.filter(s => s.pipelineType === pipelineType);
       const order = sameType.length > 0 ? Math.max(...sameType.map(s => s.order)) + 1 : 1;
-      const stage = await storage.createPipelineStage({ orgId: getOrgId(), pipelineType, name, order, color: color || null });
+      const stage = await storage.createPipelineStage({ orgId: getOrgId(req), pipelineType, name, order, color: color || null });
       res.status(201).json(stage);
     } catch (err) { res.status(500).json({ message: "Erro interno" }); }
   });
@@ -211,15 +248,19 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
 
   app.get(api.crm.contacts.list.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
-    const contacts = await storage.getContacts();
+    const orgId = getOrgId(req);
+    const contacts = await storage.getContacts(orgId);
     res.json(contacts);
   });
 
   app.get("/api/deal-comments", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
+      const orgId = getOrgId(req);
       const dealId = Number(req.query.dealId);
       if (!dealId) return res.status(400).json({ message: "dealId é obrigatório" });
+      const deal = await storage.getDeal(dealId);
+      if (!deal || deal.orgId !== orgId) return res.status(404).json({ message: "Deal não encontrado" });
       const comments = await storage.getDealComments(dealId);
       res.json(comments);
     } catch (err) { res.status(500).json({ message: "Erro interno" }); }
@@ -228,8 +269,11 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
   app.post("/api/deal-comments", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
+      const orgId = getOrgId(req);
       const { dealId, content, authorName } = req.body;
       if (!dealId || !content) return res.status(400).json({ message: "dealId e content são obrigatórios" });
+      const deal = await storage.getDeal(dealId);
+      if (!deal || deal.orgId !== orgId) return res.status(404).json({ message: "Deal não encontrado" });
       const comment = await storage.createDealComment({ dealId, content, authorName: authorName || "Usuário" });
       res.status(201).json(comment);
     } catch (err) { res.status(500).json({ message: "Erro interno" }); }
@@ -246,7 +290,10 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
   app.get("/api/crm/deals/:id/activities", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
+      const orgId = getOrgId(req);
       const dealId = Number(req.params.id);
+      const deal = await storage.getDeal(dealId);
+      if (!deal || deal.orgId !== orgId) return res.status(404).json({ message: "Deal não encontrado" });
       const activities = await db.execute(
         sql`SELECT * FROM deal_activities WHERE deal_id = ${dealId} ORDER BY created_at DESC`
       );
@@ -259,7 +306,10 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
   app.post("/api/crm/deals/:id/activities", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
+      const orgId = getOrgId(req);
       const dealId = Number(req.params.id);
+      const deal = await storage.getDeal(dealId);
+      if (!deal || deal.orgId !== orgId) return res.status(404).json({ message: "Deal não encontrado" });
       const { type, description } = req.body;
       const user = req.user as any;
       await db.execute(
@@ -275,7 +325,7 @@ export function registerCrmRoutes(app: Express, storage: IStorage, db: NodePgDat
   app.get(api.stats.dashboard.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
     const user = req.user as any;
-    const stats = await storage.getDashboardStats(getOrgId());
+    const stats = await storage.getDashboardStats(getOrgId(req));
     res.json(stats);
   });
 }

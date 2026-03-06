@@ -1,8 +1,8 @@
 import type { Express } from "express";
 import type { IStorage } from "../storage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { assets } from "@shared/schema";
-import { sql } from "drizzle-orm";
+import { assets, sicarImoveisCache, norionCafRegistros } from "@shared/schema";
+import { sql, eq, ilike, and, gte, lte } from "drizzle-orm";
 import { getCached, setCached } from "../cache";
 import { getOrgId } from "../lib/tenant";
 import {
@@ -17,7 +17,98 @@ const SICAR_WFS = "https://geoserver.car.gov.br/geoserver/sicar/wfs";
 const CAR_PUBLIC_URL = "https://consultapublica.car.gov.br/publico/imoveis/index";
 const IBGE_WFS = "https://geoservicos.ibge.gov.br/geoserver/wfs";
 const ELEVATION_API = "https://api.opentopodata.org/v1/srtm30m";
+const OVERPASS_API = "https://overpass-api.de/api/interpreter";
 const UF_LIST = ["AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO"];
+
+function osmToGeoJSON(elements: any[]): any {
+  const features: any[] = [];
+  for (const el of elements) {
+    if (!el.geometry && !el.lat) continue;
+    let geom: any = null;
+    if (el.type === "way" && el.geometry) {
+      const coords = el.geometry.map((n: any) => [n.lon, n.lat]);
+      geom = { type: "LineString", coordinates: coords };
+    } else if (el.type === "node" && el.lat != null) {
+      geom = { type: "Point", coordinates: [el.lon, el.lat] };
+    } else if (el.type === "relation" && el.members) {
+      const memberLines: number[][][] = [];
+      for (const m of el.members) {
+        if (m.geometry && m.geometry.length > 1) {
+          memberLines.push(m.geometry.map((n: any) => [n.lon, n.lat]));
+        }
+      }
+      if (memberLines.length === 1) {
+        geom = { type: "LineString", coordinates: memberLines[0] };
+      } else if (memberLines.length > 1) {
+        geom = { type: "MultiLineString", coordinates: memberLines };
+      }
+    }
+    if (geom) {
+      features.push({
+        type: "Feature",
+        properties: el.tags || {},
+        geometry: geom,
+      });
+    }
+  }
+  return { type: "FeatureCollection", features };
+}
+
+async function fetchOSMWater(centLat: number, centLng: number, padDeg: number = 0.15): Promise<any> {
+  const cacheKey = `osm_water:${centLat.toFixed(3)},${centLng.toFixed(3)},${padDeg}`;
+  const cached = await getCached<any>("geo", cacheKey);
+  if (cached) return cached;
+
+  const south = centLat - padDeg, north = centLat + padDeg;
+  const west = centLng - padDeg, east = centLng + padDeg;
+  const bb = `${south},${west},${north},${east}`;
+  const query = `[out:json][timeout:15];(way["waterway"~"river|stream|canal"](${bb});relation["waterway"~"river|stream"](${bb});way["natural"~"water|lake|reservoir"](${bb});relation["natural"~"water|lake|reservoir"](${bb}););out geom 100;`;
+  try {
+    const r = await fetch(OVERPASS_API, {
+      method: "POST",
+      body: `data=${encodeURIComponent(query)}`,
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!r.ok) return { type: "FeatureCollection", features: [] };
+    const text = await r.text();
+    if (text.startsWith("<")) return { type: "FeatureCollection", features: [] };
+    const data = JSON.parse(text);
+    const geojson = osmToGeoJSON(data.elements || []);
+    await setCached("geo", cacheKey, geojson);
+    return geojson;
+  } catch {
+    return { type: "FeatureCollection", features: [] };
+  }
+}
+
+async function fetchOSMPower(centLat: number, centLng: number, padDeg: number = 0.15): Promise<any> {
+  const cacheKey = `osm_power:${centLat.toFixed(3)},${centLng.toFixed(3)},${padDeg}`;
+  const cached = await getCached<any>("geo", cacheKey);
+  if (cached) return cached;
+
+  const south = centLat - padDeg, north = centLat + padDeg;
+  const west = centLng - padDeg, east = centLng + padDeg;
+  const bb = `${south},${west},${north},${east}`;
+  const query = `[out:json][timeout:15];(way["power"~"line|minor_line|cable"](${bb});node["power"~"tower|pole|substation"](${bb}););out geom 100;`;
+  try {
+    const r = await fetch(OVERPASS_API, {
+      method: "POST",
+      body: `data=${encodeURIComponent(query)}`,
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!r.ok) return { type: "FeatureCollection", features: [] };
+    const text = await r.text();
+    if (text.startsWith("<")) return { type: "FeatureCollection", features: [] };
+    const data = JSON.parse(text);
+    const geojson = osmToGeoJSON(data.elements || []);
+    await setCached("geo", cacheKey, geojson);
+    return geojson;
+  } catch {
+    return { type: "FeatureCollection", features: [] };
+  }
+}
 
 function sanitizeAnmInput(val: unknown, pattern: RegExp): string | null {
   if (!val || typeof val !== "string") return null;
@@ -367,17 +458,75 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         if (match) linkedCompanyId = match.id;
       }
 
+      let latitude: number | null = null;
+      let longitude: number | null = null;
+      let codigoIbge: string | null = null;
+      let municipio: string | null = null;
+
+      try {
+        const geoParams = new URLSearchParams({
+          where: `PROCESSO='${processo.replace(/[^0-9/]/g, "")}'`,
+          outFields: "PROCESSO",
+          returnGeometry: "true",
+          geometryType: "esriGeometryPolygon",
+          outSR: "4326",
+          f: "json",
+        });
+        const geoResp = await fetch(`${ANM_MAPSERVER_URL}?${geoParams.toString()}`);
+        if (geoResp.ok) {
+          const geoData = await geoResp.json() as any;
+          const geojson = await esriToGeoJSON(geoData.features || []);
+          if (geojson.features?.length > 0) {
+            const [lat, lng] = centroidFromGeometry(geojson.features[0].geometry);
+            if (lat && lng && !isNaN(lat) && !isNaN(lng)) {
+              latitude = Math.round(lat * 1000000) / 1000000;
+              longitude = Math.round(lng * 1000000) / 1000000;
+
+              try {
+                const ibgeResp = await fetch(`https://servicodados.ibge.gov.br/api/v1/localidades/municipios?view=nivelado&lat=${latitude}&lon=${longitude}`, { signal: AbortSignal.timeout(8000) });
+                if (!ibgeResp.ok) {
+                  const nomResp = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&zoom=10`, {
+                    headers: { "User-Agent": "MavrionConnect/1.0" },
+                    signal: AbortSignal.timeout(8000),
+                  });
+                  if (nomResp.ok) {
+                    const nomData = await nomResp.json() as any;
+                    municipio = nomData.address?.city || nomData.address?.town || nomData.address?.municipality || null;
+                    const extratags = nomData.extratags || {};
+                    codigoIbge = extratags["IBGE:GEOCODIGO"] || extratags["ibge:geocodigo"] || null;
+                  }
+                } else {
+                  const ibgeData = await ibgeResp.json() as any;
+                  if (Array.isArray(ibgeData) && ibgeData.length > 0) {
+                    codigoIbge = String(ibgeData[0].id || ibgeData[0]["municipio-id"] || "");
+                    municipio = ibgeData[0].nome || ibgeData[0]["municipio-nome"] || null;
+                  }
+                }
+              } catch {}
+            }
+          }
+        }
+      } catch (geoErr: any) {
+        console.error("ANM geo lookup (non-fatal):", geoErr.message);
+      }
+
       const asset = await storage.createAsset({
         orgId: getOrgId(),
         type: "MINA",
         title: `${substancia || "Processo"} - ${processo}`,
         description: `Processo minerário ANM: ${processo}\nTitular: ${nome || "N/A"}\nFase: ${fase || "N/A"}\nSubstância: ${substancia || "N/A"}\nUso: ${uso || "N/A"}\nÚltimo Evento: ${ultEvento || "N/A"}`,
-        location: uf || null,
+        location: municipio ? `${municipio}/${uf || ""}` : (uf || null),
         estado: uf || null,
         areaHa: bodyArea ? Number(bodyArea) : null,
         tags: ["ANM", "Importado"],
         anmProcesso: processo,
         linkedCompanyId,
+        camposEspecificos: {
+          latitude,
+          longitude,
+          codigoIbge,
+          municipio,
+        },
         attributesJson: {
           anmNome: nome || null,
           anmFase: fase || null,
@@ -467,13 +616,13 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
       const url = `${SICAR_WFS}?${params.toString()}`;
 
       let lastError = "";
+      let sicarData: any = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
           if (response.ok) {
-            const data = await response.json();
-            await setCached("sicar", sicarCacheKey, data);
-            return res.json(data);
+            sicarData = await response.json();
+            break;
           }
           lastError = `SICAR WFS HTTP ${response.status}`;
           if (response.status === 400) {
@@ -493,9 +642,8 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
             const fallbackUrl = `${SICAR_WFS}?${paramsFallback.toString()}`;
             const fallbackResp = await fetch(fallbackUrl, { signal: AbortSignal.timeout(30000) });
             if (fallbackResp.ok) {
-              const data = await fallbackResp.json();
-              await setCached("sicar", sicarCacheKey, data);
-              return res.json(data);
+              sicarData = await fallbackResp.json();
+              break;
             }
             lastError = `SICAR WFS fallback HTTP ${fallbackResp.status}`;
           }
@@ -504,7 +652,74 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         }
         if (attempt < 2) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
       }
-      throw new Error(lastError);
+
+      if (sicarData) {
+        await setCached("sicar", sicarCacheKey, sicarData);
+
+        setImmediate(async () => {
+          try {
+            const features = sicarData?.features || [];
+            for (const feat of features) {
+              const p = feat.properties || {};
+              const codIm = p.cod_imovel || p.COD_IMOVEL;
+              if (!codIm) continue;
+              await db.execute(sql`
+                INSERT INTO sicar_imoveis_cache (cod_imovel, uf, municipio, num_area, ind_status, ind_tipo, geometry, properties, fetched_at)
+                VALUES (${codIm}, ${ufLower.toUpperCase()}, ${p.municipio || p.nom_municipio || null}, ${p.num_area ? parseFloat(String(p.num_area)) : null}, ${p.ind_status || null}, ${p.ind_tipo || null}, ${JSON.stringify(feat.geometry || null)}::jsonb, ${JSON.stringify(p)}::jsonb, NOW())
+                ON CONFLICT (cod_imovel) DO UPDATE SET
+                  geometry = EXCLUDED.geometry,
+                  properties = EXCLUDED.properties,
+                  num_area = EXCLUDED.num_area,
+                  ind_status = EXCLUDED.ind_status,
+                  ind_tipo = EXCLUDED.ind_tipo,
+                  fetched_at = NOW()
+              `);
+            }
+            console.log(`[SICAR Cache] Persistidos ${features.length} imóveis para ${ufLower.toUpperCase()}`);
+          } catch (cacheErr) {
+            console.error("[SICAR Cache] Erro ao persistir:", cacheErr);
+          }
+        });
+
+        return res.json(sicarData);
+      }
+
+      const conditions: any[] = [eq(sicarImoveisCache.uf, ufLower.toUpperCase())];
+      if (municipio) {
+        conditions.push(ilike(sicarImoveisCache.municipio, `%${String(municipio).replace(/[^a-zA-ZÀ-ÿ\s]/g, "").toUpperCase()}%`));
+      }
+      if (areaMin) conditions.push(gte(sicarImoveisCache.numArea, parseFloat(String(areaMin))));
+      if (areaMax) conditions.push(lte(sicarImoveisCache.numArea, parseFloat(String(areaMax))));
+
+      const whereClause = and(...conditions);
+      const [cachedRows, countResult] = await Promise.all([
+        db.select().from(sicarImoveisCache).where(whereClause).limit(count).offset(startIndex),
+        db.select({ total: sql<number>`count(*)::int` }).from(sicarImoveisCache).where(whereClause),
+      ]);
+
+      if (cachedRows.length > 0) {
+        const totalCached = (countResult[0] as any)?.total || cachedRows.length;
+        const cachedAt = cachedRows[0].fetchedAt ? new Date(cachedRows[0].fetchedAt).toISOString() : null;
+        const featureCollection = {
+          type: "FeatureCollection",
+          features: cachedRows.map(row => ({
+            type: "Feature",
+            geometry: row.geometry,
+            properties: { ...(row.properties as any || {}), cod_imovel: row.codImovel, municipio: row.municipio, num_area: row.numArea, ind_status: row.indStatus, ind_tipo: row.indTipo },
+          })),
+          totalFeatures: totalCached,
+          fromCache: true,
+          cachedAt,
+        };
+        return res.json(featureCollection);
+      }
+
+      res.status(502).json({
+        message: "SICAR indisponível",
+        detail: "O servidor do SICAR (geoserver.car.gov.br) está fora do ar no momento. Não há dados em cache para esta consulta.",
+        portalUrl: CAR_PUBLIC_URL,
+        sicarOffline: true,
+      });
     } catch (err: any) {
       console.error("Geo fazendas error:", err.message);
       res.status(502).json({
@@ -545,7 +760,27 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         fetchLayer("CCAR:BC100_Massa_Dagua_A"),
       ]);
 
-      const result = { rios, massas };
+      let result: any = { rios, massas, fonte: "IBGE" };
+
+      if ((rios?.features?.length || 0) === 0 && (massas?.features?.length || 0) === 0) {
+        const parts = (bbox as string).split(",").map(Number);
+        if (parts.length === 4) {
+          const cLat = (parts[1] + parts[3]) / 2;
+          const cLng = (parts[0] + parts[2]) / 2;
+          const padDeg = Math.max(Math.abs(parts[3] - parts[1]), Math.abs(parts[2] - parts[0])) / 2 + 0.05;
+          const osmWater = await fetchOSMWater(cLat, cLng, padDeg);
+          if (osmWater?.features?.length > 0) {
+            const osmRios = osmWater.features.filter((f: any) => f.properties?.waterway);
+            const osmMassas = osmWater.features.filter((f: any) => f.properties?.natural && !f.properties?.waterway);
+            result = {
+              rios: { type: "FeatureCollection", features: osmRios },
+              massas: { type: "FeatureCollection", features: osmMassas },
+              fonte: "OSM",
+            };
+          }
+        }
+      }
+
       await setCached("geo", geoCacheKey, result);
       res.json(result);
     } catch (err: any) {
@@ -572,11 +807,30 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         outputFormat: "application/json", srsName: "EPSG:4326", count: "200",
         bbox: `${bbox},EPSG:4326`,
       });
-      const r = await fetch(`${IBGE_WFS}?${params}`, { signal: AbortSignal.timeout(25000) });
-      if (!r.ok) throw new Error(`IBGE WFS error: ${r.status}`);
-      const data = await r.json();
-      await setCached("geo", energiaCacheKey, data);
-      res.json(data);
+      let data: any = { type: "FeatureCollection", features: [] };
+      let fonte = "IBGE";
+      try {
+        const r = await fetch(`${IBGE_WFS}?${params}`, { signal: AbortSignal.timeout(25000) });
+        if (r.ok) data = await r.json();
+      } catch {}
+
+      if ((data?.features?.length || 0) === 0) {
+        const parts = (bbox as string).split(",").map(Number);
+        if (parts.length === 4) {
+          const cLat = (parts[1] + parts[3]) / 2;
+          const cLng = (parts[0] + parts[2]) / 2;
+          const padDeg = Math.max(Math.abs(parts[3] - parts[1]), Math.abs(parts[2] - parts[0])) / 2 + 0.05;
+          const osmPower = await fetchOSMPower(cLat, cLng, padDeg);
+          if (osmPower?.features?.length > 0) {
+            data = osmPower;
+            fonte = "OSM";
+          }
+        }
+      }
+
+      const result = { ...data, fonte };
+      await setCached("geo", energiaCacheKey, result);
+      res.json(result);
     } catch (err: any) {
       console.error("Geo energia error:", err.message);
       res.status(502).json({ message: "Erro ao consultar rede elétrica" });
@@ -649,24 +903,61 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         } catch { return null; }
       })();
 
-      const [riosData, massasData, energiaData, elevData] = await Promise.all([
+      const [riosDataIBGE, massasDataIBGE, energiaDataIBGE, elevData] = await Promise.all([
         fetchIBGE("CCAR:BC100_Trecho_Drenagem_L"),
         fetchIBGE("CCAR:BC100_Massa_Dagua_A"),
         fetchIBGE("CCAR:BC100_Trecho_Energia_L"),
         elevPromise,
       ]);
 
-      const temRio = (riosData?.features?.length || 0) > 0;
-      const temLago = (massasData?.features?.length || 0) > 0;
+      let riosData = riosDataIBGE;
+      let massasData = massasDataIBGE;
+      let energiaData = energiaDataIBGE;
+      let fonteHidro = "IBGE";
+      let fonteEnergia = "IBGE";
+
+      const ibgeWaterCount = (riosDataIBGE?.features?.length || 0) + (massasDataIBGE?.features?.length || 0);
+      const ibgeEnergyCount = energiaDataIBGE?.features?.length || 0;
+
+      if (ibgeWaterCount === 0 || ibgeEnergyCount === 0) {
+        const [osmWater, osmPower] = await Promise.all([
+          ibgeWaterCount === 0 ? fetchOSMWater(centLat, centLng, 0.15) : Promise.resolve(null),
+          ibgeEnergyCount === 0 ? fetchOSMPower(centLat, centLng, 0.15) : Promise.resolve(null),
+        ]);
+        if (osmWater && osmWater.features?.length > 0) {
+          riosData = osmWater;
+          massasData = { type: "FeatureCollection", features: [] };
+          fonteHidro = "OSM";
+          console.log(`[Geo] IBGE sem hidrografia — OSM retornou ${osmWater.features.length} features`);
+        }
+        if (osmPower && osmPower.features?.length > 0) {
+          energiaData = osmPower;
+          fonteEnergia = "OSM";
+          console.log(`[Geo] IBGE sem energia — OSM retornou ${osmPower.features.length} features`);
+        }
+      }
+
+      const temRio = fonteHidro === "OSM"
+        ? (riosData?.features?.length || 0) > 0
+        : (riosDataIBGE?.features?.length || 0) > 0;
+      const temLago = fonteHidro === "OSM"
+        ? (riosData?.features || []).some((f: any) => f.properties?.natural === "water" || f.properties?.natural === "lake" || f.properties?.natural === "reservoir")
+        : (massasDataIBGE?.features?.length || 0) > 0;
       const temEnergia = (energiaData?.features?.length || 0) > 0;
-      const qtdRios = riosData?.features?.length || 0;
-      const qtdLagos = massasData?.features?.length || 0;
+      const qtdRios = fonteHidro === "OSM"
+        ? (riosData?.features || []).filter((f: any) => f.properties?.waterway).length
+        : (riosDataIBGE?.features?.length || 0);
+      const qtdLagos = fonteHidro === "OSM"
+        ? (riosData?.features || []).filter((f: any) => f.properties?.natural).length
+        : (massasDataIBGE?.features?.length || 0);
       const qtdEnergia = energiaData?.features?.length || 0;
 
-      const allWaterData = {
-        type: "FeatureCollection",
-        features: [...(riosData?.features || []), ...(massasData?.features || [])],
-      };
+      const allWaterData = fonteHidro === "OSM"
+        ? riosData
+        : {
+            type: "FeatureCollection",
+            features: [...(riosData?.features || []), ...(massasData?.features || [])],
+          };
       const distAguaM = nearestFeatureDistance(centLat, centLng, allWaterData);
       const distEnergiaM = nearestFeatureDistance(centLat, centLng, energiaData);
       const scoreEnergia = classifyEnergia(distEnergiaM, temEnergia);
@@ -699,6 +990,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         distAguaM, distEnergiaM, scoreEnergia,
         altMin, altMax, altMedia, declivMed,
         score, breakdown,
+        fonteHidro, fonteEnergia,
         centroid: { lat: centLat, lng: centLng },
         bbox,
         layers: {
@@ -773,6 +1065,28 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
 
       const geomJson = feature.geometry ? JSON.stringify(feature.geometry) : null;
 
+      let centroidLat: number | null = null;
+      let centroidLon: number | null = null;
+      if (feature.geometry) {
+        const geom = feature.geometry;
+        let ring: number[][] | null = null;
+        if (geom.type === 'Polygon' && geom.coordinates?.[0]) {
+          ring = geom.coordinates[0];
+        } else if (geom.type === 'MultiPolygon' && geom.coordinates?.[0]?.[0]) {
+          ring = geom.coordinates[0][0];
+        }
+        if (ring && ring.length > 0) {
+          centroidLon = ring.reduce((s: number, c: number[]) => s + c[0], 0) / ring.length;
+          centroidLat = ring.reduce((s: number, c: number[]) => s + c[1], 0) / ring.length;
+        }
+      }
+      if (analysis?.centroide) {
+        centroidLat = analysis.centroide.lat || analysis.centroide[1] || centroidLat;
+        centroidLon = analysis.centroide.lon || analysis.centroide[0] || centroidLon;
+      }
+
+      const codMunicipio = props.cod_municipio || props.COD_MUNICIPIO || props.cod_ibge || "";
+
       const asset = await storage.createAsset({
         orgId: getOrgId(),
         type: "TERRA",
@@ -784,6 +1098,11 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         areaHa: area && !isNaN(area) ? area : null,
         linkedCompanyId,
         tags: ["CAR", "Geo Rural", "Importado"],
+        camposEspecificos: {
+          latitude: centroidLat,
+          longitude: centroidLon,
+          codigoIbge: codMunicipio || null,
+        },
         attributesJson: {
           carCodImovel: codImovel,
           carMunicipio: municipio,
@@ -842,6 +1161,141 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         `);
       }
 
+      if (centroidLat && centroidLon) {
+        (async () => {
+          try {
+            console.log(`[Auto-enrich] Iniciando enriquecimento Embrapa para ativo ${asset.id}...`);
+            const resultado = await enriquecerFazenda({ lat: centroidLat!, lon: centroidLon!, codIBGE: codMunicipio || undefined });
+
+            const embrapaCompat: any = {};
+            if (resultado.solo) {
+              const s = resultado.solo;
+              let classificacao = s.soilClass || 'Não classificado';
+              let textura = '';
+              if (s.clay !== null) {
+                if (s.clay > 60) textura = 'Muito argilosa';
+                else if (s.clay > 35) textura = 'Argilosa';
+                else if (s.clay > 15) textura = 'Média';
+                else textura = 'Arenosa';
+              }
+              let aptidao = '';
+              if (s.phh2o !== null && s.soc !== null) {
+                if (s.phh2o >= 5.5 && s.phh2o <= 7.0 && s.soc > 10) aptidao = 'Boa para agricultura';
+                else if (s.phh2o >= 4.5 && s.phh2o <= 7.5) aptidao = 'Moderada';
+                else aptidao = 'Restrita — necessita correção';
+              }
+              embrapaCompat.solo = {
+                classificacao, textura, aptidao,
+                ph: s.phh2o, argila: s.clay, areia: s.sand,
+                carbonoOrganico: s.soc, nitrogenio: s.nitrogen, cec: s.cec,
+                fonte: 'SoilGrids/ISRIC',
+              };
+            }
+            if (resultado.zarc.length > 0) {
+              embrapaCompat.zoneamento = {
+                culturas: resultado.zarc.map(z => ({
+                  nome: z.cultura, risco: z.aptidao === 'Apto' ? 'baixo' : z.aptidao === 'Inapto' ? 'alto' : 'medio',
+                  epocaPlantio: z.datasPlantio?.join(', ') || '', aptidao: z.aptidao,
+                })),
+              };
+            }
+            if (resultado.ndviSatveg && resultado.ndviSatveg.ndviMedio > 0) {
+              embrapaCompat.ndvi = {
+                ndvi: resultado.ndviSatveg.ndviMedio, evi: resultado.ndviSatveg.eviMedio,
+                classificacao: resultado.ndviSatveg.ndviMedio >= 0.7 ? 'Vegetação densa e saudável' : resultado.ndviSatveg.ndviMedio >= 0.4 ? 'Vegetação moderada' : 'Vegetação escassa',
+                fonte: resultado.ndviSatveg.fonte,
+                periodo: `${resultado.ndviSatveg.dataInicio} a ${resultado.ndviSatveg.dataFim}`,
+              };
+            }
+            if (resultado.clima) {
+              const tempMedia = resultado.clima.temperaturaMinMedia && resultado.clima.temperaturaMaxMedia
+                ? parseFloat(((resultado.clima.temperaturaMinMedia + resultado.clima.temperaturaMaxMedia) / 2).toFixed(1))
+                : 0;
+              embrapaCompat.clima = {
+                precipitacaoMedia: resultado.clima.precipitacaoMedia, temperaturaMedia: tempMedia,
+                temperaturaMax: resultado.clima.temperaturaMaxMedia, temperaturaMin: resultado.clima.temperaturaMinMedia,
+                indiceSeca: resultado.resumo || '', fonte: resultado.clima.fonte,
+              };
+            }
+            embrapaCompat.scoreAgro = resultado.scoreAgro;
+            embrapaCompat.resumo = resultado.resumo;
+
+            const currentAsset = await storage.getAsset(asset.id);
+            const currentCampos = (currentAsset?.camposEspecificos as any) || {};
+            await storage.updateAsset(asset.id, {
+              camposEspecificos: {
+                ...currentCampos,
+                embrapa: embrapaCompat,
+                enrichmentAgro: resultado,
+                embrapaUpdatedAt: new Date().toISOString(),
+              },
+            });
+            console.log(`[Auto-enrich] Ativo ${asset.id} enriquecido com sucesso. Score agro: ${resultado.scoreAgro}`);
+          } catch (enrichErr: any) {
+            console.warn(`[Auto-enrich] Falha no enriquecimento do ativo ${asset.id}:`, enrichErr.message);
+          }
+        })();
+      }
+
+      if (codMunicipio && uf) {
+        (async () => {
+          try {
+            const { executarCrawlerCAF } = await import("../services/caf-crawler");
+            const orgIdVal = getOrgId(req);
+            const jobId = `auto-${asset.id}-${Date.now()}`;
+            const job = {
+              id: jobId, orgId: String(orgIdVal), modo: "paginado" as const,
+              uf, ano: new Date().getFullYear(), mes: 1,
+              seqInicio: 1, seqFim: 20, municipio: municipio || undefined,
+              codIBGE: codMunicipio, areaMinHa: 0, areaMaxHa: 0,
+              delayMs: 1100, apenasProprietario: false, apenasAtivos: true,
+              apenasComPronaf: false, status: "pendente" as const,
+              progresso: 0, totalVaridos: 0, totalEncontrados: 0,
+              totalSalvos: 0, totalErros: 0, iniciadoEm: null, concluidoEm: null,
+            };
+            console.log(`[Auto-CAF] Iniciando varredura CAF para ${municipio}/${uf} (codIBGE=${codMunicipio})...`);
+            await executarCrawlerCAF(
+              job,
+              () => {},
+              async (lead) => {
+                try {
+                  const [existente] = await db
+                    .select({ id: norionCafRegistros.id })
+                    .from(norionCafRegistros)
+                    .where(and(eq(norionCafRegistros.orgId, orgIdVal), eq(norionCafRegistros.numeroUFPA, lead.nufpa)))
+                    .limit(1);
+                  if (!existente) {
+                    await db.insert(norionCafRegistros).values({
+                      orgId: orgIdVal, nomeTitular: lead.nome,
+                      cpfTitular: lead.cpfMascarado || null, numeroUFPA: lead.nufpa,
+                      municipio: lead.municipio || null, uf: lead.uf || null,
+                      areaHa: lead.areaHa, condicaoPosse: lead.condicaoPosse || null,
+                      atividadePrincipal: lead.atividade || null,
+                      enquadramentoPronaf: lead.enquadramentoPronaf ? "Sim" : "Não",
+                      composicaoFamiliar: lead.membros || [],
+                      entidadeNome: lead.entidadeCadastradora || null,
+                      validade: lead.dataValidade || null,
+                      dataInscricao: lead.dataInscricao || null,
+                      numImoveis: lead.numImoveis || 1,
+                      status: lead.situacao === "ATIVA" ? "ativo" : lead.situacao === "INATIVA" ? "vencido" : "pendente",
+                      norionProfile: lead.norionProfile || "baixo",
+                      classificacao: "pendente" as const,
+                      dadosExtras: { idUfpa: lead.idUfpa, grauParentesco: lead.grauParentesco, situacaoOriginal: lead.situacao, extraidoEm: lead.extraidoEm },
+                      companyId: null,
+                    });
+                  }
+                } catch (e: any) {
+                  console.error(`[Auto-CAF] Erro ao salvar ${lead.nufpa}:`, e.message);
+                }
+              }
+            );
+            console.log(`[Auto-CAF] Varredura CAF concluída para ${municipio}/${uf}. Encontrados: ${job.totalEncontrados}`);
+          } catch (cafErr: any) {
+            console.warn(`[Auto-CAF] Falha na varredura CAF para ativo ${asset.id}:`, cafErr.message);
+          }
+        })();
+      }
+
       res.status(201).json(asset);
     } catch (err: any) {
       console.error("Geo import fazenda error:", err.message);
@@ -855,9 +1309,22 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
       const { assetId, analysis } = req.body;
       if (!assetId || !analysis) return res.status(400).json({ message: "assetId e analysis obrigatórios" });
 
-      const [existing] = await db.select({ id: assets.id, areaHa: assets.areaHa, orgId: assets.orgId })
+      const [existing] = await db.select({ id: assets.id, areaHa: assets.areaHa, orgId: assets.orgId, camposEspecificos: assets.camposEspecificos, municipio: assets.municipio, estado: assets.estado })
         .from(assets).where(sql`id = ${assetId}`).limit(1);
       if (!existing || existing.orgId !== getOrgId()) return res.status(404).json({ message: "Ativo não encontrado" });
+
+      if (!existing.areaHa) {
+        try {
+          const [areaRow] = await db.execute(sql`SELECT ROUND(CAST(ST_Area(ST_Transform(geom, 32723)) / 10000 AS numeric), 2) as calc_area FROM assets WHERE id = ${assetId} AND geom IS NOT NULL`);
+          if (areaRow && (areaRow as any).calc_area) {
+            const calcArea = parseFloat((areaRow as any).calc_area);
+            if (calcArea > 0) {
+              await db.execute(sql`UPDATE assets SET area_ha = ${calcArea} WHERE id = ${assetId}`);
+              existing.areaHa = calcArea;
+            }
+          }
+        } catch {}
+      }
 
       const scoreEn = analysis.scoreEnergia || classifyEnergia(analysis.distEnergiaM ?? null, analysis.temEnergia || false);
       const declivVal = analysis.declivMed ?? null;
@@ -871,6 +1338,38 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         declivMed: declivVal,
         areaHa: existing.areaHa,
       });
+
+      let ibgeCode: string | null = null;
+      let resolvedMunicipio: string | null = null;
+      const ce = (existing.camposEspecificos || {}) as any;
+      if ((!ce.codigoIbge || !existing.municipio) && analysis.centroid) {
+        const cLat = analysis.centroid.lat || analysis.centroid[1];
+        const cLon = analysis.centroid.lng || analysis.centroid.lon || analysis.centroid[0];
+        if (cLat && cLon) {
+          try {
+            const munRes = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${cLat}&lon=${cLon}&format=json&zoom=10&extratags=1`, {
+              signal: AbortSignal.timeout(10000),
+              headers: { "User-Agent": "MavrionConect/1.0" },
+            });
+            if (munRes.ok) {
+              const munData = await munRes.json();
+              const extratags = munData.extratags || {};
+              ibgeCode = extratags["IBGE:GEOCODIGO"] || extratags["ibge:geocodigo"] || null;
+              const addr = munData.address || {};
+              resolvedMunicipio = addr.city || addr.town || addr.municipality || addr.village || null;
+            }
+          } catch (e: any) {
+            console.warn("[persist-analysis] Falha ao buscar IBGE code:", e.message);
+          }
+        }
+      }
+
+      const centLat = analysis.centroid?.lat || analysis.centroid?.[1] || ce.latitude || null;
+      const centLon = analysis.centroid?.lng || analysis.centroid?.lon || analysis.centroid?.[0] || ce.longitude || null;
+      const ceUpdate: Record<string, any> = {};
+      if (centLat && !ce.latitude) ceUpdate.latitude = centLat;
+      if (centLon && !ce.longitude) ceUpdate.longitude = centLon;
+      if (ibgeCode) ceUpdate.codigoIbge = ibgeCode;
 
       await db.execute(sql`
         UPDATE assets SET
@@ -899,10 +1398,12 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
             geoScoreEnergia: scoreEn,
             geoScore: geoScoreVal,
           })}::jsonb
+          ${Object.keys(ceUpdate).length > 0 ? sql`, campos_especificos = campos_especificos || ${JSON.stringify(ceUpdate)}::jsonb` : sql``}
+          ${resolvedMunicipio && !existing.municipio ? sql`, municipio = ${resolvedMunicipio}, location = ${resolvedMunicipio + '/' + (existing.estado || '')}` : sql``}
         WHERE id = ${assetId}
       `);
 
-      res.json({ success: true, geoScore: geoScoreVal, scoreEnergia: scoreEn });
+      res.json({ success: true, geoScore: geoScoreVal, scoreEnergia: scoreEn, ibgeCode, municipio: resolvedMunicipio });
     } catch (err: any) {
       console.error("Geo persist error:", err.message);
       res.status(500).json({ message: "Erro ao persistir análise" });
@@ -1056,20 +1557,37 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
             } catch { return null; }
           })();
 
-          const [riosData, massasData, energiaData, elevData] = await Promise.all([
+          const [riosDataIBGE2, massasDataIBGE2, energiaDataIBGE2, elevData] = await Promise.all([
             fetchIBGE("CCAR:BC100_Trecho_Drenagem_L"),
             fetchIBGE("CCAR:BC100_Massa_Dagua_A"),
             fetchIBGE("CCAR:BC100_Trecho_Energia_L"),
             elevPromise,
           ]);
 
-          const temRio = (riosData?.features?.length || 0) > 0;
-          const temLago = (massasData?.features?.length || 0) > 0;
-          const temEnergia = (energiaData?.features?.length || 0) > 0;
+          let riosDataB = riosDataIBGE2, massasDataB = massasDataIBGE2, energiaDataB = energiaDataIBGE2;
+          const ibgeWC = (riosDataIBGE2?.features?.length || 0) + (massasDataIBGE2?.features?.length || 0);
+          const ibgeEC = energiaDataIBGE2?.features?.length || 0;
+          if (ibgeWC === 0 || ibgeEC === 0) {
+            const [osmW, osmP] = await Promise.all([
+              ibgeWC === 0 ? fetchOSMWater(centLat, centLng, 0.15) : Promise.resolve(null),
+              ibgeEC === 0 ? fetchOSMPower(centLat, centLng, 0.15) : Promise.resolve(null),
+            ]);
+            if (osmW && osmW.features?.length > 0) {
+              const ww = osmW.features.filter((f: any) => f.properties?.waterway);
+              const nw = osmW.features.filter((f: any) => f.properties?.natural && !f.properties?.waterway);
+              riosDataB = { type: "FeatureCollection", features: ww };
+              massasDataB = { type: "FeatureCollection", features: nw };
+            }
+            if (osmP && osmP.features?.length > 0) { energiaDataB = osmP; }
+          }
 
-          const allWater = { type: "FeatureCollection", features: [...(riosData?.features || []), ...(massasData?.features || [])] };
+          const temRio = (riosDataB?.features?.length || 0) > 0;
+          const temLago = (massasDataB?.features?.length || 0) > 0;
+          const temEnergia = (energiaDataB?.features?.length || 0) > 0;
+
+          const allWater = { type: "FeatureCollection", features: [...(riosDataB?.features || []), ...(massasDataB?.features || [])] };
           const distAguaM = nearestFeatureDistance(centLat, centLng, allWater);
-          const distEnergiaM = nearestFeatureDistance(centLat, centLng, energiaData);
+          const distEnergiaM = nearestFeatureDistance(centLat, centLng, energiaDataB);
           const scoreEn = classifyEnergia(distEnergiaM, temEnergia);
 
           let altMin: number | null = null, altMax: number | null = null, altMedia: number | null = null;
@@ -1176,6 +1694,69 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
       res.json({ success: true, data: parcelas, total: parcelas.length });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  const sicorCache = new Map<string, { data: any; expiry: number }>();
+  const SICOR_CACHE_TTL = 24 * 60 * 60 * 1000;
+
+  app.get("/api/norion/sicor/:codigoMunicipio", async (req, res) => {
+    try {
+      const codigo = req.params.codigoMunicipio;
+      const cached = sicorCache.get(codigo);
+      if (cached && cached.expiry > Date.now()) return res.json(cached.data);
+
+      const baseUrl = "https://olinda.bcb.gov.br/olinda/servico/SICOR/versao/v2/odata";
+      const custeioFilter = encodeURIComponent(`codIbge eq '${codigo}'`);
+      const custeioUrl = `${baseUrl}/CusteioMunicipioProduto?$format=json&$filter=${custeioFilter}&$top=50&$orderby=VlCusteio desc`;
+      const pronafFilter = encodeURIComponent("contains(Programa,'PRONAF')");
+      const programaUrl = `${baseUrl}/ProgramaSubprograma?$format=json&$filter=${pronafFilter}&$top=20`;
+
+      const [custeioRes, programaRes] = await Promise.all([
+        fetch(custeioUrl, { signal: AbortSignal.timeout(15000) }).then(r => r.ok ? r.json() : { value: [] }).catch(() => ({ value: [] })),
+        fetch(programaUrl, { signal: AbortSignal.timeout(15000) }).then(r => r.ok ? r.json() : { value: [] }).catch(() => ({ value: [] })),
+      ]);
+
+      const custeioData = custeioRes.value || [];
+      const programaData = programaRes.value || [];
+
+      const grouped = new Map<string, { produto: string; valor: number; area: number; count: number }>();
+      for (const c of custeioData) {
+        const prod = c.nomeProduto || c.Atividade || "Desconhecido";
+        const existing = grouped.get(prod) || { produto: prod, valor: 0, area: 0, count: 0 };
+        existing.valor += Number(c.VlCusteio) || 0;
+        existing.area += Number(c.AreaCusteio) || 0;
+        existing.count += 1;
+        grouped.set(prod, existing);
+      }
+
+      const topProdutos = [...grouped.values()]
+        .sort((a, b) => b.valor - a.valor)
+        .slice(0, 5)
+        .map(p => ({ produto: p.produto, contratos: p.count, valor: p.valor, area: p.area }));
+
+      const totalContratos = custeioData.length;
+      const totalValor = custeioData.reduce((sum: number, c: any) => sum + (Number(c.VlCusteio) || 0), 0);
+
+      const result = {
+        codigoMunicipio: codigo,
+        totalContratos,
+        totalValor,
+        topProdutos,
+        pronafResumo: programaData.slice(0, 10).map((p: any) => ({
+          programa: p.Programa,
+          subprograma: p.Subprograma,
+          contratos: p.QtdCusteio || 0,
+          valor: Number(p.VlCusteio) || 0,
+        })),
+        consultadoEm: new Date().toISOString(),
+      };
+
+      sicorCache.set(codigo, { data: result, expiry: Date.now() + SICOR_CACHE_TTL });
+      res.json(result);
+    } catch (err: any) {
+      console.error("[SICOR] Erro:", err.message);
+      res.status(500).json({ message: "Falha ao consultar SICOR/BCB" });
     }
   });
 }

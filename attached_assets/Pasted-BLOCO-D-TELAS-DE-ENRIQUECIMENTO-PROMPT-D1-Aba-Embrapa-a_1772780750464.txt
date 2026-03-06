@@ -1,0 +1,150 @@
+BLOCO D — TELAS DE ENRIQUECIMENTO
+PROMPT D1 — Aba Embrapa: adicionar MapBiomas, IBAMA e NDVI HD
+Arquivo: client/src/pages/ativo-detalhe.tsx
+No arquivo client/src/pages/ativo-detalhe.tsx, dentro do
+TabsContent value="embrapa", adicione os seguintes estados
+NO NÍVEL DO COMPONENTE AtivoDetalhePage (junto com os outros estados):
+
+const [enriquecendoCompleto, setEnriquecendoCompleto] = useState(false);
+
+Adicione o botão de enriquecimento completo logo após o botão 
+"Atualizar" existente na aba embrapa:
+
+<Button
+  size="sm"
+  variant="outline"
+  className="gap-1.5 border-emerald-300 text-emerald-700"
+  disabled={enriquecendoCompleto}
+  onClick={async () => {
+    setEnriquecendoCompleto(true);
+    try {
+      await apiRequest("POST", `/api/matching/assets/${id}/enriquecer-completo`, {});
+      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", id] });
+      toast({ title: "✅ Enriquecimento completo!", description: "IBAMA, MapBiomas e NDVI HD atualizados" });
+    } catch {
+      toast({ title: "Erro no enriquecimento", variant: "destructive" });
+    }
+    setEnriquecendoCompleto(false);
+  }}
+>
+  {enriquecendoCompleto
+    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Enriquecendo...</>
+    : <><Zap className="w-3.5 h-3.5" /> Enriquecimento completo</>}
+</Button>
+
+Após os cards existentes de solo/ndvi/clima/zoneamento, adicione:
+
+{/* NDVI Alta Resolução */}
+{(ativo.camposEspecificos as any)?.enriquecimentoCompleto?.ndviHD && (() => {
+  const ndviHD = (ativo.camposEspecificos as any).enriquecimentoCompleto.ndviHD;
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Leaf className="w-4 h-4 text-emerald-600" />
+          NDVI Alta Resolução (Sentinel-2)
+          <Badge variant="outline" className="text-[10px] ml-auto bg-blue-50 text-blue-700 border-blue-200">10m</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-2xl font-bold text-emerald-600">{ndviHD.ndvi.toFixed(3)}</span>
+          <Badge className={ndviHD.ndvi >= 0.6 ? "bg-green-100 text-green-700" : ndviHD.ndvi >= 0.3 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}>
+            {ndviHD.ndvi >= 0.6 ? "Saudável" : ndviHD.ndvi >= 0.3 ? "Moderado" : "Crítico"}
+          </Badge>
+        </div>
+        <Progress value={ndviHD.ndvi * 100} className={cn("h-2", ndviHD.ndvi < 0.3 ? "[&>div]:bg-red-500" : ndviHD.ndvi <= 0.6 ? "[&>div]:bg-yellow-500" : "[&>div]:bg-green-500")} />
+        <div className="grid grid-cols-3 gap-2">
+          <div className="p-2 rounded bg-muted/50 text-center">
+            <p className="text-[10px] text-muted-foreground">Mín</p>
+            <p className="text-sm font-bold text-red-600">{ndviHD.ndviMin?.toFixed(3)}</p>
+          </div>
+          <div className="p-2 rounded bg-muted/50 text-center">
+            <p className="text-[10px] text-muted-foreground">Médio</p>
+            <p className="text-sm font-bold text-emerald-600">{ndviHD.ndvi.toFixed(3)}</p>
+          </div>
+          <div className="p-2 rounded bg-muted/50 text-center">
+            <p className="text-[10px] text-muted-foreground">Máx</p>
+            <p className="text-sm font-bold text-green-600">{ndviHD.ndviMax?.toFixed(3)}</p>
+          </div>
+        </div>
+        {ndviHD.variabilidade && <p className="text-xs text-muted-foreground">{ndviHD.variabilidade}</p>}
+        <p className="text-[10px] text-muted-foreground">Resolução: {ndviHD.resolucao} • {ndviHD.dataImagem}</p>
+      </CardContent>
+    </Card>
+  );
+})()}
+
+{/* MapBiomas */}
+{(ativo.camposEspecificos as any)?.enriquecimentoCompleto?.mapbiomas && (() => {
+  const mb = (ativo.camposEspecificos as any).enriquecimentoCompleto.mapbiomas;
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <TreePine className="w-4 h-4 text-green-600" />
+          Uso da Terra — MapBiomas
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <div className="p-3 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200">
+          <p className="text-xs text-muted-foreground">Uso atual (2023)</p>
+          <p className="font-bold text-sm text-green-800 dark:text-green-300">{mb.usoAtual}</p>
+          {mb.bioma && <p className="text-xs text-muted-foreground mt-0.5">Bioma: {mb.bioma}</p>}
+        </div>
+        {mb.alertasDesmatamento > 0 && (
+          <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-300 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            <div>
+              <p className="text-sm font-bold text-red-700">{mb.alertasDesmatamento} alerta(s) de desmatamento</p>
+              {mb.areaDesmatadaHa > 0 && (
+                <p className="text-xs text-red-600">{mb.areaDesmatadaHa.toLocaleString("pt-BR")} ha afetados</p>
+              )}
+            </div>
+          </div>
+        )}
+        {mb.alertasDesmatamento === 0 && (
+          <p className="text-xs text-green-600 flex items-center gap-1">
+            <CheckCircle2 className="w-3.5 h-3.5" /> Sem alertas de desmatamento
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+})()}
+
+{/* IBAMA */}
+{(ativo.camposEspecificos as any)?.enriquecimentoCompleto && (() => {
+  const enc = (ativo.camposEspecificos as any).enriquecimentoCompleto;
+  const temEmbargo = enc.ibamaProprietario?.temEmbargo || enc.ibamaGeo?.temEmbargo;
+  if (!enc.ibamaProprietario && !enc.ibamaGeo) return null;
+  return (
+    <Card className={temEmbargo ? "border-red-300" : "border-green-200"}>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <AlertCircle className={cn("w-4 h-4", temEmbargo ? "text-red-600" : "text-green-600")} />
+          Situação IBAMA
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {temEmbargo ? (
+          <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-300">
+            <p className="font-bold text-red-700 text-sm">⚠ Embargo(s) IBAMA detectado(s)</p>
+            <p className="text-xs text-red-600 mt-1">
+              {enc.ibamaProprietario?.totalEmbargos || 0} embargo(s) no CPF/CNPJ do proprietário
+            </p>
+          </div>
+        ) : (
+          <p className="text-sm text-green-600 flex items-center gap-1.5">
+            <CheckCircle2 className="w-4 h-4" /> Sem embargos IBAMA identificados
+          </p>
+        )}
+        <p className="text-[10px] text-muted-foreground mt-2">
+          Consultado em: {new Date(enc.enriquecidoEm).toLocaleDateString("pt-BR")}
+        </p>
+      </CardContent>
+    </Card>
+  );
+})()}
+
+Não altere nada mais no arquivo além destas adições.

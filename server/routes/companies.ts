@@ -10,6 +10,7 @@ import { getCached, setCached } from "../cache";
 import { audit } from "../audit";
 import { waterfallEnrich } from "../enrichment/waterfall";
 import { getOrgId } from "../lib/tenant";
+import { consultarCertidoes } from "../lib/certidoes";
 
 const cnpjaHeaders = () => ({
   "Authorization": process.env.CNPJA_API_KEY || "",
@@ -120,7 +121,11 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
         }
       }
 
-      res.json({ company, socios });
+      const [lead] = await db.select().from(leads).where(and(eq(leads.companyId, companyId), eq(leads.orgId, company.orgId))).limit(1);
+
+      const companyDeals = await db.select().from(deals).where(and(eq(deals.companyId, companyId), eq(deals.orgId, company.orgId)));
+
+      res.json({ company: { ...company, lead: lead || null }, socios, deals: companyDeals });
     } catch (err) {
       console.error("Relationships error:", err);
       res.status(500).json({ message: "Falha ao buscar relacionamentos" });
@@ -131,17 +136,20 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const companyId = Number(req.params.id);
+      const allowedSources = ["manual", "ma_radar", "portal", "prospeccao", "caf", "anm", "matching"];
+      const rawSource = (req.body?.source as string) || "manual";
+      const source = allowedSources.includes(rawSource) ? rawSource : "manual";
       const existingLead = await db.select().from(leads).where(eq(leads.companyId, companyId));
       if (existingLead.length > 0) {
-        return res.status(409).json({ message: "Esta empresa já possui um lead" });
+        return res.status(409).json({ message: "Esta empresa já possui um lead", lead: existingLead[0] });
       }
       const [lead] = await db.insert(leads).values({
         orgId: getOrgId(),
         companyId,
         status: "new",
         score: 50,
-        source: "manual",
-        scoreBreakdownJson: { source: "manual_from_company" },
+        source,
+        scoreBreakdownJson: { source: `${source}_from_company` },
       } as any).returning();
       res.status(201).json(lead);
     } catch (err) {
@@ -241,6 +249,35 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
         }
       });
 
+  app.patch("/api/crm/companies/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const companyId = Number(req.params.id);
+      const allowed = ["legalName", "tradeName", "porte", "phones", "emails", "address", "cnaePrincipal", "enrichedAt"];
+      const updates: any = {};
+      for (const key of allowed) {
+        if (req.body[key] !== undefined) updates[key] = req.body[key];
+      }
+      if (Object.keys(updates).length === 0) return res.status(400).json({ message: "Nenhum campo válido para atualizar" });
+      const [updated] = await db.update(companies)
+        .set(updates)
+        .where(and(eq(companies.id, companyId), or(eq(companies.orgId, getOrgId()), isNull(companies.orgId))))
+        .returning();
+      if (!updated) return res.status(404).json({ message: "Empresa não encontrada" });
+      const user = req.user as any;
+      await audit({
+        userId: user.id, userName: user.username,
+        entity: "company", entityId: companyId, entityTitle: updated.legalName,
+        action: "updated",
+        changes: { cnpja: { from: null, to: "Dados atualizados via CNPJA" } },
+      });
+      res.json(updated);
+    } catch (err: any) {
+      console.error("[PATCH /api/crm/companies/:id]", err.message || err);
+      res.status(500).json({ message: "Erro ao atualizar empresa" });
+    }
+  });
+
   app.patch("/api/companies/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
@@ -260,7 +297,8 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
         changes: { enrichmentData: { from: null, to: "perfilComprador atualizado" } },
       });
       res.json(updated);
-    } catch (err) {
+    } catch (err: any) {
+      console.error("[PATCH /api/companies/:id]", err.message || err);
       res.status(500).json({ message: "Erro ao atualizar empresa" });
     }
   });
@@ -530,6 +568,31 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
     } catch (err) {
       console.error("Batch delete companies error:", err);
       res.status(500).json({ message: "Falha ao excluir empresas em lote" });
+    }
+  });
+
+  app.post("/api/companies/:id/certidoes", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+
+    const company = await storage.getCompany(Number(req.params.id));
+    if (!company) return res.status(404).json({ message: "Empresa não encontrada" });
+    if (!company.cnpj) return res.status(400).json({ message: "Empresa sem CNPJ" });
+
+    try {
+      const certidoes = await consultarCertidoes(company.cnpj);
+
+      const enrichmentAtual = (company.enrichmentData as any) || {};
+      await storage.updateCompany(company.id, {
+        enrichmentData: {
+          ...enrichmentAtual,
+          certidoes,
+          certidoesConsultadasEm: new Date().toISOString(),
+        },
+      });
+
+      res.json(certidoes);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
     }
   });
 }

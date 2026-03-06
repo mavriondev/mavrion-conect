@@ -583,7 +583,7 @@ export default function ManualPage() {
               Manual do Sistema
             </h1>
             <p className="text-muted-foreground text-sm mt-0.5" data-testid="text-manual-subtitle">
-              Guia completo de todos os modulos do Mavrion Conect
+              Guia completo de todos os modulos do Mavrion Connect
             </p>
           </div>
         </div>

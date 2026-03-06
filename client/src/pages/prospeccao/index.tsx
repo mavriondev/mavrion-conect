@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,7 @@ import {
 } from "lucide-react";
 import SearchFilters, { type Filters, INITIAL_FILTERS, getActiveFilterCount } from "./search-filters";
 import ResultsTable from "./results-table";
+
 
 interface CnpjDetail {
   legalName: string;
@@ -61,6 +63,7 @@ interface SearchResult {
 export default function ProspeccaoPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
 
   const { data: creditos } = useQuery<{ configured: boolean; transient: number; perpetual: number }>({
     queryKey: ["/api/prospeccao/creditos"],
@@ -80,6 +83,7 @@ export default function ProspeccaoPage() {
   const [importingCnpj, setImportingCnpj] = useState<string | null>(null);
   const [importedMap, setImportedMap] = useState<Record<string, number>>({});
   const [disqualifyingCnpj, setDisqualifyingCnpj] = useState<string | null>(null);
+
 
   const lookupCnpj = async () => {
     const clean = cnpjInput.replace(/\D/g, "");
@@ -177,6 +181,25 @@ export default function ProspeccaoPage() {
         }
       }
       toast({ title: msg, variant: "destructive" });
+    } finally {
+      setImportingCnpj(null);
+    }
+  };
+
+  const importarComoAtivo = async (empresa: any) => {
+    const cnpj = (empresa.taxId || empresa.cnpj || "").replace(/\D/g, "");
+    setImportingCnpj(cnpj);
+    try {
+      const res = await apiRequest("POST", `/api/cnpj/${cnpj}/import-as-asset`, {});
+      const data = await res.json();
+      toast({
+        title: "Ativo criado com sucesso",
+        description: `${empresa.tradeName || empresa.legalName} cadastrado como ativo NEGOCIO`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets"] });
+      navigate(`/ativos/${data.asset.id}`);
+    } catch {
+      toast({ title: "Erro ao criar ativo", variant: "destructive" });
     } finally {
       setImportingCnpj(null);
     }
@@ -420,10 +443,12 @@ export default function ProspeccaoPage() {
               disqualifyingCnpj={disqualifyingCnpj}
               importedMap={importedMap}
               onImport={importLead}
+              onImportAsAsset={importarComoAtivo}
               onDisqualify={disqualifyLead}
             />
           </div>
         </TabsContent>
+
       </Tabs>
     </div>
   );

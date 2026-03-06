@@ -275,9 +275,16 @@ function AnalysisPanel({
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <Card className={cn("border", analysis.temRio || analysis.temLago ? "border-blue-300 bg-blue-50/50" : "border-muted")}>
-          <CardContent className="p-3 text-center">
+          <CardContent className="p-3 text-center relative">
+            {analysis.fonteHidro === "OSM" && (
+              <span
+                className="absolute top-1 right-1 text-[8px] font-bold bg-blue-100 text-blue-700 px-1 rounded cursor-help"
+                title="Dados do OpenStreetMap (fonte IBGE indisponível para esta região)"
+                data-testid="badge-fonte-hidro"
+              >OSM</span>
+            )}
             <Droplets className={cn("w-5 h-5 mx-auto mb-1", analysis.temRio || analysis.temLago ? "text-blue-600" : "text-muted-foreground")} />
-            <p className="text-xs font-medium">{analysis.temRio ? "Tem Rio" : analysis.temLago ? "Tem Lago" : "Sem Água"}</p>
+            <p className="text-xs font-medium" data-testid="text-hidro-status">{analysis.temRio ? "Tem Rio" : analysis.temLago ? "Tem Lago" : "Sem Água"}</p>
             <p className="text-[10px] text-muted-foreground">
               {analysis.distAguaM != null ? `a ${formatDist(analysis.distAguaM)}` : `${analysis.qtdRios} rios, ${analysis.qtdLagos} lagos`}
             </p>
@@ -285,7 +292,14 @@ function AnalysisPanel({
         </Card>
 
         <Card className={cn("border", analysis.temEnergia ? "border-amber-300 bg-amber-50/50" : "border-muted")}>
-          <CardContent className="p-3 text-center">
+          <CardContent className="p-3 text-center relative">
+            {analysis.fonteEnergia === "OSM" && (
+              <span
+                className="absolute top-1 right-1 text-[8px] font-bold bg-amber-100 text-amber-700 px-1 rounded cursor-help"
+                title="Dados do OpenStreetMap (fonte IBGE indisponível para esta região)"
+                data-testid="badge-fonte-energia"
+              >OSM</span>
+            )}
             <ZapIcon className={cn("w-5 h-5 mx-auto mb-1", analysis.temEnergia ? "text-amber-600" : "text-muted-foreground")} />
             <span className="text-xs font-medium flex items-center justify-center gap-1">
               {analysis.temEnergia ? "Energia" : "Sem Energia"}
@@ -710,7 +724,11 @@ export default function GeoRuralPage() {
         }
         throw new Error(body.message || "Erro na busca");
       }
-      return r.json();
+      const json = await r.json();
+      if (json.fromCache) {
+        setServerStatus("offline");
+      }
+      return json;
     },
     enabled: searched && !!activeSearch,
     retry: 2,
@@ -719,6 +737,8 @@ export default function GeoRuralPage() {
 
   const features: any[] = rawData?.features || [];
   const totalFeatures = rawData?.totalFeatures || rawData?.numberMatched || features.length;
+  const fromCache = rawData?.fromCache === true;
+  const cachedAt = rawData?.cachedAt || null;
 
   const { data: importedMap = {} } = useQuery({
     queryKey: ["/api/geo/imported"],
@@ -1314,6 +1334,23 @@ export default function GeoRuralPage() {
               Portal CAR
             </Button>
           </div>
+        </div>
+      )}
+
+      {fromCache && features.length > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 p-3 flex items-center gap-3" data-testid="banner-sicar-cache">
+          <WifiOff className="w-4 h-4 text-amber-600 shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+              SICAR offline — {features.length} imóve{features.length === 1 ? "l" : "is"} do cache
+            </p>
+            {cachedAt && (
+              <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                Última consulta ao SICAR: {new Date(cachedAt).toLocaleDateString("pt-BR")}
+              </p>
+            )}
+          </div>
+          <Badge variant="outline" className="text-xs border-amber-300 text-amber-700 shrink-0">Cache</Badge>
         </div>
       )}
 

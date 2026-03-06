@@ -85,7 +85,7 @@ function buildDocHtml(): string {
 
 <div class="doc-page">
   <div class="doc-cover">
-    <h1>Mavrion Conect</h1>
+    <h1>Mavrion Connect</h1>
     <div class="subtitle">Documento de Arquitetura — Mapa de Conexões entre Módulos</div>
     <div class="meta">
       Versão 1.0 — ${today}<br/>
@@ -97,7 +97,7 @@ function buildDocHtml(): string {
   <!-- 1. VISÃO GERAL -->
   <div class="doc-section">
     <h2>1. Visão Geral da Plataforma</h2>
-    <p>O <strong>Mavrion Conect</strong> é uma plataforma B2B de <em>deal origination</em> voltada para operações de fundos imobiliários, M&A e mineração. A plataforma centraliza todo o ciclo de vida de uma oportunidade de negócio — desde a prospecção inicial de empresas e ativos até a geração de propostas comerciais e contratos.</p>
+    <p>O <strong>Mavrion Connect</strong> é uma plataforma B2B de <em>deal origination</em> voltada para operações de fundos imobiliários, M&A e mineração. A plataforma centraliza todo o ciclo de vida de uma oportunidade de negócio — desde a prospecção inicial de empresas e ativos até a geração de propostas comerciais e contratos.</p>
     <p>A arquitetura é full-stack (React + Express + PostgreSQL) com autenticação por sessão, multi-tenancy por organização, sistema de notificações SSE em tempo real, e um portal público para investidores.</p>
     <p>O sistema possui <strong>14 módulos principais</strong> que se comunicam entre si através de chaves estrangeiras no banco de dados, endpoints da API, ações do frontend e eventos de notificação.</p>
   </div>
@@ -445,7 +445,7 @@ Landing Page exclusiva (/lp/:slug) ──→ Mesmo fluxo de inquiry</div>
   <!-- 8. RESUMO EXECUTIVO -->
   <div class="doc-section">
     <h2>8. Resumo Executivo</h2>
-    <p>O Mavrion Conect apresenta uma arquitetura modular bem estruturada, com <strong>pontos fortes</strong> na integração Matching→CRM e SDR→CRM, sistema de auditoria abrangente, e suporte multi-pipeline no Kanban.</p>
+    <p>O Mavrion Connect apresenta uma arquitetura modular bem estruturada, com <strong>pontos fortes</strong> na integração Matching→CRM e SDR→CRM, sistema de auditoria abrangente, e suporte multi-pipeline no Kanban.</p>
     <p>Os <strong>principais gaps</strong> identificados estão na falta de conversão de inquiries em leads/deals (dados órfãos no Portal), no desacoplamento entre propostas/contratos e o pipeline de deals (schema pronto, UI não conectada), e na duplicação de dados entre ativos e portal listings.</p>
     <p>As melhorias sugeridas visam criar um fluxo end-to-end rastreável: <strong>Prospecção → Lead → Deal → Proposta → Contrato → Fechamento</strong>, eliminando silos de informação e reduzindo trabalho manual de re-digitação.</p>
     <p>Todas as sugestões são incrementais — podem ser implementadas uma a uma sem refatoração profunda da arquitetura existente, pois as FKs necessárias já existem no schema na maioria dos casos.</p>
@@ -494,7 +494,7 @@ async function exportPdf() {
       pdf.setTextColor(160, 160, 160);
       pdf.setDrawColor(220, 220, 220);
       pdf.line(15, pdfH - 12, pdfW - 15, pdfH - 12);
-      pdf.text("Mavrion Conect — Documento de Arquitetura", 15, pdfH - 7);
+      pdf.text("Mavrion Connect — Documento de Arquitetura", 15, pdfH - 7);
       pdf.text(`Página ${pageNum + 1}`, pdfW / 2, pdfH - 7, { align: "center" });
       pdf.text(today, pdfW - 15, pdfH - 7, { align: "right" });
 
@@ -529,7 +529,7 @@ export default function ArquiteturaPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold" data-testid="text-arquitetura-title">Documento de Arquitetura</h1>
-          <p className="text-sm text-muted-foreground">Mapa completo de conexões entre módulos do Mavrion Conect</p>
+          <p className="text-sm text-muted-foreground">Mapa completo de conexões entre módulos do Mavrion Connect</p>
         </div>
         <Button onClick={handleExport} disabled={exporting} data-testid="btn-export-pdf">
           {exporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}

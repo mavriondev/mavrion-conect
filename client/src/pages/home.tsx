@@ -11,7 +11,7 @@ export default function HomePage() {
   const panels = [
     {
       id: "mavrion",
-      title: "Mavrion Conect",
+      title: "Mavrion Connect",
       subtitle: "Deal Origination",
       description: "Plataforma completa de originação de deals B2B — SDR, CRM, matching, ativos, prospecção e portal do investidor.",
       icon: Zap,
