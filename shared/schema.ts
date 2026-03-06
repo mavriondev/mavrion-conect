@@ -656,6 +656,49 @@ export const insertNorionFormularioSchema = createInsertSchema(norionFormularioC
 export type InsertNorionFormulario = z.infer<typeof insertNorionFormularioSchema>;
 export type NorionFormulario = typeof norionFormularioCliente.$inferSelect;
 
+// === MATCHING INTELIGENTE ===
+
+export const matchFeedback = pgTable("match_feedback", {
+  id: serial("id").primaryKey(),
+  orgId: integer("org_id").references(() => organizations.id),
+  suggestionId: integer("suggestion_id").references(() => matchSuggestions.id),
+  investorProfileId: integer("investor_profile_id").references(() => investorProfiles.id),
+  assetId: integer("asset_id").references(() => assets.id),
+  action: text("action").notNull(),
+  rejectionReason: text("rejection_reason"),
+  rejectionNote: text("rejection_note"),
+  assetType: text("asset_type"),
+  assetEstado: text("asset_estado"),
+  assetPrice: doublePrecision("asset_price"),
+  scoreAtDecision: integer("score_at_decision"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export const insertMatchFeedbackSchema = createInsertSchema(matchFeedback).omit({ id: true, createdAt: true });
+export type InsertMatchFeedback = z.infer<typeof insertMatchFeedbackSchema>;
+export type MatchFeedback = typeof matchFeedback.$inferSelect;
+
+export const investorDynamicProfile = pgTable("investor_dynamic_profile", {
+  id: serial("id").primaryKey(),
+  orgId: integer("org_id").references(() => organizations.id),
+  investorProfileId: integer("investor_profile_id").references(() => investorProfiles.id).unique(),
+  typeWeights: jsonb("type_weights").default({}),
+  regionWeights: jsonb("region_weights").default({}),
+  realTicketMin: doublePrecision("real_ticket_min"),
+  realTicketMax: doublePrecision("real_ticket_max"),
+  realTicketAvg: doublePrecision("real_ticket_avg"),
+  avgDecisionDays: doublePrecision("avg_decision_days"),
+  totalSuggestions: integer("total_suggestions").default(0),
+  totalAccepted: integer("total_accepted").default(0),
+  totalRejected: integer("total_rejected").default(0),
+  totalDeals: integer("total_deals").default(0),
+  prefersDiversification: boolean("prefers_diversification").default(false),
+  riskTolerance: text("risk_tolerance").default("moderate"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertInvestorDynamicProfileSchema = createInsertSchema(investorDynamicProfile).omit({ id: true, updatedAt: true });
+export type InsertInvestorDynamicProfile = z.infer<typeof insertInvestorDynamicProfileSchema>;
+export type InvestorDynamicProfile = typeof investorDynamicProfile.$inferSelect;
+
 export const sicarImoveisCache = pgTable("sicar_imoveis_cache", {
   id: serial("id").primaryKey(),
   codImovel: text("cod_imovel").notNull().unique(),
