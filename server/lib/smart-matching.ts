@@ -58,8 +58,30 @@ export interface MatchingContext {
 export function normalizeState(location: string | null | undefined): string | null {
   if (!location) return null;
   const loc = location.toLowerCase().trim();
-  for (const [uf, variants] of Object.entries(STATE_NORMALIZATION)) {
-    if (variants.some(v => loc.includes(v))) return uf;
+  if (loc.length === 2) {
+    const upper = loc.toUpperCase();
+    if (STATE_NORMALIZATION[upper]) return upper;
+  }
+  const fullNameEntries = Object.entries(STATE_NORMALIZATION)
+    .map(([uf, variants]) => [uf, variants.filter(v => v.length > 2)] as [string, string[]])
+    .sort((a, b) => {
+      const maxA = Math.max(...a[1].map(v => v.length));
+      const maxB = Math.max(...b[1].map(v => v.length));
+      return maxB - maxA;
+    });
+  for (const [uf, longVariants] of fullNameEntries) {
+    if (longVariants.some(v => loc.includes(v))) return uf;
+  }
+  const siglaRegex = /(?:^|[\s\/\-,])([a-z]{2})(?:$|[\s\/\-,])/g;
+  let match;
+  while ((match = siglaRegex.exec(loc)) !== null) {
+    const candidate = match[1].toUpperCase();
+    if (STATE_NORMALIZATION[candidate]) return candidate;
+  }
+  const trailingSigla = loc.match(/[\/\-]([a-z]{2})$/);
+  if (trailingSigla) {
+    const candidate = trailingSigla[1].toUpperCase();
+    if (STATE_NORMALIZATION[candidate]) return candidate;
   }
   return location.toUpperCase().substring(0, 2);
 }
@@ -67,11 +89,15 @@ export function normalizeState(location: string | null | undefined): string | nu
 export function matchesRegion(assetLocation: string | null, investorRegions: string[]): boolean {
   if (!assetLocation || investorRegions.length === 0) return true;
   const loc = assetLocation.toLowerCase();
+  const normalizedAsset = normalizeState(assetLocation);
   return investorRegions.some(r => {
     const rLower = r.toLowerCase();
     if (loc.includes(rLower)) return true;
-    const variants = STATE_NORMALIZATION[r.toUpperCase()] || [rLower];
-    return variants.some(v => loc.includes(v));
+    const directVariants = STATE_NORMALIZATION[r.toUpperCase()];
+    if (directVariants && directVariants.some(v => loc.includes(v))) return true;
+    const normalizedRegion = normalizeState(r);
+    if (normalizedRegion && normalizedAsset && normalizedRegion === normalizedAsset) return true;
+    return false;
   });
 }
 
