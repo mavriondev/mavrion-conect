@@ -504,7 +504,7 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
           let companyId: number | null = null;
 
           if (s.investorProfileId) {
-            const inv = await storage.getInvestorProfile(s.investorProfileId).catch(() => null);
+            const inv = await storage.getInvestor(s.investorProfileId).catch(() => null);
             if (inv) {
               investorName = inv.name;
               companyId = (inv as any).companyId || null;
@@ -512,7 +512,8 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
           }
 
           if (!investorName && (s as any).companyId) {
-            const co = await storage.getCompany((s as any).companyId).catch(() => null);
+            const [co] = await db.select().from(companies)
+              .where(eq(companies.id, (s as any).companyId)).catch(() => []);
             if (co) {
               investorName = co.tradeName || co.legalName;
               investorCnpj = co.cnpj || null;

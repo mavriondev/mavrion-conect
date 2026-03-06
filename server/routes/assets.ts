@@ -141,15 +141,20 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
         try {
           const processo = row.anm_processo.replace(/[^0-9/]/g, "");
           const ANM_URL = "https://geo.anm.gov.br/arcgis/rest/services/SIGMINE/dados_anm/MapServer/0/query";
-          const params = new URLSearchParams({
+          const formBody = new URLSearchParams({
             where: `PROCESSO='${processo}'`,
-            outFields: "PROCESSO",
+            outFields: "PROCESSO,UF,SUBS,AREA_HA",
             returnGeometry: "true",
             geometryType: "esriGeometryPolygon",
             outSR: "4326",
             f: "json",
           });
-          const anmResp = await fetch(`${ANM_URL}?${params.toString()}`);
+          const anmResp = await fetch(ANM_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: formBody.toString(),
+            signal: AbortSignal.timeout(15000),
+          });
           if (anmResp.ok) {
             const anmData = await anmResp.json() as any;
             const features = anmData.features || [];
@@ -183,15 +188,25 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
               }
 
               try {
-                const camposAtual = (await db.execute(sql`SELECT campos_especificos FROM assets WHERE id = ${assetId}`)) as any;
-                const campos = camposAtual.rows?.[0]?.campos_especificos || {};
+                const camposAtual = (await db.execute(sql`SELECT campos_especificos, municipio FROM assets WHERE id = ${assetId}`)) as any;
+                const existingRow = camposAtual.rows?.[0];
+                const campos = existingRow?.campos_especificos || {};
                 const newCampos = { ...campos, latitude: centLat, longitude: centLng, codigoIbge, municipio: municipioNome };
-                await db.execute(
-                  sql`UPDATE assets SET geom = ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(geometry)}), 4326), campos_especificos = ${JSON.stringify(newCampos)}::jsonb WHERE id = ${assetId}`
-                );
-              } catch {}
 
-              return res.json({ geometry });
+                if (!existingRow?.municipio && municipioNome) {
+                  await db.execute(
+                    sql`UPDATE assets SET municipio = ${municipioNome}, campos_especificos = ${JSON.stringify(newCampos)}::jsonb WHERE id = ${assetId}`
+                  );
+                } else {
+                  await db.execute(
+                    sql`UPDATE assets SET campos_especificos = ${JSON.stringify(newCampos)}::jsonb WHERE id = ${assetId}`
+                  );
+                }
+              } catch (updateErr) {
+                console.warn("Failed to update asset campos/municipio:", updateErr);
+              }
+
+              return res.json({ geometry, municipio: municipioNome, codigoIbge });
             }
           }
         } catch (anmErr: any) {

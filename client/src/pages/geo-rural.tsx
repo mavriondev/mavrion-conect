@@ -1432,16 +1432,18 @@ export default function GeoRuralPage() {
       )}
 
       {error && (
-        <div className="text-center py-10 text-destructive" data-testid="error-sicar">
+        <div className="text-center py-10" data-testid="error-sicar">
           <AlertTriangle className="w-10 h-10 mx-auto mb-3 text-yellow-500" />
-          <p className="font-medium">SICAR indisponível</p>
-          <p className="text-sm text-muted-foreground mt-1">O servidor do CAR está fora do ar. Use o código CAR direto ou tente novamente em alguns minutos.</p>
+          <p className="font-medium text-foreground">Servidor SICAR temporariamente fora do ar</p>
+          <p className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">
+            O geoserver do SICAR (CAR) não está respondendo no momento. Isso é uma instabilidade do servidor externo e geralmente se resolve em algumas horas. Você pode tentar novamente ou consultar diretamente o portal público do CAR.
+          </p>
           <div className="flex gap-2 justify-center mt-4">
             <Button variant="outline" onClick={() => refetch()} data-testid="button-retry-sicar">
               <RefreshCcw className="w-4 h-4 mr-2" /> Tentar novamente
             </Button>
             <Button variant="outline" onClick={() => window.open("https://consultapublica.car.gov.br/publico/imoveis/index", "_blank")} data-testid="button-portal-car-error">
-              <ExternalLink className="w-4 h-4 mr-2" /> Portal CAR
+              <ExternalLink className="w-4 h-4 mr-2" /> Consultar Portal CAR
             </Button>
           </div>
         </div>
