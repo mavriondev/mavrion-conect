@@ -257,6 +257,16 @@ export default function Sidebar() {
           <NavLink href="/" icon={LayoutDashboard} label={t("nav.dashboard")} exact />
         )}
 
+        {hasPermission(user, "prospeccao") && (
+          <ExpandableNav href="/prospeccao" icon={Telescope} label={t("nav.prospeccao")} activePaths={["/prospeccao", "/ma", "/geo-rural", "/anm", "/fii-fundos"]}>
+            <SubLink href="/prospeccao" icon={Telescope} label={t("nav.cnpj")} exact />
+            <SubLink href="/ma" icon={Handshake} label="Negócios" />
+            <SubLink href="/geo-rural" icon={Map} label="Fazendas" />
+            <SubLink href="/anm" icon={Pickaxe} label="Jazidas" />
+            <SubLink href="/fii-fundos" icon={Landmark} label="FII / Fundos" />
+          </ExpandableNav>
+        )}
+
         {hasPermission(user, "ativos") && (
           <ExpandableNav href="/ativos" icon={Layers} label={t("nav.ativos")}>
             <SubLink href="/ativos" icon={Layers} label={t("nav.ativos")} exact />
@@ -284,16 +294,6 @@ export default function Sidebar() {
             <SubLink href="/sdr" icon={Magnet} label={t("nav.filaSdr")} />
             <SubLink href="/propostas" icon={FileText} label={t("nav.propostas")} />
             <SubLink href="/contratos" icon={FileSignature} label={t("nav.contratos")} />
-          </ExpandableNav>
-        )}
-
-        {hasPermission(user, "prospeccao") && (
-          <ExpandableNav href="/prospeccao" icon={Telescope} label={t("nav.prospeccao")} activePaths={["/prospeccao", "/ma", "/geo-rural", "/anm", "/fii-fundos"]}>
-            <SubLink href="/prospeccao" icon={Telescope} label={t("nav.cnpj")} exact />
-            <SubLink href="/ma" icon={Handshake} label={t("nav.maRadar")} />
-            <SubLink href="/geo-rural" icon={Map} label={t("nav.geoRural")} />
-            <SubLink href="/anm" icon={Pickaxe} label={t("nav.anmBusca")} />
-            <SubLink href="/fii-fundos" icon={Landmark} label="FII / Fundos" />
           </ExpandableNav>
         )}
 
