@@ -371,17 +371,44 @@ export function registerSystemRoutes(app: Express, storage: IStorage) {
   app.get("/api/dashboard/quotes", async (req, res) => {
     try {
       const results: Record<string, any> = {};
+      const timeout = AbortSignal.timeout(10000);
 
-      const [quotesRes, selicRes] = await Promise.allSettled([
-        fetch("https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,BTC-BRL").then(r => r.json()),
-        fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json").then(r => r.json()),
+      const [dollarRes, euroRes, btcRes, selicRes, awesomeRes] = await Promise.allSettled([
+        fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.1/dados/ultimos/2?formato=json", { signal: timeout }).then(r => r.json()),
+        fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.21619/dados/ultimos/2?formato=json", { signal: timeout }).then(r => r.json()),
+        fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=brl&include_24hr_change=true", { signal: timeout }).then(r => r.json()),
+        fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json", { signal: timeout }).then(r => r.json()),
+        fetch("https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,BTC-BRL", { signal: timeout }).then(r => r.json()).catch(() => null),
       ]);
 
-      if (quotesRes.status === "fulfilled") {
-        if (quotesRes.value.USDBRL) results.dollar = quotesRes.value.USDBRL;
-        if (quotesRes.value.EURBRL) results.euro = quotesRes.value.EURBRL;
-        if (quotesRes.value.BTCBRL) results.btc = quotesRes.value.BTCBRL;
+      if (awesomeRes.status === "fulfilled" && awesomeRes.value && !awesomeRes.value.status) {
+        if (awesomeRes.value.USDBRL) results.dollar = awesomeRes.value.USDBRL;
+        if (awesomeRes.value.EURBRL) results.euro = awesomeRes.value.EURBRL;
+        if (awesomeRes.value.BTCBRL) results.btc = awesomeRes.value.BTCBRL;
       }
+
+      if (!results.dollar && dollarRes.status === "fulfilled" && Array.isArray(dollarRes.value) && dollarRes.value.length >= 2) {
+        const [prev, curr] = dollarRes.value;
+        const bid = Number(curr.valor);
+        const prevVal = Number(prev.valor);
+        const pctChange = prevVal > 0 ? (((bid - prevVal) / prevVal) * 100).toFixed(2) : "0.00";
+        results.dollar = { bid: bid.toFixed(4), pctChange, name: "Dólar/Real" };
+      }
+
+      if (!results.euro && euroRes.status === "fulfilled" && Array.isArray(euroRes.value) && euroRes.value.length >= 2) {
+        const [prev, curr] = euroRes.value;
+        const bid = Number(curr.valor);
+        const prevVal = Number(prev.valor);
+        const pctChange = prevVal > 0 ? (((bid - prevVal) / prevVal) * 100).toFixed(2) : "0.00";
+        results.euro = { bid: bid.toFixed(4), pctChange, name: "Euro/Real" };
+      }
+
+      if (!results.btc && btcRes.status === "fulfilled" && btcRes.value?.bitcoin) {
+        const brl = btcRes.value.bitcoin.brl;
+        const change = btcRes.value.bitcoin.brl_24h_change;
+        results.btc = { bid: String(brl), pctChange: change ? change.toFixed(2) : "0.00", name: "Bitcoin/Real" };
+      }
+
       if (selicRes.status === "fulfilled" && selicRes.value?.[0]) {
         results.selic = selicRes.value[0];
       }
