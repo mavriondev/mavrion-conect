@@ -31,7 +31,7 @@ import {
   ChevronLeft, ChevronRight, Map as MapIcon, Check, ExternalLink,
   Briefcase, TreePine, Download, BarChart2, Gauge, Ruler,
   MapPin, Eye, AlertTriangle, RefreshCcw, Wifi, WifiOff, Activity,
-  ArrowUpDown, Save, TrendingUp, Play, Filter, Trophy, Sprout,
+  ArrowUpDown, Save, TrendingUp, Play, Filter, Trophy, Sprout, Leaf,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -660,6 +660,8 @@ export default function GeoRuralPage() {
   const [serverStatus, setServerStatus] = useState<"idle" | "checking" | "online" | "offline">("checking");
   const [serverCheckedAt, setServerCheckedAt] = useState<string | null>(null);
   const [carManualCode, setCarManualCode] = useState("");
+  const [carSearching, setCarSearching] = useState(false);
+  const [carResult, setCarResult] = useState<any>(null);
 
   useEffect(() => {
     apiRequest("GET", "/api/geo/sicar-status")
@@ -735,10 +737,12 @@ export default function GeoRuralPage() {
     retryDelay: 2000,
   });
 
-  const features: any[] = rawData?.features || [];
-  const totalFeatures = rawData?.totalFeatures || rawData?.numberMatched || features.length;
-  const fromCache = rawData?.fromCache === true;
-  const cachedAt = rawData?.cachedAt || null;
+  const regularFeatures: any[] = rawData?.features || [];
+  const carFeatures: any[] = carResult?.features || [];
+  const features: any[] = carFeatures.length > 0 ? carFeatures : regularFeatures;
+  const totalFeatures = carFeatures.length > 0 ? carFeatures.length : (rawData?.totalFeatures || rawData?.numberMatched || features.length);
+  const fromCache = (carResult?.fromCache === true) || (rawData?.fromCache === true);
+  const cachedAt = carResult?.cachedAt || rawData?.cachedAt || null;
 
   const { data: importedMap = {} } = useQuery({
     queryKey: ["/api/geo/imported"],
@@ -760,6 +764,40 @@ export default function GeoRuralPage() {
     if (areaMax) p.set("areaMax", areaMax);
     setActiveSearch(p.toString());
     setSearched(true);
+  };
+
+  const handleCarSearch = async () => {
+    const code = carManualCode.trim();
+    if (!code || code.length < 5) {
+      toast({ title: "Código CAR inválido", description: "Informe um código CAR válido (mínimo 5 caracteres).", variant: "destructive" });
+      return;
+    }
+    setCarSearching(true);
+    setCarResult(null);
+    setSelectedFeature(null);
+    setAnalysis(null);
+    try {
+      const r = await apiRequest("GET", `/api/geo/fazendas/car/${encodeURIComponent(code)}`);
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.message || body.suggestion || "Imóvel não encontrado");
+      }
+      const data = await r.json();
+      const feats = data?.features || [];
+      if (feats.length === 0) {
+        toast({ title: "Imóvel não encontrado", description: "Nenhum imóvel com esse código CAR foi localizado.", variant: "destructive" });
+      } else {
+        setCarResult(data);
+        toast({ title: "Imóvel encontrado!", description: `${feats.length} resultado(s) para o código CAR.` });
+        if (data.fromCache) {
+          setServerStatus("offline");
+        }
+      }
+    } catch (err: any) {
+      toast({ title: "Erro na busca por CAR", description: err.message, variant: "destructive" });
+    } finally {
+      setCarSearching(false);
+    }
   };
 
   const applyShortcut = (filters: any) => {
@@ -1285,54 +1323,15 @@ export default function GeoRuralPage() {
 
       {/* SICAR Status Banner */}
       {serverStatus === "offline" && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 p-4 space-y-3" data-testid="banner-sicar-offline">
-          <div className="flex items-start gap-3">
-            <WifiOff className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <p className="font-medium text-amber-800 dark:text-amber-300 text-sm">
-                SICAR fora do ar no momento
-              </p>
-              <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
-                O servidor do governo (geoserver.car.gov.br) está instável.
-                A busca por município pode não funcionar. Use o código CAR direto ou acesse o portal público.
-              </p>
-            </div>
-          </div>
-          <div className="flex gap-2 items-center">
-            <Input
-              className="flex-1 h-8 text-sm bg-white dark:bg-background"
-              placeholder="Cole o código CAR (ex: MT-5107800-ABC123...)"
-              value={carManualCode}
-              onChange={e => setCarManualCode(e.target.value)}
-              data-testid="input-car-manual"
-            />
-            <Button
-              size="sm"
-              className="h-8 gap-1.5 shrink-0"
-              disabled={!carManualCode.trim()}
-              onClick={() => {
-                const code = carManualCode.trim();
-                if (!code) return;
-                window.open(
-                  `https://consultapublica.car.gov.br/publico/imoveis/index?codigoCar=${encodeURIComponent(code)}`,
-                  "_blank"
-                );
-              }}
-              data-testid="button-buscar-car"
-            >
-              <Search className="w-3.5 h-3.5" />
-              Buscar no CAR
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1.5 shrink-0"
-              onClick={() => window.open("https://consultapublica.car.gov.br/publico/imoveis/index", "_blank")}
-              data-testid="button-portal-car"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              Portal CAR
-            </Button>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 p-3 flex items-start gap-3" data-testid="banner-sicar-offline">
+          <WifiOff className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-medium text-amber-800 dark:text-amber-300 text-sm">
+              SICAR fora do ar — busca por município pode falhar
+            </p>
+            <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+              Use a busca por código CAR abaixo ou resultados do cache local.
+            </p>
           </div>
         </div>
       )}
@@ -1368,9 +1367,64 @@ export default function GeoRuralPage() {
         </div>
       )}
 
+      {/* Busca por Código CAR */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Leaf className="w-4 h-4 text-green-600" />
+            <Label className="text-sm font-semibold">Busca por Código CAR</Label>
+          </div>
+          <div className="flex gap-2 items-center">
+            <Input
+              className="flex-1 h-9 text-sm"
+              placeholder="Cole o código CAR (ex: MG-3117108-091A9C494B024400B8CF8A...)"
+              value={carManualCode}
+              onChange={e => setCarManualCode(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleCarSearch()}
+              data-testid="input-car-manual"
+            />
+            <Button
+              size="sm"
+              className="h-9 gap-1.5 shrink-0"
+              disabled={!carManualCode.trim() || carSearching}
+              onClick={handleCarSearch}
+              data-testid="button-buscar-car"
+            >
+              {carSearching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+              {carSearching ? "Buscando..." : "Buscar"}
+            </Button>
+            {carResult && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-9 shrink-0"
+                onClick={() => { setCarResult(null); setCarManualCode(""); }}
+                data-testid="button-limpar-car"
+              >
+                <X className="w-3.5 h-3.5" />
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-9 gap-1.5 shrink-0"
+              onClick={() => window.open("https://consultapublica.car.gov.br/publico/imoveis/index", "_blank")}
+              data-testid="button-portal-car"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              Portal CAR
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Filters */}
       <Card>
         <CardContent className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Search className="w-4 h-4 text-muted-foreground" />
+            <Label className="text-sm font-semibold">Busca por Região</Label>
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 items-end">
             <div className="space-y-1.5">
               <Label className="text-xs">Estado (UF) *</Label>
