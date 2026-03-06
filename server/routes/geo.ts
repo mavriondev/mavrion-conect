@@ -424,7 +424,7 @@ async function runGeoAnalysisInBackground(assetId: number, geometry: any, areaHa
           geoDistEnergiaM: distEnergiaM, geoScoreEnergia: scoreEn, geoScore: geoScoreVal,
           autoAnalyzed: true,
         })}::jsonb
-      WHERE id = ${assetId}
+      WHERE id = ${assetId} AND org_id = ${orgId}
     `);
 
     console.log(`[Geo Auto-Analysis] Ativo ${assetId}: geoScore=${geoScoreVal}, altMedia=${altMedia}, temRio=${temRio}, temEnergia=${temEnergia}`);
@@ -604,12 +604,11 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
             const coordinates = rings.map((ring: number[][]) => ring.map((c: number[]) => [c[0], c[1]]));
             importedGeometry = { type: "Polygon", coordinates };
 
-            let sumLat = 0, sumLng = 0, ptCount = 0;
-            for (const ring of coordinates) {
-              for (const c of ring) { sumLng += c[0]; sumLat += c[1]; ptCount++; }
+            const [cLat, cLng] = centroidFromGeometry(importedGeometry);
+            if (cLat && cLng && !isNaN(cLat) && !isNaN(cLng)) {
+              latitude = Math.round(cLat * 1e6) / 1e6;
+              longitude = Math.round(cLng * 1e6) / 1e6;
             }
-            latitude = ptCount > 0 ? Math.round((sumLat / ptCount) * 1e6) / 1e6 : null;
-            longitude = ptCount > 0 ? Math.round((sumLng / ptCount) * 1e6) / 1e6 : null;
 
             if (latitude && longitude) {
               try {
