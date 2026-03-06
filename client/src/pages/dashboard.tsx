@@ -100,6 +100,7 @@ export default function Dashboard() {
   const [euro, setEuro] = useState<any>(null);
   const [btc, setBtc] = useState<any>(null);
   const [weather, setWeather] = useState<any>(null);
+  const [weatherCity, setWeatherCity] = useState<string>("São Paulo");
   const [selic, setSelic] = useState<any>(null);
 
   useEffect(() => {
@@ -113,10 +114,37 @@ export default function Dashboard() {
       })
       .catch(() => {});
 
-    fetch("https://api.open-meteo.com/v1/forecast?latitude=-23.55&longitude=-46.63&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=America/Sao_Paulo&forecast_days=3")
-      .then(r => r.json())
-      .then(d => setWeather(d))
-      .catch(() => {});
+    const fetchWeather = (lat: number, lon: number) => {
+      fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=America/Sao_Paulo&forecast_days=3`)
+        .then(r => r.json())
+        .then(d => setWeather(d))
+        .catch(() => {});
+    };
+
+    const resolveCity = (lat: number, lon: number) => {
+      fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=10`, {
+        headers: { "User-Agent": "MavrionConnect/1.0" },
+      })
+        .then(r => r.json())
+        .then(d => {
+          const city = d.address?.city || d.address?.town || d.address?.municipality || d.address?.village;
+          if (city) setWeatherCity(city);
+        })
+        .catch(() => {});
+    };
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          fetchWeather(pos.coords.latitude, pos.coords.longitude);
+          resolveCity(pos.coords.latitude, pos.coords.longitude);
+        },
+        () => fetchWeather(-23.55, -46.63),
+        { timeout: 5000 }
+      );
+    } else {
+      fetchWeather(-23.55, -46.63);
+    }
   }, []);
 
   const monthlyDeals = useMemo(() => {
@@ -266,7 +294,7 @@ export default function Dashboard() {
             <div className="hidden md:flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 px-3 py-1.5 rounded-full" data-testid="widget-weather-mini">
               <Thermometer className="w-3.5 h-3.5" />
               <span className="font-medium">{weather.current.temperature_2m}°C</span>
-              <span className="text-xs">São Paulo</span>
+              <span className="text-xs">{weatherCity}</span>
             </div>
           )}
         </div>
@@ -653,7 +681,7 @@ export default function Dashboard() {
         <Card className="border-border/50" data-testid="section-weather">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2">
-              <Sun className="w-4 h-4 text-amber-500" /> {t("dash.weatherSP")}
+              <Sun className="w-4 h-4 text-amber-500" /> Clima — {weatherCity}
             </CardTitle>
           </CardHeader>
           <CardContent>
