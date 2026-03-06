@@ -709,6 +709,139 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
     }
   });
 
+  app.get("/api/geo/fazendas/car/:codigo", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const codigo = String(req.params.codigo).trim();
+      if (!codigo || codigo.length < 5) {
+        return res.status(400).json({ message: "Código CAR inválido" });
+      }
+
+      const ufFromCode = codigo.substring(0, 2).toUpperCase();
+      if (!UF_LIST.includes(ufFromCode)) {
+        return res.status(400).json({ message: `UF '${ufFromCode}' extraída do código não é válida` });
+      }
+      const ufLower = ufFromCode.toLowerCase();
+
+      const cacheKey = `car_${codigo}`;
+      const cached = await getCached<any>("sicar", cacheKey);
+      if (cached) {
+        return res.json(cached);
+      }
+
+      let sicarData: any = null;
+      let sicarOnline = false;
+
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const params = new URLSearchParams({
+            service: "WFS",
+            version: "2.0.0",
+            request: "GetFeature",
+            typeName: `sicar:sicar_imoveis_${ufLower}`,
+            outputFormat: "application/json",
+            CQL_FILTER: `cod_imovel = '${codigo}'`,
+            srsName: "EPSG:4326",
+          });
+          const url = `${SICAR_WFS}?${params.toString()}`;
+          const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
+          if (response.ok) {
+            sicarData = await response.json();
+            sicarOnline = true;
+            break;
+          }
+          if (response.status === 400) {
+            const paramsFallback = new URLSearchParams({
+              service: "WFS",
+              version: "1.1.0",
+              request: "GetFeature",
+              typeName: `sicar:sicar_imoveis_${ufLower}`,
+              outputFormat: "application/json",
+              CQL_FILTER: `cod_imovel = '${codigo}'`,
+              srsName: "EPSG:4326",
+            });
+            const fallbackResp = await fetch(`${SICAR_WFS}?${paramsFallback.toString()}`, { signal: AbortSignal.timeout(20000) });
+            if (fallbackResp.ok) {
+              sicarData = await fallbackResp.json();
+              sicarOnline = true;
+              break;
+            }
+          }
+        } catch {
+        }
+        if (attempt < 1) await new Promise(r => setTimeout(r, 2000));
+      }
+
+      if (sicarData && sicarData.features?.length > 0) {
+        await setCached("sicar", cacheKey, sicarData);
+
+        setImmediate(async () => {
+          try {
+            for (const feat of sicarData.features) {
+              const p = feat.properties || {};
+              const codIm = p.cod_imovel || p.COD_IMOVEL;
+              if (!codIm) continue;
+              await db.execute(sql`
+                INSERT INTO sicar_imoveis_cache (cod_imovel, uf, municipio, num_area, ind_status, ind_tipo, geometry, properties, fetched_at)
+                VALUES (${codIm}, ${ufFromCode}, ${p.municipio || p.nom_municipio || null}, ${p.num_area ? parseFloat(String(p.num_area)) : null}, ${p.ind_status || null}, ${p.ind_tipo || null}, ${JSON.stringify(feat.geometry || null)}::jsonb, ${JSON.stringify(p)}::jsonb, NOW())
+                ON CONFLICT (cod_imovel) DO UPDATE SET
+                  geometry = EXCLUDED.geometry,
+                  properties = EXCLUDED.properties,
+                  num_area = EXCLUDED.num_area,
+                  ind_status = EXCLUDED.ind_status,
+                  ind_tipo = EXCLUDED.ind_tipo,
+                  fetched_at = NOW()
+              `);
+            }
+          } catch (cacheErr) {
+            console.error("[SICAR CAR Cache] Erro ao persistir:", cacheErr);
+          }
+        });
+
+        return res.json(sicarData);
+      }
+
+      const cachedRows = await db
+        .select()
+        .from(sicarImoveisCache)
+        .where(eq(sicarImoveisCache.codImovel, codigo))
+        .limit(1);
+
+      if (cachedRows.length > 0) {
+        const row = cachedRows[0];
+        const result = {
+          type: "FeatureCollection",
+          features: [{
+            type: "Feature",
+            geometry: row.geometry,
+            properties: {
+              ...(row.properties as Record<string, any> || {}),
+              cod_imovel: row.codImovel,
+              municipio: row.municipio,
+              num_area: row.numArea,
+              ind_status: row.indStatus,
+              ind_tipo: row.indTipo,
+            },
+          }],
+          fromCache: true,
+          cachedAt: row.fetchedAt,
+        };
+        return res.json(result);
+      }
+
+      return res.status(404).json({
+        message: "Imóvel não encontrado",
+        sicarOnline,
+        suggestion: sicarOnline
+          ? "O código CAR informado não foi encontrado no SICAR."
+          : "O SICAR está offline e o imóvel não está no cache local. Tente novamente mais tarde.",
+      });
+    } catch (err: any) {
+      console.error("[CAR Busca] Erro:", err);
+      res.status(500).json({ message: "Erro ao buscar imóvel por código CAR" });
+    }
+  });
+
   app.get("/api/geo/fazendas", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
