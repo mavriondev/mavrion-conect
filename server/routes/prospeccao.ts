@@ -171,8 +171,28 @@ export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) 
     "MINA:CHUMBO":       { primary: [2443100], secondary: [4687701, 2740601], keywords: ["chumbo", "bateria", "acumulador"] },
     "MINA:CROMO":        { primary: [2443100, 2411300], secondary: [4687701], keywords: ["cromo", "inox", "aços especiais"] },
     "MINA":              { primary: [700600, 729099, 910600], secondary: [6470101, 4687701, 6499301], keywords: ["mineração", "minério", "mining"] },
-    "TERRA":             { primary: [6810201, 6810202, 119900], secondary: [6470101, 6499301, 111399], keywords: ["fazenda", "terra", "rural", "fundo terra"] },
-    "AGRO":              { primary: [111301, 111302, 111303, 115600], secondary: [111399, 1011201, 4623108, 6470101], keywords: ["agro", "grãos", "soja", "cooperativa", "trading"] },
+    "TERRA":             { primary: [6810201, 6810202, 119900, 111301, 111302, 115600, 151201, 151202, 141501, 141502], secondary: [6470101, 6499301, 111399, 161001, 161002, 163600, 210101, 210102, 4623108], keywords: ["fazenda", "terra", "rural", "fundo terra", "agropecuária"] },
+    "AGRO":              {
+      primary: [
+        111301, 111302, 111303, 111399, 112101, 112102, 112199,
+        113000, 114800, 115600, 116401, 116402, 116499, 119901, 119999,
+        121101, 121102, 131800, 132600, 133401, 133402, 133403, 133499,
+        141501, 141502, 142300, 151201, 151202, 152101, 152102,
+        153901, 153902, 154700, 155501, 155502, 155503, 155504, 155505, 155509,
+        161001, 161002, 161003, 161099, 162801, 162802, 162899, 163600,
+        210101, 210102, 210107, 210108, 210109,
+        6470101,
+      ],
+      secondary: [
+        1011201, 1011202, 1012101, 1012102, 1012103, 1012104,
+        1051100, 1052000, 1053800,
+        4622200, 4623101, 4623102, 4623108, 4623109, 4623199,
+        4683400,
+        6612601, 6612602, 6619302,
+        161001, 163600, 210101,
+      ],
+      keywords: ["agropecuária", "fazenda", "pecuária", "cooperativa agrícola", "fundo agro", "rural"],
+    },
     "NEGOCIO":           { primary: [6420000, 6430200, 6470101], secondary: [6499301, 7490199, 6612601], keywords: ["holding", "investimento", "private equity", "M&A"] },
     "FII_CRI":           { primary: [6630400, 6499301, 6810201], secondary: [6420000, 6470101, 4110700], keywords: ["fundo imobiliário", "FII", "CRI", "securitizadora"] },
     "DESENVOLVIMENTO":   { primary: [4110700, 4120400], secondary: [4130300, 6630400, 6810201], keywords: ["incorporadora", "construtora", "loteamento"] },
@@ -320,9 +340,42 @@ export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) 
         }
       }
 
+      const SETORES_IRRELEVANTES_AGRO = [
+        "supermercado", "mercado", "mercadinho", "mercearia", "minimercado",
+        "restaurante", "lanchonete", "padaria", "pizzaria", "sorveteria", "bar ",
+        "farmácia", "drogaria", "perfumaria", "cosmético",
+        "confecção", "vestuário", "calçado", "roupa", "moda", "têxtil",
+        "barbearia", "salão", "cabeleireiro", "estética", "beleza",
+        "pet shop", "petshop", "animais domésticos",
+        "posto de combustível", "gasolina", "combustíveis",
+        "comércio varejista de artigos", "loja de variedades", "bazar",
+        "borracharia", "oficina mecânica", "funilaria", "auto elétrica",
+        "academia", "escola", "curso", "ensino",
+        "clínica", "consultório", "odontológ", "médic",
+        "imobiliária", "corretagem de imóveis",
+        "contabilidade", "advocacia", "escritório",
+        "gráfica", "papelaria", "livraria",
+        "lavanderia", "tinturaria",
+        "hotel", "pousada", "motel",
+        "ótica", "joalheria", "relojoaria",
+        "tabacaria", "conveniência",
+        "eletrônic", "informática", "celular", "telefonia",
+        "ferragem", "material de construção",
+        "funerária",
+      ];
+
+      let filtered = allResults;
+      if (tipo === "AGRO" || tipo === "TERRA") {
+        filtered = allResults.filter(r => {
+          if (!r.cnaePrincipal) return true;
+          const cnaeText = r.cnaePrincipal.toLowerCase();
+          return !SETORES_IRRELEVANTES_AGRO.some(s => cnaeText.includes(s));
+        });
+      }
+
       const finalResults = ocultarCrm === "true"
-        ? allResults.filter(r => !r.alreadySaved)
-        : allResults;
+        ? filtered.filter(r => !r.alreadySaved)
+        : filtered;
 
       res.json({
         count:          finalResults.length,
