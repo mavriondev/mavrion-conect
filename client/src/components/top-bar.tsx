@@ -191,10 +191,6 @@ export default function TopBar() {
         data-testid="top-bar"
       >
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-xs font-normal gap-1 border-yellow-300 dark:border-yellow-700 text-yellow-700 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-950/30" data-testid="badge-beta">
-            <AlertTriangle className="w-3 h-3" />
-            Período de Testes
-          </Badge>
           {stats && stats.open > 0 && (
             <Badge variant="outline" className="text-xs gap-1 border-red-300 dark:border-red-700 text-red-600 dark:text-red-400" data-testid="badge-open-errors">
               <AlertCircle className="w-3 h-3" />
