@@ -1,6 +1,7 @@
 import { useState, useEffect, createContext, useContext } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
+import { useQuery } from "@tanstack/react-query";
 import {
   LayoutDashboard, Briefcase, LogOut, Magnet, Zap,
   Telescope, Building2, Users, ChevronDown, Download, BadgeCheck,
@@ -205,6 +206,11 @@ export default function Sidebar() {
   const { open, setOpen } = useSidebar();
   const { data: serviceStatus } = useServiceStatus();
   const { t } = useI18n();
+  const { data: orgSettings } = useQuery({
+    queryKey: ["/api/org/settings"],
+  });
+  const logoUrl = (orgSettings as any)?.logo_url || "";
+  const companyName = (orgSettings as any)?.company_name || "Mavrion Connect";
 
   const getInitials = (name: string) => name.substring(0, 2).toUpperCase();
 
@@ -212,10 +218,16 @@ export default function Sidebar() {
     <>
       <div className="h-16 flex items-center px-6 border-b border-sidebar-border bg-sidebar-background/50 backdrop-blur-sm shrink-0">
         <div className="flex items-center gap-2 font-bold text-xl tracking-tight text-white flex-1">
-          <div className="w-8 h-8 rounded-lg bg-sidebar-primary flex items-center justify-center shrink-0">
-            <Zap className="w-5 h-5 text-white fill-current" />
-          </div>
-          Mavrion Connect
+          {logoUrl ? (
+            <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center shrink-0 overflow-hidden">
+              <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" data-testid="img-sidebar-logo" />
+            </div>
+          ) : (
+            <div className="w-8 h-8 rounded-lg bg-sidebar-primary flex items-center justify-center shrink-0">
+              <Zap className="w-5 h-5 text-white fill-current" />
+            </div>
+          )}
+          <span className="truncate text-lg" data-testid="text-sidebar-company">{companyName}</span>
         </div>
         <button
           onClick={() => setOpen(false)}
