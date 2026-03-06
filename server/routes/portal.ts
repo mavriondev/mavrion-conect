@@ -574,6 +574,8 @@ export function registerPortalRoutes(app: Express, storage: IStorage, db: NodePg
         fotos: asset.fotos || [],
 
         geometry: asset.geom_json ? JSON.parse(asset.geom_json) : null,
+        latitude: campos.latitude || null,
+        longitude: campos.longitude || null,
 
         geoAltMed: asset.geo_alt_med,
         geoAltMin: asset.geo_alt_min,

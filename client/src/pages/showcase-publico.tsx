@@ -130,8 +130,10 @@ export default function ShowcasePublico({ id }: { id: string }) {
     } catch {}
   }, [data?.geometry]);
 
+  const hasMapData = data?.geometry || (data?.latitude && data?.longitude);
+
   useEffect(() => {
-    if (!data?.geometry || !mapRef.current || mapInstanceRef.current) return;
+    if (!hasMapData || !mapRef.current || mapInstanceRef.current) return;
     import("leaflet").then(L => {
       const linkEl = document.createElement("link");
       linkEl.rel = "stylesheet";
@@ -144,10 +146,33 @@ export default function ShowcasePublico({ id }: { id: string }) {
         L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
           attribution: "Esri Satellite",
         }).addTo(map);
-        const geoLayer = L.geoJSON(data.geometry, {
-          style: { color: "#f59e0b", weight: 3, fillColor: "#fbbf24", fillOpacity: 0.2 },
-        }).addTo(map);
-        map.fitBounds(geoLayer.getBounds(), { padding: [40, 40] });
+
+        if (data.geometry) {
+          const geoLayer = L.geoJSON(data.geometry, {
+            style: { color: "#f59e0b", weight: 3, fillColor: "#fbbf24", fillOpacity: 0.2 },
+          }).addTo(map);
+          map.fitBounds(geoLayer.getBounds(), { padding: [40, 40] });
+        } else if (data.latitude && data.longitude) {
+          const lat = Number(data.latitude);
+          const lon = Number(data.longitude);
+          map.setView([lat, lon], 14);
+          const markerIcon = L.divIcon({
+            html: '<div style="width:16px;height:16px;background:#f59e0b;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.4)"></div>',
+            iconSize: [16, 16],
+            iconAnchor: [8, 8],
+            className: '',
+          });
+          L.marker([lat, lon], { icon: markerIcon }).addTo(map);
+          L.circle([lat, lon], {
+            radius: 500,
+            color: "#f59e0b",
+            weight: 2,
+            fillColor: "#fbbf24",
+            fillOpacity: 0.15,
+            dashArray: "6 4",
+          }).addTo(map);
+        }
+
         mapInstanceRef.current = map;
       }, 200);
     });
@@ -158,7 +183,7 @@ export default function ShowcasePublico({ id }: { id: string }) {
         mapInstanceRef.current = null;
       }
     };
-  }, [data?.geometry]);
+  }, [hasMapData]);
 
   if (isLoading) return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -357,10 +382,10 @@ export default function ShowcasePublico({ id }: { id: string }) {
         )}
 
         <div className="grid md:grid-cols-2 gap-6 mb-10">
-          {d.geometry && (
+          {(d.geometry || (d.latitude && d.longitude)) && (
             <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm md:col-span-2" data-testid="section-map">
               <div className="p-6 pb-3">
-                <SectionTitle icon={Globe}>Localização & Polígono</SectionTitle>
+                <SectionTitle icon={Globe}>{d.geometry ? "Localização & Polígono" : "Localização"}</SectionTitle>
               </div>
               <div ref={mapRef} className="w-full h-[400px]" data-testid="map-container" />
             </div>
