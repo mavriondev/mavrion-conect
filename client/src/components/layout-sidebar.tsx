@@ -231,16 +231,18 @@ export default function Sidebar() {
 
   const sidebarContent = (
     <>
-      <div className="h-16 flex items-center px-6 border-b border-sidebar-border bg-sidebar-background/50 backdrop-blur-sm shrink-0">
-        <div className="flex items-center gap-2 font-bold text-xl tracking-tight text-white flex-1">
+      <div className="h-16 flex items-center px-4 border-b border-sidebar-border bg-sidebar-background/50 backdrop-blur-sm shrink-0">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
           {logoUrl ? (
-            <img src={logoUrl} alt="Logo" className="h-8 max-w-[120px] object-contain shrink-0" data-testid="img-sidebar-logo" />
+            <div className="w-9 h-9 rounded-lg bg-white flex items-center justify-center shrink-0 overflow-hidden p-0.5">
+              <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" data-testid="img-sidebar-logo" />
+            </div>
           ) : (
-            <div className="w-8 h-8 rounded-lg bg-sidebar-primary flex items-center justify-center shrink-0">
+            <div className="w-9 h-9 rounded-lg bg-sidebar-primary flex items-center justify-center shrink-0">
               <Zap className="w-5 h-5 text-white fill-current" />
             </div>
           )}
-          <span className="truncate text-lg" data-testid="text-sidebar-company">{companyName}</span>
+          <span className="truncate text-base font-bold tracking-tight text-white" data-testid="text-sidebar-company">{companyName}</span>
         </div>
         <button
           onClick={() => setOpen(false)}
