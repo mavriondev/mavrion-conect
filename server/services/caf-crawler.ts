@@ -120,10 +120,14 @@ export function calcularPerfilNorion(lead: CafLead): 'alto' | 'medio' | 'baixo' 
   if (ativ.includes('lavoura') || ativ.includes('grão') || ativ.includes('grao')) score += 1;
 
   if (lead.dataValidade) {
-    const validade = new Date(lead.dataValidade);
-    const agora = new Date();
-    const mesesRestantes = (validade.getTime() - agora.getTime()) / (1000 * 60 * 60 * 24 * 30);
-    if (mesesRestantes > 12) score += 1;
+    try {
+      const validade = new Date(lead.dataValidade);
+      if (!isNaN(validade.getTime())) {
+        const agora = new Date();
+        const mesesRestantes = (validade.getTime() - agora.getTime()) / (1000 * 60 * 60 * 24 * 30);
+        if (mesesRestantes > 12) score += 1;
+      }
+    } catch {}
   }
 
   if (score >= 10) return 'alto';
@@ -138,6 +142,18 @@ interface CafApiResult {
   numeroCaf: string;
   grauParentesco: string;
   idUfpa: string;
+}
+
+export async function consultarApiPaginadaPublica(params: {
+  uf?: string;
+  cpf?: string;
+  numeroCaf?: string;
+  codigoMunicipio?: string;
+  idSituacao?: number;
+  pagina: number;
+  tamanhoPagina: number;
+}): Promise<{ dados: CafApiResult[]; sucesso: boolean }> {
+  return consultarApiPaginada(params);
 }
 
 async function consultarApiPaginada(params: {

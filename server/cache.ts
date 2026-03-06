@@ -7,6 +7,7 @@ const TTL_SECONDS = {
   sicar: 60 * 60 * 12,
   cnpja: 60 * 60 * 24,
   geo: 60 * 60 * 24,
+  caf_municipio: 60 * 60 * 12,
 };
 
 type CacheNS = keyof typeof TTL_SECONDS;
@@ -16,8 +17,8 @@ export async function getCached<T>(namespace: CacheNS, key: string): Promise<T |
   const [row] = await db.select().from(rawIngests).where(eq(rawIngests.externalId, cacheKey));
   if (!row) return null;
 
-  const expiresAt = new Date(row.hashDedupe);
-  if (new Date() > expiresAt) {
+  const expiresAt = new Date(row.hashDedupe as string);
+  if (isNaN(expiresAt.getTime()) || new Date() > expiresAt) {
     await db.delete(rawIngests).where(eq(rawIngests.externalId, cacheKey));
     return null;
   }
