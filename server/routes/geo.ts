@@ -713,8 +713,11 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const codigo = String(req.params.codigo).trim();
-      if (!codigo || codigo.length < 5) {
+      if (!codigo || codigo.length < 5 || codigo.length > 100) {
         return res.status(400).json({ message: "Código CAR inválido" });
+      }
+      if (!/^[A-Za-z0-9\-_]+$/.test(codigo)) {
+        return res.status(400).json({ message: "Código CAR contém caracteres inválidos" });
       }
 
       const ufFromCode = codigo.substring(0, 2).toUpperCase();
