@@ -234,9 +234,7 @@ export default function Sidebar() {
       <div className="h-16 flex items-center px-4 border-b border-sidebar-border bg-sidebar-background/50 backdrop-blur-sm shrink-0">
         <div className="flex items-center gap-3 flex-1 min-w-0">
           {logoUrl ? (
-            <div className="w-9 h-9 rounded-lg bg-white flex items-center justify-center shrink-0 overflow-hidden p-0.5">
-              <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" data-testid="img-sidebar-logo" />
-            </div>
+            <img src={logoUrl} alt="Logo" className="h-9 w-9 object-contain shrink-0 rounded-md" data-testid="img-sidebar-logo" />
           ) : (
             <div className="w-9 h-9 rounded-lg bg-sidebar-primary flex items-center justify-center shrink-0">
               <Zap className="w-5 h-5 text-white fill-current" />
