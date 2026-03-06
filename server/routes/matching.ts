@@ -513,7 +513,7 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
 
           if (!investorName && (s as any).companyId) {
             const [co] = await db.select().from(companies)
-              .where(eq(companies.id, (s as any).companyId)).catch(() => []);
+              .where(and(eq(companies.id, (s as any).companyId), eq(companies.orgId, orgId))).catch(() => []);
             if (co) {
               investorName = co.tradeName || co.legalName;
               investorCnpj = co.cnpj || null;
@@ -521,7 +521,24 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
             }
           }
 
-          return { ...s, investorName, investorCnpj, companyId };
+          const rj = (s.reasonsJson || {}) as any;
+          if (!investorName && rj.compradorNome) {
+            investorName = rj.compradorNome;
+          }
+          if (!investorName && rj.compradorId) {
+            try {
+              const [co] = await db.select().from(companies)
+                .where(and(eq(companies.id, rj.compradorId), eq(companies.orgId, orgId))).limit(1);
+              if (co) {
+                investorName = co.tradeName || co.legalName;
+                investorCnpj = co.cnpj || null;
+                companyId = co.id;
+              }
+            } catch {}
+          }
+
+          const tipo = rj.tipo || null;
+          return { ...s, investorName, investorCnpj, companyId, tipo };
         })
       );
 
