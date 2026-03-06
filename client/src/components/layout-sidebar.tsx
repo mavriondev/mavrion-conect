@@ -272,6 +272,7 @@ export default function Sidebar() {
           </ExpandableNav>
         )}
 
+        {/* Portal e Honorários temporariamente ocultos
         {hasPermission(user, "crm") && (
           <NavLink href="/portal-admin" icon={Globe} label={t("nav.portal")} />
         )}
@@ -279,6 +280,7 @@ export default function Sidebar() {
         {hasPermission(user, "crm") && (
           <NavLink href="/honorarios" icon={DollarSign} label={t("nav.honorarios")} />
         )}
+        */}
 
         {(user?.role === "admin" || user?.role === "manager") ? (
           <ExpandableNav href="/configuracoes" icon={Settings2} label={t("nav.configuracoes")} activePaths={["/configuracoes", "/connectors", "/users", "/error-reports"]}>
