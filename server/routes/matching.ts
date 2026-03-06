@@ -3,51 +3,19 @@ import type { IStorage } from "../storage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { matchSuggestions, deals, pipelineStages, assets, companies, leads } from "@shared/schema";
-import { eq, and, asc, desc, isNull } from "drizzle-orm";
+import { matchSuggestions, deals, pipelineStages, assets, companies, leads, matchFeedback, investorDynamicProfile, investorProfiles } from "@shared/schema";
+import { eq, and, asc, desc, isNull, sql } from "drizzle-orm";
 import { sendNotification, notifId } from "../notifications";
 import { getOrgId } from "../lib/tenant";
+import {
+  calculateSmartScore,
+  buildMatchingContext,
+  updateInvestorDynamicProfile,
+  normalizeState,
+  matchesRegion,
+} from "../lib/smart-matching";
 
-const stateNormalization: Record<string, string[]> = {
-  "AC": ["acre", "ac"],
-  "AL": ["alagoas", "al"],
-  "AP": ["amapá", "amapa", "ap"],
-  "AM": ["amazonas", "am"],
-  "BA": ["bahia", "ba"],
-  "CE": ["ceará", "ceara", "ce"],
-  "DF": ["distrito federal", "df"],
-  "ES": ["espírito santo", "espirito santo", "es"],
-  "GO": ["goiás", "goias", "go"],
-  "MA": ["maranhão", "maranhao", "ma"],
-  "MT": ["mato grosso", "mt"],
-  "MS": ["mato grosso do sul", "ms"],
-  "MG": ["minas gerais", "mg"],
-  "PA": ["pará", "para", "pa"],
-  "PB": ["paraíba", "paraiba", "pb"],
-  "PR": ["paraná", "parana", "pr"],
-  "PE": ["pernambuco", "pe"],
-  "PI": ["piauí", "piaui", "pi"],
-  "RJ": ["rio de janeiro", "rj"],
-  "RN": ["rio grande do norte", "rn"],
-  "RS": ["rio grande do sul", "rs"],
-  "RO": ["rondônia", "rondonia", "ro"],
-  "RR": ["roraima", "rr"],
-  "SC": ["santa catarina", "sc"],
-  "SP": ["são paulo", "sao paulo", "sp"],
-  "SE": ["sergipe", "se"],
-  "TO": ["tocantins", "to"],
-};
-
-export function matchesRegion(assetLocation: string | null, investorRegions: string[]): boolean {
-  if (!assetLocation || investorRegions.length === 0) return true;
-  const loc = assetLocation.toLowerCase();
-  return investorRegions.some(r => {
-    const rLower = r.toLowerCase();
-    if (loc.includes(rLower)) return true;
-    const variants = stateNormalization[r.toUpperCase()] || [rLower];
-    return variants.some(v => loc.includes(v));
-  });
-}
+export { matchesRegion } from "../lib/smart-matching";
 
 export function registerMatchingRoutes(app: Express, storage: IStorage, db: NodePgDatabase<any>) {
   app.get(api.matching.investors.list.path, async (req, res) => {
@@ -185,6 +153,33 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
         .set({ status: "accepted", dealId: deal.id } as any)
         .where(eq(matchSuggestions.id, suggId));
 
+      let assetType: string | null = null;
+      let assetEstado: string | null = null;
+      let assetPrice: number | null = null;
+      if (asset) {
+        assetType = asset.type;
+        assetEstado = normalizeState(asset.estado || asset.location);
+        assetPrice = asset.priceAsking || null;
+      }
+      try {
+        await db.insert(matchFeedback).values({
+          orgId,
+          suggestionId: suggId,
+          investorProfileId: suggestion.investorProfileId,
+          assetId: suggestion.assetId,
+          action: "accepted",
+          assetType,
+          assetEstado,
+          assetPrice,
+          scoreAtDecision: suggestion.score,
+        });
+        if (suggestion.investorProfileId) {
+          await updateInvestorDynamicProfile(db, suggestion.investorProfileId, orgId);
+        }
+      } catch (fbErr) {
+        console.warn("Feedback auto-record on accept failed:", fbErr);
+      }
+
       res.json({ success: true, dealId: deal.id });
     } catch (err) {
       console.error("Matching accept error:", err);
@@ -200,110 +195,41 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
       const allInvestors = await storage.getInvestors(orgId);
       let matchesFound = 0;
 
-      for (const asset of allAssets) {
-        // Ativo fechado, arquivado ou em negociação: não gerar novas sugestões,
-        // pois o deal já está concluído ou em andamento exclusivo com outro comprador
-        if (["fechado", "arquivado", "em_negociacao"].includes(asset.statusAtivo || "")) continue;
+      const ctx = await buildMatchingContext(db, orgId, allAssets);
 
-        // Exclusividade ativa: durante o período de exclusividade contratual,
-        // o ativo não deve ser oferecido a outros investidores/compradores
+      const allExistingSuggestions = await db.select({ assetId: matchSuggestions.assetId, investorProfileId: matchSuggestions.investorProfileId })
+        .from(matchSuggestions).where(eq(matchSuggestions.orgId, orgId));
+      const existingSuggestionKeys = new Set(allExistingSuggestions.map(s => `${s.assetId}_${s.investorProfileId}`));
+
+      for (const asset of allAssets) {
+        if (["fechado", "arquivado", "em_negociacao"].includes(asset.statusAtivo || "")) continue;
         if (asset.exclusivoAte && new Date(asset.exclusivoAte) > new Date()) continue;
 
         for (const investor of allInvestors) {
-          const existing = await db.select().from(matchSuggestions)
-            .where(
-              and(
-                eq(matchSuggestions.assetId, asset.id),
-                eq(matchSuggestions.investorProfileId, investor.id)
-              )
-            );
-
-          if (existing.length > 0) continue;
-
-          let score = 0;
-          const reasons: string[] = [];
-          const penalties: string[] = [];
+          if (existingSuggestionKeys.has(`${asset.id}_${investor.id}`)) continue;
 
           const investorTypes = (investor.assetTypes as string[]) || [];
           const perfilCompleto = investorTypes.length > 0 ||
             investor.ticketMin != null || investor.ticketMax != null ||
             ((investor.regionsOfInterest as string[]) || []).length > 0;
-
-          if (!perfilCompleto) {
-            penalties.push("Perfil do investidor incompleto — sem critérios definidos");
-          } else if (investorTypes.length === 0) {
-            score += 15;
-            reasons.push("Investidor aceita qualquer tipo de ativo");
-          } else if (investorTypes.includes(asset.type)) {
-            score += 40;
-            reasons.push(`Tipo "${asset.type}" está nas preferências do investidor`);
-          } else {
-            score -= 20;
-            penalties.push(`Tipo "${asset.type}" não está nas preferências do investidor`);
-          }
-
-          if (asset.priceAsking) {
-            const min = investor.ticketMin;
-            const max = investor.ticketMax;
-
-            if (!min && !max) {
-              score += 20;
-              reasons.push("Investidor não tem restrição de ticket");
-            } else {
-              const abaixoDoMin = min && asset.priceAsking < min * 0.8;
-              const acimaDoMax = max && asset.priceAsking > max * 1.2;
-
-              if (abaixoDoMin) {
-                penalties.push(`Preço R$${(asset.priceAsking / 1e6).toFixed(1)}M abaixo do ticket mínimo R$${(min! / 1e6).toFixed(1)}M`);
-              } else if (acimaDoMax) {
-                penalties.push(`Preço R$${(asset.priceAsking / 1e6).toFixed(1)}M acima do ticket máximo R$${(max! / 1e6).toFixed(1)}M`);
-              } else {
-                if (min && max) {
-                  const center = (min + max) / 2;
-                  const distance = Math.abs(asset.priceAsking - center) / (max - min);
-                  const proximity = Math.round((1 - distance) * 35);
-                  score += Math.max(proximity, 15);
-                  reasons.push(`Preço dentro do ticket (R$${(min / 1e6).toFixed(1)}M - R$${(max / 1e6).toFixed(1)}M)`);
-                } else {
-                  score += 25;
-                  reasons.push("Preço compatível com ticket");
-                }
-              }
-            }
-          } else {
-            score += 10;
-            reasons.push("Preço a negociar");
-          }
-
-          const regions = (investor.regionsOfInterest as string[]) || [];
-          if (regions.length === 0) {
-            score += 15;
-            reasons.push("Investidor opera em qualquer região");
-          } else if (matchesRegion(asset.location || asset.estado, regions)) {
-            score += 20;
-            reasons.push(`Localização "${asset.estado || asset.location}" está no interesse do investidor`);
-          } else {
-            score += 0;
-            penalties.push(`Região "${asset.estado || asset.location}" fora do interesse do investidor`);
-          }
-
-          if (asset.docsStatus === "completo" || asset.docsStatus === "regularizado") {
-            score += 10;
-            reasons.push("Documentação completa — menor risco");
-          } else if (asset.docsStatus === "pendente") {
-            score -= 5;
-            penalties.push("Documentação pendente");
-          }
-
           if (!perfilCompleto) continue;
 
-          if (score >= 40 && penalties.length <= 1) {
+          const result = calculateSmartScore(asset, investor, ctx);
+
+          if (result.score >= 40 && result.penalties.length <= 2) {
             await db.insert(matchSuggestions).values({
               orgId: asset.orgId,
               assetId: asset.id,
               investorProfileId: investor.id,
-              score: Math.min(score, 100),
-              reasonsJson: { reasons, penalties },
+              score: result.score,
+              reasonsJson: {
+                reasons: result.reasons,
+                penalties: result.penalties,
+                breakdown: result.breakdown,
+                confidence: result.confidence,
+                explanation: result.explanation,
+                version: "v3",
+              },
               status: "new",
             });
             matchesFound++;
@@ -327,7 +253,6 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
       };
 
       for (const asset of allAssets) {
-        // Mesmas regras de skip: ativo indisponível ou em exclusividade
         if (["fechado", "arquivado", "em_negociacao"].includes(asset.statusAtivo || "")) continue;
         if (asset.exclusivoAte && new Date(asset.exclusivoAte) > new Date()) continue;
 
@@ -345,25 +270,13 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
             ? asset.type === "NEGOCIO"
             : cnaeInteresse.some(cnae => cnaesEsperados.some(esp => cnae.startsWith(esp)));
 
-          if (cnaeMatch) {
-            score += 40;
-            reasons.push(`CNAE compatível com tipo ${asset.type}`);
-          } else if (asset.type === "NEGOCIO") {
-            score += 20;
-            reasons.push("Negócio — comprador estratégico genérico");
-          } else {
-            penalties.push(`CNAE não compatível com ${asset.type}`);
-          }
+          if (cnaeMatch) { score += 40; reasons.push(`CNAE compatível com tipo ${asset.type}`); }
+          else if (asset.type === "NEGOCIO") { score += 20; reasons.push("Negócio — comprador estratégico genérico"); }
+          else { penalties.push(`CNAE não compatível com ${asset.type}`); }
 
-          if (regioesInteresse.length === 0) {
-            score += 15;
-            reasons.push("Comprador opera em qualquer região");
-          } else if (matchesRegion(asset.location || asset.estado, regioesInteresse)) {
-            score += 25;
-            reasons.push("Região compatível");
-          } else {
-            penalties.push("Região fora do interesse");
-          }
+          if (regioesInteresse.length === 0) { score += 15; reasons.push("Comprador opera em qualquer região"); }
+          else if (matchesRegion(asset.location || asset.estado, regioesInteresse)) { score += 25; reasons.push("Região compatível"); }
+          else { penalties.push("Região fora do interesse"); }
 
           if (asset.docsStatus === "completo") { score += 10; reasons.push("Documentação completa"); }
 
@@ -378,7 +291,7 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
                 assetId: asset.id,
                 investorProfileId: null,
                 score: Math.min(score, 100),
-                reasonsJson: { reasons, penalties, tipo: "estrategico", compradorId: comprador.id, compradorNome: comprador.tradeName || comprador.legalName },
+                reasonsJson: { reasons, penalties, tipo: "estrategico", compradorId: comprador.id, compradorNome: comprador.tradeName || comprador.legalName, version: "v2" },
                 status: "new",
               });
               matchesFound++;
@@ -614,6 +527,124 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
       res.json(enriched);
     } catch (err) {
       res.status(500).json({ message: "Erro ao buscar matches" });
+    }
+  });
+
+  app.post("/api/matching/suggestions/:id/feedback", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const orgId = getOrgId(req);
+      const suggId = Number(req.params.id);
+      const feedbackSchema = z.object({
+        action: z.enum(["accepted", "rejected", "deferred"]),
+        rejectionReason: z.string().optional(),
+        rejectionNote: z.string().optional(),
+      });
+      const parsed = feedbackSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Dados inválidos", errors: parsed.error.errors });
+
+      const { action, rejectionReason, rejectionNote } = parsed.data;
+
+      const [suggestion] = await db.select().from(matchSuggestions)
+        .where(and(eq(matchSuggestions.id, suggId), eq(matchSuggestions.orgId, orgId)));
+      if (!suggestion) return res.status(404).json({ message: "Sugestão não encontrada" });
+
+      let assetType: string | null = null;
+      let assetEstado: string | null = null;
+      let assetPrice: number | null = null;
+      if (suggestion.assetId) {
+        const asset = await storage.getAsset(suggestion.assetId).catch(() => null);
+        if (asset) {
+          assetType = asset.type;
+          assetEstado = normalizeState(asset.estado || asset.location);
+          assetPrice = asset.priceAsking || null;
+        }
+      }
+
+      const [feedback] = await db.insert(matchFeedback).values({
+        orgId,
+        suggestionId: suggId,
+        investorProfileId: suggestion.investorProfileId,
+        assetId: suggestion.assetId,
+        action,
+        rejectionReason: rejectionReason || null,
+        rejectionNote: rejectionNote || null,
+        assetType,
+        assetEstado,
+        assetPrice,
+        scoreAtDecision: suggestion.score,
+      }).returning();
+
+      if (action === "rejected") {
+        await db.update(matchSuggestions)
+          .set({ status: "rejected" } as any)
+          .where(eq(matchSuggestions.id, suggId));
+      } else if (action === "deferred") {
+        await db.update(matchSuggestions)
+          .set({ status: "deferred" } as any)
+          .where(eq(matchSuggestions.id, suggId));
+      }
+
+      if (suggestion.investorProfileId) {
+        await updateInvestorDynamicProfile(db, suggestion.investorProfileId, orgId);
+      }
+
+      res.json({ success: true, feedback });
+    } catch (err) {
+      console.error("Feedback error:", err);
+      res.status(500).json({ message: "Erro ao registrar feedback" });
+    }
+  });
+
+  app.get("/api/matching/investors/:id/dynamic-profile", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const orgId = getOrgId(req);
+      const investorId = Number(req.params.id);
+
+      const [investor] = await db.select().from(investorProfiles)
+        .where(and(eq(investorProfiles.id, investorId), eq(investorProfiles.orgId, orgId)));
+      if (!investor) return res.status(404).json({ message: "Investidor não encontrado" });
+
+      const [profile] = await db.select().from(investorDynamicProfile)
+        .where(and(eq(investorDynamicProfile.investorProfileId, investorId), eq(investorDynamicProfile.orgId, orgId)));
+
+      const feedbacks = await db.select().from(matchFeedback)
+        .where(and(eq(matchFeedback.investorProfileId, investorId), eq(matchFeedback.orgId, orgId)));
+
+      res.json({
+        investor: { id: investor.id, name: investor.name },
+        dynamicProfile: profile || null,
+        feedbackSummary: {
+          total: feedbacks.length,
+          accepted: feedbacks.filter(f => f.action === "accepted").length,
+          rejected: feedbacks.filter(f => f.action === "rejected").length,
+          deferred: feedbacks.filter(f => f.action === "deferred").length,
+          rejectionReasons: feedbacks
+            .filter(f => f.rejectionReason)
+            .reduce((acc, f) => { acc[f.rejectionReason!] = (acc[f.rejectionReason!] || 0) + 1; return acc; }, {} as Record<string, number>),
+        },
+      });
+    } catch (err) {
+      res.status(500).json({ message: "Erro ao buscar perfil dinâmico" });
+    }
+  });
+
+  app.post("/api/matching/investors/:id/recalculate-profile", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const orgId = getOrgId(req);
+      const investorId = Number(req.params.id);
+
+      const [investor] = await db.select().from(investorProfiles)
+        .where(and(eq(investorProfiles.id, investorId), eq(investorProfiles.orgId, orgId)));
+      if (!investor) return res.status(404).json({ message: "Investidor não encontrado" });
+
+      const profile = await updateInvestorDynamicProfile(db, investorId, orgId);
+      res.json({ success: true, profile });
+    } catch (err) {
+      console.error("Recalculate profile error:", err);
+      res.status(500).json({ message: "Erro ao recalcular perfil" });
     }
   });
 }
