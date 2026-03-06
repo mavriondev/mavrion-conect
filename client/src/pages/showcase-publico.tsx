@@ -59,7 +59,7 @@ function MetricCard({ label, value, icon: Icon, color }: { label: string; value:
         {Icon && <Icon className={cn("w-4 h-4", color || "text-gray-400")} />}
         <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">{label}</span>
       </div>
-      <p className="text-lg font-bold text-gray-900">{value}</p>
+      <p className="text-lg font-bold text-gray-900 break-all" title={typeof value === 'string' ? value : undefined}>{typeof value === 'string' && value.length > 20 ? <span className="text-sm">{value}</span> : value}</p>
     </div>
   );
 }
