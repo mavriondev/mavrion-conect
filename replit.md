@@ -39,13 +39,24 @@ The primary theme is emerald green with a dark forest green sidebar. Navigation 
 
 ## VPS Deployment
 - **VPS**: `187.77.232.164`, SSH as `root`
+- **Domain**: `https://mavrionconnect.com.br` (SSL Let's Encrypt, auto-renew)
 - **App directory**: `/var/www/mavrion-conect`
-- **PM2 process**: `mavrion-conect` (id 0, port 5000), `norion` (id 2, port 5001)
+- **PM2 process**: `mavrion-conect` (id 3, `dist/index.cjs`, port 5000), `norion` (id 2, port 5001)
 - **Production DB**: `postgresql://mavrion:***@localhost:5432/mavrion_conect`
-- **Nginx**: Reverse proxy at `/etc/nginx/sites-enabled/mavrion-conect` (port 80 → 5000)
-- **Deploy process**: `tar czf` from Replit → `scp` → extract on VPS → `npm ci` → `npm run build` → `pm2 restart mavrion-conect`
-- **DB migrations**: Applied via `psql` ALTER TABLE commands (drizzle-kit push not used in production)
-- **Last deployed**: 2026-03-06 — includes i18n, dark mode, dashboard improvements, showcase, audit export
+- **Nginx**: Reverse proxy with SSL at `/etc/nginx/sites-enabled/mavrion-conect` (443 → 5000, HTTP→HTTPS redirect)
+- **GitHub repo**: `mavriondev/mavrion-conect` (branch `main`)
+- **DB migrations**: Applied via `psql` ALTER TABLE commands (drizzle-kit push NOT used in production)
+- **Last deployed**: 2026-03-06
+
+### Deploy Scripts
+- **`scripts/vps-install.sh`** — Primeira instalação em VPS limpa. Provisiona PostgreSQL, Node.js, PM2, Nginx, SSL, clona do GitHub, cria `.env` interativo. Executar como root na VPS.
+- **`scripts/vps-update.sh`** — Atualização/redeploy. Puxa do GitHub, faz build, reinicia PM2 com health check e rollback automático se falhar. NÃO toca no `.env` nem no banco. Executar como root na VPS.
+
+### Deploy Manual (alternativo)
+1. Subir código: `tar czf` do Replit → `scp` → extract na VPS (ou push para GitHub + pull na VPS)
+2. Build: `npm ci && npm run build`
+3. Restart: `pm2 restart mavrion-conect --update-env`
+4. Migrações: `psql` com `ALTER TABLE` (nunca `drizzle-kit push` em produção)
 
 ## External Dependencies
 - **PostgreSQL**: Primary relational database.
