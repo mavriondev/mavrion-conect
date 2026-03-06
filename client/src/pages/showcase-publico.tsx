@@ -7,7 +7,7 @@ import {
   Mountain, Droplets, Zap, CheckCircle2, AlertCircle, Shield,
   Building2, FileText, Globe, Leaf, BarChart3,
   Sun, CloudRain, Thermometer, Wind, Star, Award,
-  MessageCircle,
+  MessageCircle, Users, Sprout,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SiWhatsapp } from "react-icons/si";
@@ -445,6 +445,86 @@ export default function ShowcasePublico({ id }: { id: string }) {
                   <p className="text-xs text-gray-500 mt-1">Baseado em solo, clima, NDVI e zoneamento</p>
                 </div>
               </div>
+            </div>
+          )}
+
+          {d.cafData && d.cafData.totalProdutores > 0 && (
+            <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm md:col-span-2" data-testid="section-caf">
+              <SectionTitle icon={Sprout}>Agricultura Familiar (CAF / PRONAF)</SectionTitle>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                <div className="p-4 rounded-xl bg-gradient-to-br from-emerald-50 to-emerald-100 text-center">
+                  <Users className="w-5 h-5 text-emerald-600 mx-auto mb-1" />
+                  <p className="text-2xl font-bold text-gray-900" data-testid="text-caf-familias">{d.cafData.totalFamilias}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Famílias</p>
+                </div>
+                <div className="p-4 rounded-xl bg-gradient-to-br from-blue-50 to-blue-100 text-center">
+                  <Users className="w-5 h-5 text-blue-600 mx-auto mb-1" />
+                  <p className="text-2xl font-bold text-gray-900" data-testid="text-caf-membros">{d.cafData.totalMembros}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Membros</p>
+                </div>
+                <div className="p-4 rounded-xl bg-gradient-to-br from-amber-50 to-amber-100 text-center">
+                  <Ruler className="w-5 h-5 text-amber-600 mx-auto mb-1" />
+                  <p className="text-2xl font-bold text-gray-900" data-testid="text-caf-area">
+                    {d.cafData.areaTotal ? `${Number(d.cafData.areaTotal).toLocaleString("pt-BR")} ha` : "—"}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">Área Total</p>
+                </div>
+                <div className="p-4 rounded-xl bg-gradient-to-br from-green-50 to-green-100 text-center">
+                  <Wheat className="w-5 h-5 text-green-600 mx-auto mb-1" />
+                  <p className="text-2xl font-bold text-gray-900" data-testid="text-caf-pronaf">{d.cafData.totalComPronaf}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Com PRONAF</p>
+                </div>
+              </div>
+              {d.cafData.produtores?.length > 0 && (
+                <div className="overflow-x-auto rounded-lg border border-gray-200">
+                  <table className="w-full text-sm" data-testid="table-caf-produtores">
+                    <thead>
+                      <tr className="bg-gray-50 text-left">
+                        <th className="px-3 py-2.5 font-semibold text-gray-600 text-xs uppercase tracking-wide">Produtor</th>
+                        <th className="px-3 py-2.5 font-semibold text-gray-600 text-xs uppercase tracking-wide hidden md:table-cell">Atividade</th>
+                        <th className="px-3 py-2.5 font-semibold text-gray-600 text-xs uppercase tracking-wide hidden md:table-cell">Posse</th>
+                        <th className="px-3 py-2.5 font-semibold text-gray-600 text-xs uppercase tracking-wide text-center">Membros</th>
+                        <th className="px-3 py-2.5 font-semibold text-gray-600 text-xs uppercase tracking-wide text-center">PRONAF</th>
+                        <th className="px-3 py-2.5 font-semibold text-gray-600 text-xs uppercase tracking-wide text-center hidden sm:table-cell">Perfil</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {d.cafData.produtores.map((p: any, i: number) => (
+                        <tr key={i} className="hover:bg-gray-50/50 transition-colors" data-testid={`row-caf-produtor-${i}`}>
+                          <td className="px-3 py-2.5 font-medium text-gray-900 max-w-[200px] truncate" title={p.nome}>{p.nome}</td>
+                          <td className="px-3 py-2.5 text-gray-600 hidden md:table-cell max-w-[150px] truncate" title={p.atividade}>{p.atividade || "—"}</td>
+                          <td className="px-3 py-2.5 text-gray-600 hidden md:table-cell max-w-[120px] truncate" title={p.condicaoPosse}>{p.condicaoPosse || "—"}</td>
+                          <td className="px-3 py-2.5 text-center text-gray-700">{p.totalMembros}</td>
+                          <td className="px-3 py-2.5 text-center">
+                            {p.pronaf && /sim|enquadrado|pronaf|apto/i.test(String(p.pronaf)) ? (
+                              <span className="inline-flex items-center gap-1 text-green-700 bg-green-50 px-2 py-0.5 rounded-full text-xs font-medium">
+                                <CheckCircle2 className="w-3 h-3" /> Sim
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 text-xs">—</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-center hidden sm:table-cell">
+                            <span className={cn(
+                              "inline-block px-2 py-0.5 rounded-full text-xs font-medium",
+                              p.perfil === "alto" ? "bg-green-100 text-green-700" :
+                              p.perfil === "medio" ? "bg-yellow-100 text-yellow-700" :
+                              "bg-gray-100 text-gray-500"
+                            )}>
+                              {p.perfil === "alto" ? "Alto" : p.perfil === "medio" ? "Médio" : "Baixo"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {d.cafUpdatedAt && (
+                <p className="text-[10px] text-gray-400 mt-3 text-right">
+                  Dados CAF atualizados em: {new Date(d.cafUpdatedAt).toLocaleDateString("pt-BR")}
+                </p>
+              )}
             </div>
           )}
 

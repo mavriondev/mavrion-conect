@@ -623,6 +623,31 @@ export function registerPortalRoutes(app: Express, storage: IStorage, db: NodePg
 
         setor: campos.setor || null,
 
+        cafData: campos.cafData ? {
+          totalProdutores: campos.cafData.totalProdutores || 0,
+          totalFamilias: campos.cafData.totalFamilias || 0,
+          totalMembros: campos.cafData.totalMembros || 0,
+          areaTotal: campos.cafData.areaTotal || null,
+          mediaAreaHa: campos.cafData.mediaAreaHa || null,
+          totalComPronaf: campos.cafData.totalComPronaf || 0,
+          municipioBuscado: campos.cafData.municipioBuscado || null,
+          ufBuscado: campos.cafData.ufBuscado || null,
+          produtores: (campos.cafData.produtores || []).slice(0, 30).map((p: any) => ({
+            nome: p.nome || "N/D",
+            nufpa: p.nufpa || "",
+            municipio: p.municipio || "",
+            uf: p.uf || "",
+            areaHa: p.areaHa || null,
+            atividade: p.atividade || "",
+            condicaoPosse: p.condicaoPosse || "",
+            pronaf: p.pronaf || "",
+            status: p.status || "",
+            perfil: p.perfil || "baixo",
+            totalMembros: p.totalMembros || 1,
+          })),
+        } : null,
+        cafUpdatedAt: campos.cafUpdatedAt || null,
+
         enrichmentAgro: campos.enrichmentAgro || null,
 
         companyName: settings.company_name || "Mavrion Connect",
