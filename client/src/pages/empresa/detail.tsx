@@ -278,13 +278,9 @@ export default function EmpresaDetailPage() {
     const result: Record<string, SocioCompany[]> = {};
     for (const s of sociosWithTaxId) {
       try {
-        const res = await fetch(`/api/socios/${s.taxId}/companies`);
-        if (res.ok) {
-          const data = await res.json();
-          result[s.taxId!] = data.companies || [];
-        } else {
-          result[s.taxId!] = [];
-        }
+        const res = await apiRequest("GET", `/api/socios/${s.taxId}/companies`);
+        const data = await res.json();
+        result[s.taxId!] = data.companies || [];
       } catch {
         result[s.taxId!] = [];
       }
