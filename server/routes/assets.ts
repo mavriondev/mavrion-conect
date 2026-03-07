@@ -13,6 +13,8 @@ import { consultarEmbargoIbama, consultarEmbargoIbamaCoordenadas } from "../lib/
 import { getUsoTerraMapBiomas } from "../lib/mapbiomas";
 import { getNDVISentinel } from "../lib/sentinel";
 import { getProducaoMunicipio } from "../lib/contexto-regional";
+import { consultarApiPaginadaPublica, calcularPerfilNorion } from "../services/caf-crawler";
+import { getCached, setCached } from "../cache";
 
 export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgDatabase<any>) {
   app.get(api.matching.assets.list.path, async (req, res) => {
@@ -611,6 +613,118 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     } catch (error: any) {
       console.error("Erro contexto regional:", error);
       res.status(500).json({ message: "Erro ao carregar contexto regional" });
+    }
+  });
+
+  app.post("/api/matching/assets/:id/enriquecer-caf", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const user = req.user as any;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "ID inválido" });
+
+    try {
+      const asset = await storage.getAsset(id);
+      if (!asset) return res.status(404).json({ message: "Ativo não encontrado" });
+
+      const campos: any = asset.camposEspecificos || {};
+      const municipio = asset.municipio || campos.municipio;
+      const estado = asset.estado || campos.estado;
+      const codIBGE = campos.codigoIbge || campos.codIBGE || "";
+
+      if (!municipio && !codIBGE) {
+        return res.status(400).json({ message: "Município ou código IBGE não disponível para este ativo" });
+      }
+
+      const cacheKey = `caf_asset_${id}`;
+      if (!req.body.force) {
+        const cached = await getCached("caf_municipio", cacheKey);
+        if (cached) return res.json({ success: true, cafData: cached, cached: true });
+      }
+
+      let codigoMunicipio = codIBGE;
+      if (!codigoMunicipio && municipio && estado) {
+        try {
+          const { default: axios } = await import("axios");
+          const r = await axios.get(
+            `https://servicodados.ibge.gov.br/api/v1/localidades/estados/${estado}/municipios`,
+            { timeout: 10000 }
+          );
+          const found = (r.data || []).find((m: any) =>
+            m.nome.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") ===
+            municipio.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+          );
+          if (found) codigoMunicipio = String(found.id);
+        } catch {}
+      }
+
+      if (!codigoMunicipio) {
+        return res.status(400).json({ message: `Não foi possível resolver o código IBGE de "${municipio}" (${estado})` });
+      }
+
+      const result = await consultarApiPaginadaPublica({
+        codigoMunicipio,
+        uf: estado || undefined,
+        pagina: 1,
+        tamanhoPagina: 50,
+      });
+
+      if (!result.sucesso) {
+        return res.status(502).json({ message: "API do CAF indisponível no momento" });
+      }
+
+      const produtores = result.dados.map((d: any) => {
+        const lead = {
+          idUfpa: d.idUfpa || d.id?.toString() || "",
+          nufpa: d.nufpa || d.numeroUFPA || "",
+          nome: d.nome || d.nomeTitular || "",
+          cpfMascarado: d.cpfMascarado || d.cpf || "",
+          situacao: d.situacao || d.descSituacao || "Ativo",
+          grauParentesco: d.grauParentesco || "Titular",
+          municipio: d.municipio || municipio || "",
+          uf: d.uf || estado || "",
+          atividade: d.atividade || d.descAtividade || "",
+          areaHa: d.areaHa || d.areaTotalHectare || null,
+          condicaoPosse: d.condicaoPosse || "",
+          numImoveis: d.numImoveis || d.quantidadeImovel || 1,
+          enquadramentoPronaf: d.enquadramentoPronaf ?? d.pronaf ?? false,
+          dataValidade: d.dataValidade || null,
+          dataInscricao: d.dataInscricao || null,
+          entidadeCadastradora: d.entidadeCadastradora || "",
+          membros: d.membros || [],
+          classificacao: "pendente" as const,
+          extraidoEm: new Date().toISOString(),
+        };
+        return { ...lead, perfil: calcularPerfilNorion(lead) };
+      });
+
+      const familias = new Set(produtores.map((p: any) => p.idUfpa || p.nufpa));
+      const totalMembros = produtores.reduce((sum: number, p: any) => sum + (p.membros?.length || 0), 0);
+
+      const cafData = {
+        produtores,
+        totalProdutores: produtores.length,
+        totalFamilias: familias.size,
+        totalMembros,
+        municipio,
+        codigoMunicipio,
+        consultadoEm: new Date().toISOString(),
+      };
+
+      await setCached("caf_municipio", cacheKey, cafData);
+
+      await storage.updateAsset(id, {
+        camposEspecificos: {
+          ...campos,
+          cafUpdatedAt: new Date().toISOString(),
+          cafTotalProdutores: produtores.length,
+          cafTotalFamilias: familias.size,
+        },
+      } as any);
+
+      res.json({ success: true, cafData });
+    } catch (error: any) {
+      console.error("[enriquecer-caf]", error);
+      res.status(500).json({ message: error.message || "Erro ao buscar dados CAF" });
     }
   });
 }
