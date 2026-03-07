@@ -3299,130 +3299,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
         )}
 
         <TabsContent value="ia" className="mt-4 space-y-4">
-          {(() => {
-            const [iaAnalise, setIaAnalise] = useState<string | null>((ativo.camposEspecificos as any)?.iaAnalise || null);
-            const [iaLoading, setIaLoading] = useState(false);
-            const [iaReportCompanyId, setIaReportCompanyId] = useState<string>("");
-            const [iaRelatorio, setIaRelatorio] = useState<string | null>(null);
-            const [iaReportLoading, setIaReportLoading] = useState(false);
-
-            const runAnalise = async () => {
-              setIaLoading(true);
-              try {
-                const res = await apiRequest("POST", `/api/ai/analyze-asset/${ativo.id}`);
-                const data = await res.json();
-                if (data.analise) {
-                  setIaAnalise(data.analise);
-                  queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", id] });
-                  toast({ title: "Análise concluída" });
-                } else {
-                  toast({ title: "Erro", description: data.message || "Erro na análise", variant: "destructive" });
-                }
-              } catch (e: any) {
-                toast({ title: "Erro", description: e.message, variant: "destructive" });
-              }
-              setIaLoading(false);
-            };
-
-            const runRelatorio = async () => {
-              if (!iaReportCompanyId) return;
-              setIaReportLoading(true);
-              try {
-                const res = await apiRequest("POST", "/api/ai/generate-report", { assetId: ativo.id, companyId: Number(iaReportCompanyId) });
-                const data = await res.json();
-                if (data.relatorio) {
-                  setIaRelatorio(data.relatorio);
-                  toast({ title: "Relatório gerado" });
-                } else {
-                  toast({ title: "Erro", description: data.message || "Erro no relatório", variant: "destructive" });
-                }
-              } catch (e: any) {
-                toast({ title: "Erro", description: e.message, variant: "destructive" });
-              }
-              setIaReportLoading(false);
-            };
-
-            return (
-              <>
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-base">
-                      <Brain className="h-5 w-5 text-violet-600" />
-                      Análise Inteligente do Ativo
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <p className="text-sm text-muted-foreground">
-                      A IA analisa este ativo em 5 dimensões: potencial produtivo, contexto regional, risco ambiental, risco financeiro e compatibilidade com compradores.
-                    </p>
-                    <Button
-                      onClick={runAnalise}
-                      disabled={iaLoading}
-                      className="w-full"
-                      data-testid="button-ia-analisar"
-                    >
-                      {iaLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analisando...</> : <><Sparkles className="mr-2 h-4 w-4" /> {iaAnalise ? "Reanalisar com IA" : "Analisar com IA"}</>}
-                    </Button>
-                    {iaAnalise && (
-                      <div className="mt-4 p-4 rounded-lg border bg-muted/30 prose prose-sm max-w-none dark:prose-invert" data-testid="text-ia-analise">
-                        <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                          {iaAnalise.split("\n").map((line, i) => {
-                            if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-4 mb-1">{line.replace("## ", "")}</h3>;
-                            if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="font-semibold mt-2">{line.replace(/\*\*/g, "")}</p>;
-                            return <p key={i} className="my-0.5">{line}</p>;
-                          })}
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-3 pt-2 border-t">GPT-4o-mini · {new Date().toLocaleDateString("pt-BR")}</p>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-base">
-                      <FileBarChart className="h-5 w-5 text-emerald-600" />
-                      Relatório Personalizado (Ativo + Comprador)
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <p className="text-sm text-muted-foreground">
-                      Gere um relatório mostrando por que este ativo combina com um comprador específico.
-                    </p>
-                    <div className="flex gap-2">
-                      <Input
-                        type="number"
-                        placeholder="ID da empresa compradora"
-                        value={iaReportCompanyId}
-                        onChange={(e) => setIaReportCompanyId(e.target.value)}
-                        className="flex-1"
-                        data-testid="input-ia-company-id"
-                      />
-                      <Button
-                        onClick={runRelatorio}
-                        disabled={iaReportLoading || !iaReportCompanyId}
-                        data-testid="button-ia-relatorio"
-                      >
-                        {iaReportLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileBarChart className="h-4 w-4" />}
-                      </Button>
-                    </div>
-                    {iaRelatorio && (
-                      <div className="mt-4 p-4 rounded-lg border bg-muted/30" data-testid="text-ia-relatorio">
-                        <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                          {iaRelatorio.split("\n").map((line, i) => {
-                            if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-4 mb-1">{line.replace("## ", "")}</h3>;
-                            if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="font-semibold mt-2">{line.replace(/\*\*/g, "")}</p>;
-                            return <p key={i} className="my-0.5">{line}</p>;
-                          })}
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-3 pt-2 border-t">GPT-4o-mini · {new Date().toLocaleDateString("pt-BR")}</p>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              </>
-            );
-          })()}
+          <AssetIaTab ativo={ativo} assetId={id!} />
         </TabsContent>
 
       </Tabs>
@@ -3457,5 +3334,132 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
         }}
       />
     </div>
+  );
+}
+
+function AssetIaTab({ ativo, assetId }: { ativo: any; assetId: string }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [iaAnalise, setIaAnalise] = useState<string | null>((ativo.camposEspecificos as any)?.iaAnalise || null);
+  const [iaLoading, setIaLoading] = useState(false);
+  const [iaReportCompanyId, setIaReportCompanyId] = useState<string>("");
+  const [iaRelatorio, setIaRelatorio] = useState<string | null>(null);
+  const [iaReportLoading, setIaReportLoading] = useState(false);
+
+  const runAnalise = async () => {
+    setIaLoading(true);
+    try {
+      const res = await apiRequest("POST", `/api/ai/analyze-asset/${ativo.id}`);
+      const data = await res.json();
+      if (data.analise) {
+        setIaAnalise(data.analise);
+        queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", assetId] });
+        toast({ title: "Análise concluída" });
+      } else {
+        toast({ title: "Erro", description: data.message || "Erro na análise", variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Erro", description: e.message, variant: "destructive" });
+    }
+    setIaLoading(false);
+  };
+
+  const runRelatorio = async () => {
+    if (!iaReportCompanyId) return;
+    setIaReportLoading(true);
+    try {
+      const res = await apiRequest("POST", "/api/ai/generate-report", { assetId: ativo.id, companyId: Number(iaReportCompanyId) });
+      const data = await res.json();
+      if (data.relatorio) {
+        setIaRelatorio(data.relatorio);
+        toast({ title: "Relatório gerado" });
+      } else {
+        toast({ title: "Erro", description: data.message || "Erro no relatório", variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Erro", description: e.message, variant: "destructive" });
+    }
+    setIaReportLoading(false);
+  };
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Brain className="h-5 w-5 text-violet-600" />
+            Análise Inteligente do Ativo
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            A IA analisa este ativo em 5 dimensões: potencial produtivo, contexto regional, risco ambiental, risco financeiro e compatibilidade com compradores.
+          </p>
+          <Button
+            onClick={runAnalise}
+            disabled={iaLoading}
+            className="w-full"
+            data-testid="button-ia-analisar"
+          >
+            {iaLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analisando...</> : <><Sparkles className="mr-2 h-4 w-4" /> {iaAnalise ? "Reanalisar com IA" : "Analisar com IA"}</>}
+          </Button>
+          {iaAnalise && (
+            <div className="mt-4 p-4 rounded-lg border bg-muted/30 prose prose-sm max-w-none dark:prose-invert" data-testid="text-ia-analise">
+              <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                {iaAnalise.split("\n").map((line, i) => {
+                  if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-4 mb-1">{line.replace("## ", "")}</h3>;
+                  if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="font-semibold mt-2">{line.replace(/\*\*/g, "")}</p>;
+                  return <p key={i} className="my-0.5">{line}</p>;
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground mt-3 pt-2 border-t">GPT-4o-mini · {new Date().toLocaleDateString("pt-BR")}</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <FileBarChart className="h-5 w-5 text-emerald-600" />
+            Relatório Personalizado (Ativo + Comprador)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Gere um relatório mostrando por que este ativo combina com um comprador específico.
+          </p>
+          <div className="flex gap-2">
+            <Input
+              type="number"
+              placeholder="ID da empresa compradora"
+              value={iaReportCompanyId}
+              onChange={(e) => setIaReportCompanyId(e.target.value)}
+              className="flex-1"
+              data-testid="input-ia-company-id"
+            />
+            <Button
+              onClick={runRelatorio}
+              disabled={iaReportLoading || !iaReportCompanyId}
+              data-testid="button-ia-relatorio"
+            >
+              {iaReportLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileBarChart className="h-4 w-4" />}
+            </Button>
+          </div>
+          {iaRelatorio && (
+            <div className="mt-4 p-4 rounded-lg border bg-muted/30" data-testid="text-ia-relatorio">
+              <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                {iaRelatorio.split("\n").map((line, i) => {
+                  if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-4 mb-1">{line.replace("## ", "")}</h3>;
+                  if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="font-semibold mt-2">{line.replace(/\*\*/g, "")}</p>;
+                  return <p key={i} className="my-0.5">{line}</p>;
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground mt-3 pt-2 border-t">GPT-4o-mini · {new Date().toLocaleDateString("pt-BR")}</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </>
   );
 }
