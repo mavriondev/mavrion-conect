@@ -35,6 +35,7 @@ import PortalPublicoPage from "@/pages/portal-publico";
 import LandingPagePublic from "@/pages/landing-page";
 import ErrorReportsPage from "@/pages/error-reports";
 import ArquiteturaPage from "@/pages/arquitetura";
+import IaGuiaPdf from "@/pages/ia-guia-pdf";
 import MADealsPage from "@/pages/ma-deals";
 import MapaConexoesPage from "@/pages/mapa-conexoes";
 import HonorariosPage from "@/pages/honorarios";
@@ -233,6 +234,10 @@ function Router() {
 
       <Route path="/manual">
         {() => <PrivateRoute component={ManualPage} />}
+      </Route>
+
+      <Route path="/ia-guia">
+        {() => <PrivateRoute component={IaGuiaPdf} />}
       </Route>
 
       <Route component={NotFound} />
