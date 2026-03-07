@@ -385,10 +385,14 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
       cnpj: z.string().min(11),
       tradeName: z.string().optional(),
       legalName: z.string().optional(),
+      porte: z.string().optional(),
+      cnaePrincipal: z.string().optional(),
+      city: z.string().optional(),
+      state: z.string().optional(),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "CNPJ obrigatório", errors: parsed.error.errors });
-    const { cnpj, tradeName, legalName } = parsed.data;
+    const { cnpj, tradeName, legalName, porte, cnaePrincipal, city, state } = parsed.data;
 
     const orgId = getOrgId(req);
     try {
@@ -401,12 +405,72 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
 
       let company = existingCompany;
       if (!company) {
+        let cnpjaData: any = null;
+        try {
+          const cnpjaKey = process.env.CNPJA_API_KEY;
+          if (cnpjaKey) {
+            const cnpjaRes = await fetch(`https://api.cnpja.com/office/${cnpjClean}`, {
+              headers: { Authorization: cnpjaKey },
+            });
+            if (cnpjaRes.ok) cnpjaData = await cnpjaRes.json();
+          }
+        } catch (e) {
+          console.warn("[importar-comprador] CNPJA fetch error:", e);
+        }
+
+        const phones: string[] = [];
+        const emails: string[] = [];
+        let address: any = {};
+        let resolvedPorte = porte || null;
+        let resolvedCnae = cnaePrincipal || null;
+        let resolvedLegal = legalName || tradeName || cnpjClean;
+        let resolvedTrade = tradeName || null;
+
+        if (cnpjaData) {
+          resolvedLegal = cnpjaData.company?.name || resolvedLegal;
+          resolvedTrade = cnpjaData.alias || resolvedTrade;
+          resolvedPorte = cnpjaData.company?.size?.text || resolvedPorte;
+          resolvedCnae = cnpjaData.mainActivity?.text || resolvedCnae;
+
+          if (cnpjaData.phones?.length) {
+            for (const p of cnpjaData.phones) {
+              const num = `(${p.area}) ${p.number}`;
+              if (!phones.includes(num)) phones.push(num);
+            }
+          }
+          if (cnpjaData.emails?.length) {
+            for (const e of cnpjaData.emails) {
+              if (e.address && !emails.includes(e.address.toLowerCase())) emails.push(e.address.toLowerCase());
+            }
+          }
+          if (cnpjaData.address) {
+            address = {
+              street: cnpjaData.address.street || null,
+              number: cnpjaData.address.number || null,
+              details: cnpjaData.address.details || null,
+              district: cnpjaData.address.district || null,
+              city: cnpjaData.address.city || city || null,
+              state: cnpjaData.address.state || state || null,
+              zip: cnpjaData.address.zip || null,
+            };
+          }
+        } else if (city || state) {
+          address = { city: city || null, state: state || null };
+        }
+
         const [created] = await db.insert(companies).values({
           orgId,
           cnpj: cnpjClean,
-          legalName: legalName || tradeName || cnpjClean,
-          tradeName: tradeName || null,
+          legalName: resolvedLegal,
+          tradeName: resolvedTrade,
+          porte: resolvedPorte,
+          cnaePrincipal: resolvedCnae,
+          phones,
+          emails,
+          address,
           source: "prospeccao_ativo",
+          enrichmentData: cnpjaData ? { cnpja: cnpjaData } : {},
+          enrichedAt: cnpjaData ? new Date() : null,
         } as any).returning();
         company = created;
       }

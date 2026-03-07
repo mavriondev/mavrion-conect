@@ -10,8 +10,18 @@ import json
 import re
 import argparse
 import unicodedata
-import requests
-from bs4 import BeautifulSoup
+
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
+
+try:
+    from bs4 import BeautifulSoup
+    HAS_BS4 = True
+except ImportError:
+    HAS_BS4 = False
 
 try:
     import phonenumbers
@@ -19,15 +29,19 @@ try:
 except ImportError:
     HAS_PHONENUMBERS = False
 
+HAS_DDG = False
+DDG_USE_CONTEXT = False
 try:
     from ddgs import DDGS
     HAS_DDG = True
+    DDG_USE_CONTEXT = False
 except ImportError:
     try:
         from duckduckgo_search import DDGS
         HAS_DDG = True
+        DDG_USE_CONTEXT = True
     except ImportError:
-        HAS_DDG = False
+        pass
 
 # ── Regex patterns ─────────────────────────────────────────────────────────────
 
@@ -209,10 +223,12 @@ def extract_social(text: str) -> dict[str, str]:
 # ── Website scraper ────────────────────────────────────────────────────────────
 
 def scrape_website(url: str, known_phones: list[str] | None = None) -> dict:
+    if not HAS_REQUESTS or not HAS_BS4:
+        return {"error": "missing_dependencies", "details": f"requests={HAS_REQUESTS}, bs4={HAS_BS4}"}
+
     if not url.startswith("http"):
         url = "https://" + url
 
-    # Don't scrape CNPJ directory sites
     if is_cnpj_directory(url):
         return {"error": "cnpj_directory", "website": url}
 
@@ -229,7 +245,10 @@ def scrape_website(url: str, known_phones: list[str] | None = None) -> dict:
 
     final_url = resp.url
     html = resp.text
-    soup = BeautifulSoup(html, "lxml")
+    try:
+        soup = BeautifulSoup(html, "lxml")
+    except Exception:
+        soup = BeautifulSoup(html, "html.parser")
 
     def meta(name=None, prop=None):
         tag = (
@@ -338,8 +357,9 @@ def search_company(name: str, cnpj: str, known_phones: list[str] | None = None) 
     phones: list[str] = []
     emails: list[str] = []
 
-    with DDGS() as ddgs:
-        # 1. Main company search — name + CNPJ
+    ddgs = DDGS()
+
+    try:
         q1 = f'"{name}" CNPJ {cnpj} site oficial contato'
         for r in ddgs.text(q1, max_results=8):
             href  = r.get("href", "")
@@ -350,7 +370,6 @@ def search_company(name: str, cnpj: str, known_phones: list[str] | None = None) 
             social.update({k: v for k, v in extract_social(combo).items() if k not in social})
             phones += extract_phones(body, known_phones)
             emails += extract_emails(body)
-            # Score candidate as official site
             s = score_site_for_company(href, name)
             if s > official_site_score:
                 official_site_score = s
@@ -395,6 +414,8 @@ def search_company(name: str, cnpj: str, known_phones: list[str] | None = None) 
                 cleaned = clean_social_url(href, "tiktok")
                 if cleaned:
                     social["tiktok"] = cleaned
+    except Exception as e:
+        sys.stderr.write(f"[DDG] search error: {e}\n")
 
     # Reject if official_site is a directory with low score
     if official_site and official_site_score < 0.3:

@@ -16,7 +16,7 @@ import {
   TreePine, Pickaxe, Briefcase, Home, Wheat, Factory, Link2,
   Tag, MessageSquare, Zap, Search, Leaf, Thermometer, Droplets,
   FlaskConical, RefreshCw, Upload, ExternalLink, Paperclip, X as XIcon,
-  Filter, ChevronRight, Phone, Mail, Handshake, Camera, Image,
+  Filter, ChevronRight, Phone, Mail, Handshake, Camera, Image, Users,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
@@ -712,6 +712,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
   const [cafProdutores, setCafProdutores] = useState<any[]>([]);
   const [cafLoading, setCafLoading] = useState(false);
   const [cafSearched, setCafSearched] = useState(false);
+  const [cafEnriching, setCafEnriching] = useState(false);
   const [cafLeadCreating, setCafLeadCreating] = useState<number | null>(null);
 
   const salvarEnrichment = async (key: string, value: any) => {
@@ -735,6 +736,10 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
     }
     if (campos.cafProdutores?.length && cafProdutores.length === 0 && !cafSearched) {
       setCafProdutores(campos.cafProdutores);
+      setCafSearched(true);
+    }
+    if (campos.cafData?.produtores?.length && cafProdutores.length === 0 && !cafSearched) {
+      setCafProdutores(campos.cafData.produtores);
       setCafSearched(true);
     }
   }, [ativo]);
@@ -811,7 +816,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
       if (!geomRes.ok) throw new Error("Falha ao buscar geometria");
       const geomData = await geomRes.json();
       if (!geomData.geometry) {
-        toast({ title: "Sem geometria", description: "Este ativo não possui polígono geográfico para análise. Importe pelo Geo Rural primeiro.", variant: "destructive" });
+        toast({ title: "Sem geometria", description: "Este ativo não possui polígono geográfico para análise. Importe pela prospecção de Fazendas primeiro.", variant: "destructive" });
         setGeoAnalyzing(false);
         return;
       }
@@ -876,10 +881,15 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
         cnpj,
         tradeName: comprador.tradeName || undefined,
         legalName: comprador.legalName || undefined,
+        porte: comprador.porte || undefined,
+        cnaePrincipal: comprador.cnaePrincipal || undefined,
+        city: comprador.city || undefined,
+        state: comprador.state || undefined,
       });
       const data = await res.json();
       const nome = comprador.tradeName || comprador.legalName || "Empresa";
-      setCompradores(prev => prev.map(c => c.taxId === comprador.taxId ? { ...c, alreadySaved: true } : c));
+      const companyId = data.company?.id;
+      setCompradores(prev => prev.map(c => c.taxId === comprador.taxId ? { ...c, alreadySaved: true, savedCompanyId: companyId } : c));
       queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
       queryClient.invalidateQueries({ queryKey: ["/api/matching"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sdr/queue"] });
@@ -889,14 +899,16 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
         description: (
           <div className="flex flex-col gap-1.5">
             <span>{nome} — Empresa, Lead e Deal criados no CRM</span>
-            <a
-              href="/crm?pipeline=ASSET"
-              className="text-emerald-600 dark:text-emerald-400 underline text-sm font-medium"
-              onClick={(e) => { e.preventDefault(); navigate("/crm?pipeline=ASSET"); }}
-              data-testid="link-ver-crm"
-            >
-              Ver no CRM →
-            </a>
+            {companyId && (
+              <a
+                href={`/empresas/${companyId}`}
+                className="text-emerald-600 dark:text-emerald-400 underline text-sm font-medium"
+                onClick={(e) => { e.preventDefault(); navigate(`/empresas/${companyId}`); }}
+                data-testid="link-ver-empresa"
+              >
+                Ver Empresa/Comprador →
+              </a>
+            )}
           </div>
         ),
       });
@@ -1736,10 +1748,10 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                           ) : (
                             <Button
                               size="sm" variant="ghost" className="h-7 text-xs text-primary"
-                              onClick={() => navigate("/empresas")}
-                              data-testid={`button-ver-crm-${c.taxId}`}
+                              onClick={() => navigate(c.savedCompanyId ? `/empresas/${c.savedCompanyId}` : "/empresas")}
+                              data-testid={`button-ver-empresa-${c.taxId}`}
                             >
-                              Ver no CRM
+                              Ver Empresa/Comprador
                             </Button>
                           )}
                         </div>
@@ -2399,7 +2411,48 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
 
                 <Card>
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-sm">Produtores CAF Próximos</CardTitle>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-sm">Produtores CAF na Região</CardTitle>
+                      <div className="flex items-center gap-2">
+                        {campos.cafUpdatedAt && (
+                          <Badge className="bg-green-100 text-green-700 border-green-200 text-xs" data-testid="badge-caf-status">
+                            Atualizado {new Date(campos.cafUpdatedAt).toLocaleDateString("pt-BR")}
+                          </Badge>
+                        )}
+                        <Button
+                          size="sm" variant="outline" className="gap-1.5"
+                          disabled={cafEnriching}
+                          onClick={async () => {
+                            setCafEnriching(true);
+                            try {
+                              const r = await apiRequest("POST", `/api/matching/assets/${id}/enriquecer-caf`, { force: true });
+                              const data = await r.json();
+                              if (data.success && data.cafData?.produtores?.length > 0) {
+                                setCafProdutores(data.cafData.produtores);
+                                queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", id] });
+                                const cd = data.cafData;
+                                const desc = [
+                                  `${cd.totalFamilias || cd.totalProdutores} família(s)`,
+                                  cd.totalMembros ? `${cd.totalMembros} membro(s)` : null,
+                                  cd.enriquecidosDetalhe ? `${cd.enriquecidosDetalhe} com detalhe` : null,
+                                ].filter(Boolean).join(" · ");
+                                toast({ title: `Produtores CAF encontrados!`, description: desc });
+                              } else {
+                                toast({ title: "Nenhum produtor CAF encontrado", variant: "destructive" });
+                              }
+                            } catch {
+                              toast({ title: "Erro ao buscar CAF", variant: "destructive" });
+                            }
+                            setCafEnriching(false);
+                          }}
+                          data-testid="button-enriquecer-caf"
+                        >
+                          {cafEnriching
+                            ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Buscando...</>
+                            : <><RefreshCw className="w-3.5 h-3.5" /> Buscar CAF</>}
+                        </Button>
+                      </div>
+                    </div>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     {!estado ? (
@@ -2408,17 +2461,47 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                       </p>
                     ) : (
                       <>
-                        {cafLoading && (
+                        {(cafLoading || cafEnriching) && cafProdutores.length === 0 && (
                           <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="text-caf-loading">
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Buscando produtores CAF...
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Buscando produtores CAF na região...
                           </div>
                         )}
-                        {!cafLoading && cafProdutores.length === 0 && cafSearched && (
-                          <p className="text-sm text-muted-foreground" data-testid="text-caf-vazio">
-                            Nenhum produtor CAF encontrado para esta região. Os dados são populados automaticamente ao importar ativos do Geo Rural.
-                          </p>
+                        {!cafLoading && !cafEnriching && cafProdutores.length === 0 && cafSearched && (
+                          <div className="text-center py-4">
+                            <Users className="w-8 h-8 mx-auto text-muted-foreground opacity-30 mb-2" />
+                            <p className="text-sm text-muted-foreground" data-testid="text-caf-vazio">
+                              Nenhum produtor CAF encontrado para esta região.
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Clique em "Buscar CAF" para consultar a API do MDA.
+                            </p>
+                          </div>
                         )}
                         {cafProdutores.length > 0 && (
+                          <>
+                          {(() => {
+                            const cafD = campos.cafData || {};
+                            return (
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                                <div className="p-2.5 rounded bg-muted/50 text-center">
+                                  <p className="text-[10px] text-muted-foreground">Famílias</p>
+                                  <p className="text-base font-bold" data-testid="text-caf-familias">{cafD.totalFamilias || cafProdutores.length}</p>
+                                </div>
+                                <div className="p-2.5 rounded bg-muted/50 text-center">
+                                  <p className="text-[10px] text-muted-foreground">Membros</p>
+                                  <p className="text-base font-bold" data-testid="text-caf-membros">{cafD.totalMembros || cafProdutores.reduce((s: number, p: any) => s + (p.totalMembros || 1), 0)}</p>
+                                </div>
+                                <div className="p-2.5 rounded bg-muted/50 text-center">
+                                  <p className="text-[10px] text-muted-foreground">Área Total</p>
+                                  <p className="text-base font-bold" data-testid="text-caf-area">{cafD.areaTotal ? `${Number(cafD.areaTotal).toLocaleString("pt-BR")} ha` : "N/D"}</p>
+                                </div>
+                                <div className="p-2.5 rounded bg-muted/50 text-center">
+                                  <p className="text-[10px] text-muted-foreground">Com PRONAF</p>
+                                  <p className="text-base font-bold" data-testid="text-caf-pronaf">{cafD.totalComPronaf || 0}</p>
+                                </div>
+                              </div>
+                            );
+                          })()}
                           <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                               <thead>
@@ -2426,17 +2509,40 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                                   <th className="text-left py-2 px-2 font-medium">Nome</th>
                                   <th className="text-left py-2 px-2 font-medium">Município</th>
                                   <th className="text-right py-2 px-2 font-medium">Área (ha)</th>
-                                  <th className="text-left py-2 px-2 font-medium">Grupo PRONAF</th>
+                                  <th className="text-left py-2 px-2 font-medium">Atividade</th>
+                                  <th className="text-left py-2 px-2 font-medium">Posse</th>
+                                  <th className="text-left py-2 px-2 font-medium">PRONAF</th>
+                                  <th className="text-center py-2 px-2 font-medium">Família</th>
+                                  <th className="text-center py-2 px-2 font-medium">Perfil</th>
                                   <th className="text-right py-2 px-2 font-medium">Ações</th>
                                 </tr>
                               </thead>
                               <tbody>
                                 {cafProdutores.map((p: any, i: number) => (
                                   <tr key={i} className="border-b last:border-0 hover:bg-muted/30" data-testid={`row-caf-produtor-${i}`}>
-                                    <td className="py-2 px-2">{p.nomeTitular || p.nome || "\u2014"}</td>
-                                    <td className="py-2 px-2">{p.municipio || "\u2014"}</td>
-                                    <td className="py-2 px-2 text-right">{p.areaHa != null ? Number(p.areaHa).toLocaleString("pt-BR") : "\u2014"}</td>
-                                    <td className="py-2 px-2">{p.enquadramentoPronaf || p.grupo || "\u2014"}</td>
+                                    <td className="py-2 px-2">
+                                      <span className="font-medium">{p.nomeTitular || p.nome || "\u2014"}</span>
+                                      {p.status === "ATIVA" && <Badge className="ml-1.5 bg-green-100 text-green-700 border-green-200 text-[9px] py-0">Ativa</Badge>}
+                                    </td>
+                                    <td className="py-2 px-2 text-xs">{p.municipio || "\u2014"}</td>
+                                    <td className="py-2 px-2 text-right">{p.areaHa != null && p.areaHa > 0 ? Number(p.areaHa).toLocaleString("pt-BR") : "\u2014"}</td>
+                                    <td className="py-2 px-2 text-xs">{p.atividadePrincipal || p.atividade || "\u2014"}</td>
+                                    <td className="py-2 px-2 text-xs">{p.condicaoPosse || "\u2014"}</td>
+                                    <td className="py-2 px-2 text-xs">{p.pronaf && /sim|enquadrado|pronaf|apto/i.test(String(p.pronaf)) ? <Badge className="bg-blue-50 text-blue-700 border-blue-200 text-[9px] py-0">Sim</Badge> : (p.enquadramentoPronaf || p.pronaf || "\u2014")}</td>
+                                    <td className="py-2 px-2 text-center text-xs">
+                                      {(p.totalMembros || 1) > 1 ? (
+                                        <span className="inline-flex items-center gap-0.5"><Users className="w-3 h-3" />{p.totalMembros}</span>
+                                      ) : "1"}
+                                    </td>
+                                    <td className="py-2 px-2 text-center">
+                                      <Badge variant="outline" className={cn("text-[10px]",
+                                        (p.norionProfile || p.perfil) === "alto" ? "bg-green-50 text-green-700 border-green-200" :
+                                        (p.norionProfile || p.perfil) === "medio" ? "bg-amber-50 text-amber-700 border-amber-200" :
+                                        "bg-gray-50 text-gray-600 border-gray-200"
+                                      )} data-testid={`badge-caf-perfil-${i}`}>
+                                        {(p.norionProfile || p.perfil || "baixo").toUpperCase()}
+                                      </Badge>
+                                    </td>
                                     <td className="py-2 px-2 text-right">
                                       <Button size="sm" variant="ghost" className="h-7 text-xs gap-1"
                                         disabled={cafLeadCreating === i}
@@ -2446,7 +2552,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                                         {cafLeadCreating === i
                                           ? <Loader2 className="w-3 h-3 animate-spin" />
                                           : <Zap className="w-3 h-3" />}
-                                        Criar Lead
+                                        Lead
                                       </Button>
                                     </td>
                                   </tr>
@@ -2454,6 +2560,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                               </tbody>
                             </table>
                           </div>
+                          </>
                         )}
                       </>
                     )}

@@ -680,6 +680,9 @@ function AtivoCard({ ativo, onEdit, onDelete }: { ativo: any; onEdit: () => void
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <h3 className="font-semibold text-sm leading-tight truncate">{ativo.title}</h3>
+                {ativo.type === "MINA" && (ativo.attributesJson as any)?.anmNome && (
+                  <p className="text-xs text-muted-foreground truncate mt-0.5" data-testid={`text-titular-${ativo.id}`}>{(ativo.attributesJson as any).anmNome}</p>
+                )}
                 <Badge variant="outline" className={cn("text-xs mt-1 border-0 font-medium", tipo.badge)}>
                   {tipo.label}
                 </Badge>
