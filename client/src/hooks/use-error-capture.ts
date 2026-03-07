@@ -56,21 +56,50 @@ export function useErrorCapture() {
       try {
         const response = await originalFetch.apply(this, args);
 
-        if (response.status >= 400 && url.startsWith("/api/")) {
-          const key = `${method}:${url}:${response.status}`;
-          if (shouldReport(key)) {
-            let errorText = "";
+        if (url.startsWith("/api/")) {
+          if (response.status >= 400) {
+            const key = `${method}:${url}:${response.status}`;
+            if (shouldReport(key)) {
+              let errorText = "";
+              try {
+                const clone = response.clone();
+                errorText = await clone.text();
+              } catch {}
+              sendAutoReport({
+                url,
+                method,
+                statusCode: response.status,
+                errorMessage: errorText?.substring(0, 500) || `HTTP ${response.status}`,
+                page: window.location.pathname,
+              });
+            }
+          } else if (response.status === 200) {
             try {
               const clone = response.clone();
-              errorText = await clone.text();
+              const text = await clone.text();
+              const isHtml = text.trimStart().startsWith("<!") || text.trimStart().startsWith("<html");
+              let isFalseSuccess = false;
+              try {
+                const parsed = JSON.parse(text);
+                if (parsed && (parsed.success === false || (parsed.error && typeof parsed.error === "string"))) {
+                  isFalseSuccess = true;
+                }
+              } catch {}
+              if (isHtml || isFalseSuccess) {
+                const key = `masked:${method}:${url}`;
+                if (shouldReport(key)) {
+                  sendAutoReport({
+                    url,
+                    method,
+                    statusCode: 200,
+                    errorMessage: isHtml
+                      ? "HTTP 200 retornou HTML em vez de JSON (possível SPA fallback)"
+                      : "HTTP 200 com {success:false} ou {error:...}",
+                    page: window.location.pathname,
+                  });
+                }
+              }
             } catch {}
-            sendAutoReport({
-              url,
-              method,
-              statusCode: response.status,
-              errorMessage: errorText?.substring(0, 500) || `HTTP ${response.status}`,
-              page: window.location.pathname,
-            });
           }
         }
 

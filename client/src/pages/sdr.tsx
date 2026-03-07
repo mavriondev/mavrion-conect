@@ -24,7 +24,7 @@ import {
   CheckCircle2, XCircle, Search, Building2,
   MapPin, Phone, Mail, Users, Loader2, Plus, AlertCircle,
   TrendingUp, ExternalLink, Globe, Landmark, Factory, UserCheck, X, Download, DollarSign,
-  Calendar, Clock, MessageSquare, Save, FileText, Briefcase,
+  Calendar, Clock, MessageSquare, Save, FileText, Briefcase, Sparkles,
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -427,6 +427,9 @@ export default function SdrQueue() {
   const [isImporting, setIsImporting] = useState(false);
   const [cnpjResult, setCnpjResult] = useState<CnpjResult | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+
+  const [aiScoring, setAiScoring] = useState<Record<number, boolean>>({});
+  const [aiScores, setAiScores] = useState<Record<number, any>>({});
 
   const [leadSearch, setLeadSearch] = useState("");
   const [leadStatus, setLeadStatus] = useState("all");
@@ -985,6 +988,28 @@ export default function SdrQueue() {
                         <Button
                           size="sm"
                           variant="ghost"
+                          data-testid={`button-ia-score-${lead.id}`}
+                          className="h-8 text-violet-600 hover:text-violet-700 hover:bg-violet-50 dark:hover:bg-violet-900/20 px-2"
+                          onClick={async () => {
+                            setAiScoring(prev => ({ ...prev, [lead.id]: true }));
+                            try {
+                              const res = await apiRequest("POST", `/api/ai/score-lead/${lead.id}`);
+                              const data = await res.json();
+                              setAiScores(prev => ({ ...prev, [lead.id]: data }));
+                              toast({ title: "Qualificação IA concluída" });
+                            } catch (e: any) {
+                              toast({ title: "Erro na qualificação IA", description: e.message, variant: "destructive" });
+                            }
+                            setAiScoring(prev => ({ ...prev, [lead.id]: false }));
+                          }}
+                          disabled={aiScoring[lead.id]}
+                        >
+                          {aiScoring[lead.id] ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                          IA
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
                           data-testid={`button-qualify-${lead.id}`}
                           className="h-8 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 px-2"
                           onClick={() => handleStatusChange(lead.id, "qualified")}
@@ -1022,6 +1047,23 @@ export default function SdrQueue() {
                         </Badge>
                       )}
                     </div>
+                    {aiScores[lead.id] && (
+                      <div className="rounded p-3 bg-violet-50/50 dark:bg-violet-900/10 border-l-4 border-violet-500" data-testid={`text-ia-score-${lead.id}`}>
+                        <div className="flex items-center gap-3">
+                          <div className="text-2xl font-bold text-violet-700 dark:text-violet-400">
+                            {aiScores[lead.id].score}<span className="text-sm font-normal text-violet-500">/100</span>
+                          </div>
+                          <div className="flex-1 text-sm text-violet-700 dark:text-violet-400">
+                            {aiScores[lead.id].justificativa}
+                          </div>
+                        </div>
+                        {aiScores[lead.id].ativoRecomendado && (
+                          <p className="text-xs text-violet-600 dark:text-violet-400 mt-1">
+                            Ativo recomendado: #{aiScores[lead.id].ativoRecomendado}
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               );

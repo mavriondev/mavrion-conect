@@ -64,6 +64,8 @@ export default function ErrorReportsPage() {
   const [filterPriority, setFilterPriority] = useState("all");
   const [filterType, setFilterType] = useState("all");
   const [selectedReport, setSelectedReport] = useState<ErrorReport | null>(null);
+  const [monitorLoading, setMonitorLoading] = useState(false);
+  const [monitorResumo, setMonitorResumo] = useState<string | null>(null);
 
   const { data: reports = [], isLoading } = useQuery<ErrorReport[]>({
     queryKey: ["/api/error-reports"],
@@ -127,19 +129,43 @@ export default function ErrorReportsPage() {
             Gerenciamento de bugs reportados e erros capturados automaticamente
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            queryClient.invalidateQueries({ queryKey: ["/api/error-reports"] });
-            queryClient.invalidateQueries({ queryKey: ["/api/error-reports/stats"] });
-          }}
-          className="gap-1.5"
-          data-testid="button-refresh-reports"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          Atualizar
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-violet-600 border-violet-200 hover:bg-violet-50 dark:border-violet-800 dark:hover:bg-violet-900/20"
+            disabled={monitorLoading}
+            data-testid="button-monitor-errors"
+            onClick={async () => {
+              setMonitorLoading(true);
+              try {
+                const res = await apiRequest("POST", "/api/ai/monitor-errors");
+                const data = await res.json();
+                setMonitorResumo(data.resumo);
+              } catch (e: any) {
+                toast({ title: "Erro ao gerar resumo", description: e.message, variant: "destructive" });
+              } finally {
+                setMonitorLoading(false);
+              }
+            }}
+          >
+            {monitorLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Brain className="w-3.5 h-3.5" />}
+            Resumo IA
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              queryClient.invalidateQueries({ queryKey: ["/api/error-reports"] });
+              queryClient.invalidateQueries({ queryKey: ["/api/error-reports/stats"] });
+            }}
+            className="gap-1.5"
+            data-testid="button-refresh-reports"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Atualizar
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -188,6 +214,39 @@ export default function ErrorReportsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {monitorResumo && (
+        <Card data-testid="text-monitor-resumo">
+          <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <Brain className="w-4 h-4 text-violet-500" />
+              Monitor Inteligente de Erros
+            </CardTitle>
+            <button
+              onClick={() => setMonitorResumo(null)}
+              className="text-muted-foreground hover:text-foreground"
+              data-testid="button-close-monitor"
+            >
+              <XCircle className="w-4 h-4" />
+            </button>
+          </CardHeader>
+          <CardContent className="text-sm leading-relaxed">
+            {monitorResumo.split("\n").map((line, i) => {
+              if (line.startsWith("## ")) return <h3 key={i} className="text-sm font-semibold mt-3 mb-1">{line.replace("## ", "")}</h3>;
+              const parts = line.split(/(\*\*.*?\*\*)/g);
+              return (
+                <p key={i} className="my-0.5">
+                  {parts.map((part, j) =>
+                    part.startsWith("**") && part.endsWith("**")
+                      ? <strong key={j}>{part.slice(2, -2)}</strong>
+                      : part
+                  )}
+                </p>
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
 
       <Tabs value={tab} onValueChange={setTab}>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">

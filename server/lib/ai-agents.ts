@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { db } from "../db";
-import { assets, companies, companyBuyerProfiles, deals, errorReports } from "@shared/schema";
-import { eq, and, gte, lte, ilike, sql } from "drizzle-orm";
+import { assets, companies, companyBuyerProfiles, deals, errorReports, leads, pipelineStages } from "@shared/schema";
+import { eq, and, gte, lte, ilike, sql, desc } from "drizzle-orm";
 
 let _openai: OpenAI | null = null;
 function getOpenAI(): OpenAI {
@@ -458,4 +458,427 @@ O que a equipe técnica deveria investigar/corrigir.`;
   });
 
   return response.choices[0].message.content || "Diagnóstico não disponível";
+}
+
+// ═══════════════════════════════════════════════════════════
+// 6. LEAD SCORER (qualificação inteligente de leads)
+// ═══════════════════════════════════════════════════════════
+
+export async function scoreLeadAI(leadId: number, orgId: number): Promise<{ score: number; justificativa: string; ativoRecomendado: number | null }> {
+  const [lead] = await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.orgId, orgId)));
+  if (!lead) throw new Error("Lead não encontrado");
+
+  const [empresa] = lead.companyId
+    ? await db.select().from(companies).where(eq(companies.id, lead.companyId))
+    : [null];
+
+  const [buyerProfile] = lead.companyId
+    ? await db.select().from(companyBuyerProfiles).where(eq(companyBuyerProfiles.companyId, lead.companyId))
+    : [null];
+
+  const availableAssets = await db.select({
+    id: assets.id,
+    type: assets.type,
+    title: assets.title,
+    municipio: assets.municipio,
+    estado: assets.estado,
+    areaHa: assets.areaHa,
+    priceAsking: assets.priceAsking,
+    geoScore: assets.geoScore,
+  }).from(assets).where(and(eq(assets.orgId, orgId), eq(assets.statusAtivo, "ativo"))).limit(30);
+
+  const enrichment = empresa ? (empresa.enrichmentData || {}) as any : {};
+  const address = empresa ? (empresa.address || {}) as any : {};
+
+  const assetsList = availableAssets.slice(0, 15).map(a =>
+    `- #${a.id} ${a.type} "${a.title}" | ${a.municipio}/${a.estado} | ${safeNum(a.areaHa)}ha | ${formatBRL(a.priceAsking)} | GeoScore: ${safeNum(a.geoScore)}`
+  ).join("\n");
+
+  const prompt = `Você é um SDR sênior especializado em deal origination de ativos rurais e M&A no Brasil.
+Qualifique este lead de 0 a 100 e recomende o melhor ativo disponível.
+
+LEAD:
+- Status: ${lead.status}
+- Fonte: ${lead.source || "N/D"}
+- Notas: ${lead.notes || "N/D"}
+
+EMPRESA VINCULADA:
+- Nome: ${empresa?.legalName || "N/D"}
+- CNPJ: ${empresa?.cnpj || "N/D"}
+- Porte: ${empresa?.porte || "N/D"}
+- CNAE: ${empresa?.cnaePrincipal || "N/D"}
+- Capital Social: ${formatBRL(enrichment.capitalSocial)}
+- Localização: ${address.city || "N/D"}, ${address.state || "N/D"}
+- Norion Profile: ${(empresa as any)?.norionProfile || "N/D"}
+
+PERFIL DE COMPRADOR:
+${buyerProfile ? `- Tipos: ${((buyerProfile.preferredTypes as string[]) || []).join(", ") || "N/D"}
+- Área: ${safeNum(buyerProfile.minAreaHa)}-${safeNum(buyerProfile.maxAreaHa)} ha
+- Preço/ha: ${safeNum(buyerProfile.minPricePerHa)}-${safeNum(buyerProfile.maxPricePerHa)}
+- Regiões: ${((buyerProfile.portfolioRegions as string[]) || []).join(", ") || "N/D"}
+- Total deals: ${safeNum(buyerProfile.totalDeals)}` : "Sem perfil de comprador"}
+
+ATIVOS DISPONÍVEIS (${availableAssets.length}):
+${assetsList}
+
+Retorne APENAS um JSON válido:
+{
+  "score": <number 0-100>,
+  "justificativa": "<3-5 linhas explicando o score>",
+  "ativoRecomendadoId": <id do ativo mais compatível ou null>
+}
+
+Critérios de score:
+- 80-100: empresa com porte adequado, CNAE compatível, perfil comprador ativo, match regional
+- 50-79: parcialmente compatível, precisa nurturing
+- 20-49: baixa compatibilidade, mas vale manter
+- 0-19: sem fit aparente`;
+
+  const response = await getOpenAI().chat.completions.create({
+    model: MODEL,
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
+    max_tokens: 400,
+  });
+
+  const text = (response.choices[0].message.content || "{}").trim();
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : "{}");
+    return {
+      score: Math.min(100, Math.max(0, Number(parsed.score) || 0)),
+      justificativa: parsed.justificativa || "Sem justificativa disponível",
+      ativoRecomendado: parsed.ativoRecomendadoId || null,
+    };
+  } catch {
+    return { score: 50, justificativa: text.slice(0, 500), ativoRecomendado: null };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 7. PRICING ADVISOR (sugestão de preço comparativa)
+// ═══════════════════════════════════════════════════════════
+
+export async function pricingAdvisor(assetId: number, orgId: number): Promise<string> {
+  const [ativo] = await db.select().from(assets).where(and(eq(assets.id, assetId), eq(assets.orgId, orgId)));
+  if (!ativo) throw new Error("Ativo não encontrado");
+
+  const campos = (ativo.camposEspecificos || {}) as any;
+  const ctx = campos.contextoRegional || null;
+
+  const similares = await db.select({
+    id: assets.id,
+    type: assets.type,
+    title: assets.title,
+    municipio: assets.municipio,
+    estado: assets.estado,
+    areaHa: assets.areaHa,
+    priceAsking: assets.priceAsking,
+    geoScore: assets.geoScore,
+  }).from(assets).where(
+    and(
+      eq(assets.orgId, orgId),
+      eq(assets.type, ativo.type!),
+      sql`${assets.id} != ${assetId}`
+    )
+  ).limit(30);
+
+  const similaresList = similares.map(s => {
+    const precoHa = s.areaHa && s.priceAsking ? (Number(s.priceAsking) / Number(s.areaHa)).toFixed(0) : "N/D";
+    return `- #${s.id} "${s.title}" | ${s.municipio}/${s.estado} | ${safeNum(s.areaHa)}ha | ${formatBRL(s.priceAsking)} | R$/ha: ${precoHa} | GeoScore: ${safeNum(s.geoScore)}`;
+  }).join("\n");
+
+  const precoHaAtual = ativo.areaHa && ativo.priceAsking ? (Number(ativo.priceAsking) / Number(ativo.areaHa)).toFixed(0) : "N/D";
+
+  const prompt = `Você é um avaliador sênior de ativos rurais e minerários no Brasil.
+Analise o preço deste ativo comparando com similares e dados regionais. Seja objetivo e transparente sobre o tamanho da amostra.
+
+ATIVO ANALISADO:
+- Tipo: ${ativo.type} | Título: ${ativo.title}
+- Local: ${ativo.municipio || "N/D"}, ${ativo.estado || "N/D"}
+- Área: ${safeNum(ativo.areaHa)} ha
+- Preço pedido: ${formatBRL(ativo.priceAsking)}
+- Preço/ha pedido: R$ ${precoHaAtual}
+- GeoScore: ${safeNum(ativo.geoScore)}/100
+- Status docs: ${ativo.docsStatus || "N/D"}
+
+${ctx ? `PRODUÇÃO REGIONAL (${ctx.municipio}):
+${(ctx.culturas || []).slice(0, 5).map((c: any) => `- ${c.nome}: ${safeNum(c.areaColhida)}ha colhidos, produção R$ ${safeNum(c.valorProducao)} mil`).join("\n")}
+- VBP total: R$ ${safeNum(ctx.vbpTotal)} mil` : "Sem dados regionais IBGE PAM"}
+
+ATIVOS SIMILARES (${similares.length} do tipo ${ativo.type}):
+${similaresList || "Nenhum similar encontrado"}
+
+Gere a análise neste formato:
+
+## Posicionamento de Preço
+Onde este ativo se situa em relação aos similares.
+
+## Faixa de Preço Sugerida
+- 🔻 Conservador (preço mínimo): R$ X (R$ Y/ha)
+- ⚖️ Justo (preço de mercado): R$ X (R$ Y/ha)
+- 🔺 Otimista (teto): R$ X (R$ Y/ha)
+
+## Fatores de Valorização
+O que pode justificar preço acima da média.
+
+## Fatores de Desconto
+O que pode pressionar o preço para baixo.
+
+## Transparência
+Tamanho da amostra: ${similares.length} ativos.
+Confiabilidade da estimativa: ALTA/MÉDIA/BAIXA.
+
+## Recomendação
+Precificação sugerida para negociação.`;
+
+  const response = await getOpenAI().chat.completions.create({
+    model: MODEL,
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
+    max_tokens: 1200,
+  });
+
+  return response.choices[0].message.content || "Análise de preço não disponível";
+}
+
+// ═══════════════════════════════════════════════════════════
+// 8. MONITOR DE ERROS INTELIGENTE (resumo de erros)
+// ═══════════════════════════════════════════════════════════
+
+export async function monitorErrors(orgId: number): Promise<string> {
+  const erros = await db.select().from(errorReports)
+    .where(eq(errorReports.orgId, orgId))
+    .orderBy(desc(errorReports.createdAt))
+    .limit(50);
+
+  if (erros.length === 0) return "Nenhum erro registrado. Sistema operando normalmente. ✅";
+
+  const errosSummary = erros.map(e => {
+    return `- [${e.priority || "N/D"}] ${e.title} | ${e.module || "?"} | ${e.status} | URL: ${e.requestUrl || "N/D"} | HTTP ${e.statusCode || "?"} | ${e.createdAt ? new Date(e.createdAt).toISOString().slice(0, 10) : "?"}`;
+  }).join("\n");
+
+  const urlPatterns = new Map<string, number>();
+  erros.forEach(e => {
+    if (e.requestUrl) {
+      const pattern = e.requestUrl.replace(/\/\d+/g, "/:id").replace(/\?.*/, "");
+      urlPatterns.set(pattern, (urlPatterns.get(pattern) || 0) + 1);
+    }
+  });
+  const topPatterns = [...urlPatterns.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
+    .map(([url, count]) => `- ${url}: ${count}x`).join("\n");
+
+  const statusCounts = { open: 0, resolved: 0, ignored: 0, other: 0 };
+  erros.forEach(e => {
+    if (e.status === "open") statusCounts.open++;
+    else if (e.status === "resolved") statusCounts.resolved++;
+    else if (e.status === "ignored") statusCounts.ignored++;
+    else statusCounts.other++;
+  });
+
+  const prompt = `Você é um engenheiro de confiabilidade (SRE) analisando erros de um sistema B2B de deal origination.
+Gere um resumo executivo inteligente dos erros recentes.
+
+ESTATÍSTICAS:
+- Total de erros recentes: ${erros.length}
+- Abertos: ${statusCounts.open} | Resolvidos: ${statusCounts.resolved} | Ignorados: ${statusCounts.ignored}
+
+PADRÕES DE URL MAIS FREQUENTES:
+${topPatterns || "Nenhum padrão identificado"}
+
+ERROS (últimos ${erros.length}):
+${errosSummary}
+
+Gere o resumo neste formato:
+
+## Status Geral
+🟢 Saudável | 🟡 Atenção | 🔴 Crítico — com justificativa.
+
+## Top 3 Problemas
+Agrupe erros similares e identifique os 3 mais impactantes.
+
+## Padrões Identificados
+Horários, endpoints, módulos com mais falhas.
+
+## Erros 200 Mascarados
+Identifique erros que retornaram HTTP 200 mas podem conter falha (HTML em vez de JSON, resposta vazia, etc).
+
+## Ações Recomendadas
+Lista priorizada do que a equipe técnica deveria resolver primeiro.
+
+## Tendência
+Os erros estão aumentando, diminuindo ou estáveis?`;
+
+  const response = await getOpenAI().chat.completions.create({
+    model: MODEL,
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
+    max_tokens: 1200,
+  });
+
+  return response.choices[0].message.content || "Monitoramento não disponível";
+}
+
+// ═══════════════════════════════════════════════════════════
+// 9. PIPELINE INTELLIGENCE (briefing executivo)
+// ═══════════════════════════════════════════════════════════
+
+export async function pipelineIntelligence(orgId: number): Promise<string> {
+  const allDeals = await db.select().from(deals).where(eq(deals.orgId, orgId));
+  const stages = await db.select().from(pipelineStages).where(eq(pipelineStages.orgId, orgId));
+
+  if (allDeals.length === 0) return "Nenhum deal no pipeline. Comece adicionando oportunidades ao CRM.";
+
+  const stageMap = new Map(stages.map(s => [s.id, s.name]));
+
+  const dealsByStage = new Map<string, typeof allDeals>();
+  allDeals.forEach(d => {
+    const stageName = stageMap.get(d.stageId!) || `Estágio ${d.stageId}`;
+    if (!dealsByStage.has(stageName)) dealsByStage.set(stageName, []);
+    dealsByStage.get(stageName)!.push(d);
+  });
+
+  const now = new Date();
+  const stalledDeals = allDeals.filter(d => {
+    if (!d.createdAt) return false;
+    const daysInStage = (now.getTime() - new Date(d.createdAt).getTime()) / (1000 * 60 * 60 * 24);
+    return daysInStage > 7;
+  });
+
+  const totalValue = allDeals.reduce((sum, d) => sum + (Number(d.amountEstimate) || 0), 0);
+  const weightedValue = allDeals.reduce((sum, d) => sum + (Number(d.amountEstimate) || 0) * ((d.probability || 0) / 100), 0);
+
+  const stagesSummary = [...dealsByStage.entries()].map(([stage, stageDeals]) => {
+    const stageValue = stageDeals.reduce((s, d) => s + (Number(d.amountEstimate) || 0), 0);
+    return `- ${stage}: ${stageDeals.length} deals | Valor: ${formatBRL(stageValue)}`;
+  }).join("\n");
+
+  const stalledSummary = stalledDeals.slice(0, 10).map(d => {
+    const days = d.createdAt ? Math.floor((now.getTime() - new Date(d.createdAt).getTime()) / (1000 * 60 * 60 * 24)) : 0;
+    return `- "${d.title}" | ${stageMap.get(d.stageId!) || "?"} | ${days} dias | ${formatBRL(d.amountEstimate)}`;
+  }).join("\n");
+
+  const byPriority = { urgent: 0, high: 0, medium: 0, low: 0 };
+  allDeals.forEach(d => {
+    const p = d.priority as keyof typeof byPriority;
+    if (p in byPriority) byPriority[p]++;
+  });
+
+  const prompt = `Você é um diretor comercial analisando o pipeline de negócios de uma empresa de deal origination (ativos rurais e M&A).
+Gere um briefing executivo claro e acionável.
+
+PIPELINE:
+- Total de deals: ${allDeals.length}
+- Valor total: ${formatBRL(totalValue)}
+- Valor ponderado (probabilidade): ${formatBRL(weightedValue)}
+- Prioridade: Urgente=${byPriority.urgent}, Alta=${byPriority.high}, Média=${byPriority.medium}, Baixa=${byPriority.low}
+
+DEALS POR ESTÁGIO:
+${stagesSummary}
+
+DEALS PARADOS (>7 dias no mesmo estágio): ${stalledDeals.length}
+${stalledSummary || "Nenhum deal parado"}
+
+Gere o briefing neste formato:
+
+## Saúde do Pipeline
+🟢 Saudável | 🟡 Atenção | 🔴 Crítico
+
+## Resumo Executivo
+3-4 linhas sobre o estado atual do pipeline.
+
+## Funil de Conversão
+Análise do fluxo entre estágios. Onde estão os gargalos?
+
+## Deals Prioritários
+Top 5 deals que precisam de atenção imediata e por quê.
+
+## Receita Projetada
+Estimativa de receita com base nos deals atuais e probabilidades.
+
+## Recomendações
+3-5 ações concretas para melhorar o pipeline.`;
+
+  const response = await getOpenAI().chat.completions.create({
+    model: MODEL,
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
+    max_tokens: 1500,
+  });
+
+  return response.choices[0].message.content || "Briefing não disponível";
+}
+
+// ═══════════════════════════════════════════════════════════
+// 10. DUE DILIGENCE DOCUMENTAL (checklist de documentos)
+// ═══════════════════════════════════════════════════════════
+
+export async function dueDiligenceCheck(assetId: number, orgId: number): Promise<string> {
+  const [ativo] = await db.select().from(assets).where(and(eq(assets.id, assetId), eq(assets.orgId, orgId)));
+  if (!ativo) throw new Error("Ativo não encontrado");
+
+  const campos = (ativo.camposEspecificos || {}) as any;
+  const docs = (ativo.documentosJson || {}) as any;
+  const enriquecimento = campos.enriquecimentoCompleto || {};
+
+  const existingData: string[] = [];
+  if (campos.car || campos.carData || enriquecimento.sicar) existingData.push("CAR/SICAR");
+  if (campos.cafData || campos.caf || enriquecimento.caf) existingData.push("CAF");
+  if (campos.anm || enriquecimento.anm) existingData.push("ANM (Mineração)");
+  if (campos.embrapa || campos.enrichmentAgro) existingData.push("Embrapa/Aptidão");
+  if (campos.ndvi) existingData.push("NDVI Satellite");
+  if (campos.contextoRegional) existingData.push("IBGE PAM Regional");
+  if (campos.temEmbargoIbama !== undefined) existingData.push("IBAMA");
+  if (enriquecimento.mapbiomas) existingData.push("MapBiomas");
+  if (docs.certidoes && Array.isArray(docs.certidoes) && docs.certidoes.length > 0) existingData.push(`Certidões (${docs.certidoes.length})`);
+  if (docs.laudo) existingData.push("Laudo de Avaliação");
+  if (docs.ccir) existingData.push("CCIR");
+  if (docs.itr) existingData.push("ITR");
+  if (docs.car) existingData.push("CAR (doc)");
+  if (docs.matricula) existingData.push("Matrícula");
+
+  const prompt = `Você é um advogado especialista em due diligence de ativos rurais e minerários no Brasil.
+Analise a documentação disponível para este ativo e gere um checklist completo de due diligence.
+
+ATIVO:
+- Tipo: ${ativo.type}
+- Título: ${ativo.title}
+- Local: ${ativo.municipio || "N/D"}, ${ativo.estado || "N/D"}
+- Área: ${safeNum(ativo.areaHa)} ha
+- Preço: ${formatBRL(ativo.priceAsking)}
+- Status docs: ${ativo.docsStatus || "N/D"}
+
+DADOS/DOCUMENTOS JÁ DISPONÍVEIS:
+${existingData.length > 0 ? existingData.map(d => `✅ ${d}`).join("\n") : "Nenhum documento disponível"}
+
+Gere o relatório neste formato:
+
+## Índice de Prontidão
+XX% — quantos dos documentos obrigatórios estão disponíveis.
+
+## Documentos Obrigatórios
+Para cada documento obrigatório para este tipo de ativo (${ativo.type}):
+- ✅ ou ❌ | Nome do documento | Importância (CRÍTICO/IMPORTANTE/DESEJÁVEL)
+- Se ausente, explique o risco e como obter.
+
+## Documentos Complementares
+Documentos que agregam valor mas não são obrigatórios.
+
+## Riscos Identificados
+Baseado nos documentos ausentes, quais são os riscos jurídicos e financeiros.
+
+## Plano de Ação
+Sequência recomendada para completar a documentação, com prioridade e prazo estimado.
+
+## Custo Estimado
+Estimativa dos custos para obter os documentos faltantes.`;
+
+  const response = await getOpenAI().chat.completions.create({
+    model: MODEL,
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
+    max_tokens: 1500,
+  });
+
+  return response.choices[0].message.content || "Análise de due diligence não disponível";
 }

@@ -3345,6 +3345,14 @@ function AssetIaTab({ ativo, assetId }: { ativo: any; assetId: string }) {
   const [iaReportCompanyId, setIaReportCompanyId] = useState<string>("");
   const [iaRelatorio, setIaRelatorio] = useState<string | null>(null);
   const [iaReportLoading, setIaReportLoading] = useState(false);
+  const [iaPricing, setIaPricing] = useState<string | null>((ativo.camposEspecificos as any)?.iaPricing || null);
+  const [iaPricingLoading, setIaPricingLoading] = useState(false);
+  const [iaDueDiligence, setIaDueDiligence] = useState<string | null>((ativo.camposEspecificos as any)?.iaDueDiligence || null);
+  const [iaDueDiligenceLoading, setIaDueDiligenceLoading] = useState(false);
+
+  const { data: companiesList = [] } = useQuery<any[]>({
+    queryKey: ["/api/companies"],
+  });
 
   const runAnalise = async () => {
     setIaLoading(true);
@@ -3430,14 +3438,18 @@ function AssetIaTab({ ativo, assetId }: { ativo: any; assetId: string }) {
             Gere um relatório mostrando por que este ativo combina com um comprador específico.
           </p>
           <div className="flex gap-2">
-            <Input
-              type="number"
-              placeholder="ID da empresa compradora"
-              value={iaReportCompanyId}
-              onChange={(e) => setIaReportCompanyId(e.target.value)}
-              className="flex-1"
-              data-testid="input-ia-company-id"
-            />
+            <Select value={iaReportCompanyId} onValueChange={setIaReportCompanyId}>
+              <SelectTrigger className="flex-1" data-testid="input-ia-company-id">
+                <SelectValue placeholder="Selecione a empresa compradora" />
+              </SelectTrigger>
+              <SelectContent>
+                {companiesList.map((company: any) => (
+                  <SelectItem key={company.id} value={String(company.id)}>
+                    {company.tradeName || company.legalName} {company.cnpj ? `— ${company.cnpj}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button
               onClick={runRelatorio}
               disabled={iaReportLoading || !iaReportCompanyId}
@@ -3450,6 +3462,106 @@ function AssetIaTab({ ativo, assetId }: { ativo: any; assetId: string }) {
             <div className="mt-4 p-4 rounded-lg border bg-muted/30" data-testid="text-ia-relatorio">
               <div className="whitespace-pre-wrap text-sm leading-relaxed">
                 {iaRelatorio.split("\n").map((line, i) => {
+                  if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-4 mb-1">{line.replace("## ", "")}</h3>;
+                  if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="font-semibold mt-2">{line.replace(/\*\*/g, "")}</p>;
+                  return <p key={i} className="my-0.5">{line}</p>;
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground mt-3 pt-2 border-t">GPT-4o-mini · {new Date().toLocaleDateString("pt-BR")}</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <DollarSign className="h-5 w-5 text-amber-600" />
+            Sugestão de Preço IA
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            A IA analisa ativos semelhantes na base, condições de mercado e localização para sugerir uma faixa de preço competitiva para este ativo.
+          </p>
+          <Button
+            onClick={async () => {
+              setIaPricingLoading(true);
+              try {
+                const res = await apiRequest("POST", `/api/ai/pricing-advisor/${ativo.id}`);
+                const data = await res.json();
+                if (data.analise) {
+                  setIaPricing(data.analise);
+                  queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", assetId] });
+                  toast({ title: "Avaliação de preço concluída" });
+                } else {
+                  toast({ title: "Erro", description: data.message || "Erro na avaliação", variant: "destructive" });
+                }
+              } catch (e: any) {
+                toast({ title: "Erro", description: e.message, variant: "destructive" });
+              }
+              setIaPricingLoading(false);
+            }}
+            disabled={iaPricingLoading}
+            className="w-full"
+            data-testid="button-ia-pricing"
+          >
+            {iaPricingLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Avaliando...</> : <><DollarSign className="mr-2 h-4 w-4" /> Avaliar Preço</>}
+          </Button>
+          {iaPricing && (
+            <div className="mt-4 p-4 rounded-lg border bg-muted/30 prose prose-sm max-w-none dark:prose-invert" data-testid="text-ia-pricing">
+              <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                {iaPricing.split("\n").map((line, i) => {
+                  if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-4 mb-1">{line.replace("## ", "")}</h3>;
+                  if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="font-semibold mt-2">{line.replace(/\*\*/g, "")}</p>;
+                  return <p key={i} className="my-0.5">{line}</p>;
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground mt-3 pt-2 border-t">GPT-4o-mini · {new Date().toLocaleDateString("pt-BR")}</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <FileText className="h-5 w-5 text-blue-600" />
+            Due Diligence Documental
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            A IA gera um checklist completo de documentação necessária para este tipo de ativo, verificando pendências e sugerindo próximos passos.
+          </p>
+          <Button
+            onClick={async () => {
+              setIaDueDiligenceLoading(true);
+              try {
+                const res = await apiRequest("POST", `/api/ai/due-diligence/${ativo.id}`);
+                const data = await res.json();
+                if (data.analise) {
+                  setIaDueDiligence(data.analise);
+                  queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", assetId] });
+                  toast({ title: "Verificação documental concluída" });
+                } else {
+                  toast({ title: "Erro", description: data.message || "Erro na verificação", variant: "destructive" });
+                }
+              } catch (e: any) {
+                toast({ title: "Erro", description: e.message, variant: "destructive" });
+              }
+              setIaDueDiligenceLoading(false);
+            }}
+            disabled={iaDueDiligenceLoading}
+            className="w-full"
+            data-testid="button-ia-due-diligence"
+          >
+            {iaDueDiligenceLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verificando...</> : <><FileText className="mr-2 h-4 w-4" /> Verificar Documentação</>}
+          </Button>
+          {iaDueDiligence && (
+            <div className="mt-4 p-4 rounded-lg border bg-muted/30 prose prose-sm max-w-none dark:prose-invert" data-testid="text-ia-due-diligence">
+              <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                {iaDueDiligence.split("\n").map((line, i) => {
                   if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-4 mb-1">{line.replace("## ", "")}</h3>;
                   if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="font-semibold mt-2">{line.replace(/\*\*/g, "")}</p>;
                   return <p key={i} className="my-0.5">{line}</p>;

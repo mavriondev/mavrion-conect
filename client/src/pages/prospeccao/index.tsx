@@ -17,6 +17,8 @@ import {
   XCircle,
   Coins,
   ExternalLink,
+  Brain,
+  Sparkles,
 } from "lucide-react";
 import SearchFilters, { type Filters, INITIAL_FILTERS, getActiveFilterCount } from "./search-filters";
 import ResultsTable from "./results-table";
@@ -84,6 +86,9 @@ export default function ProspeccaoPage() {
   const [importedMap, setImportedMap] = useState<Record<string, number>>({});
   const [disqualifyingCnpj, setDisqualifyingCnpj] = useState<string | null>(null);
 
+  const [nlQuery, setNlQuery] = useState("");
+  const [nlLoading, setNlLoading] = useState(false);
+  const [nlResult, setNlResult] = useState<any>(null);
 
   const lookupCnpj = async () => {
     const clean = cnpjInput.replace(/\D/g, "");
@@ -272,6 +277,10 @@ export default function ProspeccaoPage() {
               <Badge variant="secondary" className="ml-1.5 text-xs py-0 h-4">{activeFilterCount}</Badge>
             )}
           </TabsTrigger>
+          <TabsTrigger value="ia" data-testid="tab-busca-ia">
+            <Brain className="w-4 h-4 mr-2" />
+            Busca IA
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="simples" className="space-y-4 mt-4">
@@ -448,6 +457,95 @@ export default function ProspeccaoPage() {
               onDisqualify={disqualifyLead}
             />
           </div>
+        </TabsContent>
+
+        <TabsContent value="ia" className="space-y-4 mt-4">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Ex: fazendas acima de 500 hectares em Mato Grosso até R$ 10 milhões..."
+                  value={nlQuery}
+                  onChange={e => setNlQuery(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && !nlLoading && nlQuery.trim() && (async () => {
+                    setNlLoading(true);
+                    try {
+                      const res = await apiRequest("POST", "/api/ai/search", { query: nlQuery });
+                      const data = await res.json();
+                      setNlResult(data);
+                    } catch (e: any) {
+                      toast({ title: "Erro na busca IA", description: e.message, variant: "destructive" });
+                    } finally {
+                      setNlLoading(false);
+                    }
+                  })()}
+                  data-testid="input-nl-search"
+                  className="flex-1"
+                />
+                <Button
+                  onClick={async () => {
+                    if (!nlQuery.trim()) return;
+                    setNlLoading(true);
+                    try {
+                      const res = await apiRequest("POST", "/api/ai/search", { query: nlQuery });
+                      const data = await res.json();
+                      setNlResult(data);
+                    } catch (e: any) {
+                      toast({ title: "Erro na busca IA", description: e.message, variant: "destructive" });
+                    } finally {
+                      setNlLoading(false);
+                    }
+                  }}
+                  disabled={nlLoading || !nlQuery.trim()}
+                  data-testid="button-nl-search"
+                >
+                  {nlLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                  Buscar com IA
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {nlResult && (
+            <div className="space-y-4" data-testid="text-nl-results">
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className="text-sm">
+                  {nlResult.totalEncontrado ?? 0} resultado{(nlResult.totalEncontrado ?? 0) !== 1 ? "s" : ""}
+                </Badge>
+              </div>
+
+              {nlResult.resultados && nlResult.resultados.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {nlResult.resultados.map((r: any, idx: number) => (
+                    <Card key={r.id || idx} data-testid={`card-nl-result-${r.id || idx}`}>
+                      <CardContent className="p-4 space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <h4 className="text-sm font-semibold">{r.title || r.titulo || "Sem título"}</h4>
+                          {r.type && <Badge variant="outline" className="text-[10px] shrink-0">{r.type}</Badge>}
+                        </div>
+                        {(r.municipio || r.estado) && (
+                          <p className="text-xs text-muted-foreground">
+                            {[r.municipio, r.estado].filter(Boolean).join(" / ")}
+                          </p>
+                        )}
+                        <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+                          {r.area && <span>{r.area} ha</span>}
+                          {r.price && <span>R$ {Number(r.price).toLocaleString("pt-BR")}</span>}
+                          {r.geoScore != null && <span>Geo: {r.geoScore}</span>}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+
+              {nlResult.insights && (
+                <div className="bg-muted/50 rounded-lg p-4 text-sm text-muted-foreground" data-testid="text-nl-insights">
+                  {nlResult.insights}
+                </div>
+              )}
+            </div>
+          )}
         </TabsContent>
 
       </Tabs>

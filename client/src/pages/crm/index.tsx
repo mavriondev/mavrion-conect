@@ -18,7 +18,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Plus, DollarSign, Building2, Search, X, Download } from "lucide-react";
+import { Plus, DollarSign, Building2, Search, X, Download, Brain, Sparkles, Loader2 } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 import { DropResult } from "@hello-pangea/dnd";
 import { useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -68,6 +69,10 @@ export default function CRMBoard() {
   const [dealSearch, setDealSearch] = useState("");
   const [filterPriority, setFilterPriority] = useState("all");
   const [filterLabel, setFilterLabel] = useState("");
+
+  const [briefingLoading, setBriefingLoading] = useState(false);
+  const [briefing, setBriefing] = useState<string | null>(null);
+  const [showBriefing, setShowBriefing] = useState(false);
 
   const filteredCompanies = useMemo(() => {
     if (!companies) return [];
@@ -169,6 +174,30 @@ export default function CRMBoard() {
               </TabsTrigger>
             </TabsList>
           </Tabs>
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-violet-600 border-violet-200 hover:bg-violet-50 dark:border-violet-800 dark:hover:bg-violet-900/20"
+            disabled={briefingLoading}
+            data-testid="button-pipeline-briefing"
+            onClick={async () => {
+              setBriefingLoading(true);
+              try {
+                const res = await apiRequest("POST", "/api/ai/pipeline-briefing");
+                const data = await res.json();
+                setBriefing(data.briefing);
+                setShowBriefing(true);
+              } catch (e: any) {
+                toast({ title: "Erro ao gerar briefing", description: e.message, variant: "destructive" });
+              } finally {
+                setBriefingLoading(false);
+              }
+            }}
+          >
+            {briefingLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Brain className="w-3.5 h-3.5" />}
+            Briefing IA
+          </Button>
 
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
@@ -294,6 +323,35 @@ export default function CRMBoard() {
           </Dialog>
         </div>
       </div>
+
+      {showBriefing && briefing && (
+        <Card className="shrink-0" data-testid="text-pipeline-briefing">
+          <CardContent className="p-4 relative">
+            <button
+              onClick={() => setShowBriefing(false)}
+              className="absolute top-2 right-2 text-muted-foreground hover:text-foreground"
+              data-testid="button-close-briefing"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="pr-6 text-sm leading-relaxed">
+              {briefing.split("\n").map((line, i) => {
+                if (line.startsWith("## ")) return <h3 key={i} className="text-sm font-semibold mt-3 mb-1">{line.replace("## ", "")}</h3>;
+                const parts = line.split(/(\*\*.*?\*\*)/g);
+                return (
+                  <p key={i} className="my-0.5">
+                    {parts.map((part, j) =>
+                      part.startsWith("**") && part.endsWith("**")
+                        ? <strong key={j}>{part.slice(2, -2)}</strong>
+                        : part
+                    )}
+                  </p>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <KanbanBoard
         stages={stages}
