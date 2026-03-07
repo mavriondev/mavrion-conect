@@ -17,6 +17,7 @@ import { CnaePicker } from "./cnae-tree";
 export interface Filters {
   names: string;
   states: string[];
+  cities: string[];
   cnaeIds: number[];
   cnaeSideIds: number[];
   sizes: number[];
@@ -37,6 +38,7 @@ export interface Filters {
 export const INITIAL_FILTERS: Filters = {
   names: "",
   states: [],
+  cities: [],
   cnaeIds: [],
   cnaeSideIds: [],
   sizes: [],
@@ -113,6 +115,7 @@ export function getActiveFilterCount(filters: Filters): number {
   return [
     filters.names,
     filters.states.length > 0,
+    filters.cities.length > 0,
     filters.cnaeIds.length > 0,
     filters.cnaeSideIds.length > 0,
     filters.sizes.length > 0,
@@ -149,9 +152,18 @@ export default function SearchFilters({
   onClear,
 }: SearchFiltersProps) {
   const [dddInput, setDddInput] = useState("");
+  const [cityInput, setCityInput] = useState("");
 
   const toggleState = (s: string) =>
     setFilters(f => ({ ...f, states: f.states.includes(s) ? f.states.filter(x => x !== s) : [...f.states, s] }));
+
+  const addCity = () => {
+    const city = cityInput.trim().toUpperCase();
+    if (city && !filters.cities.includes(city)) {
+      setFilters(f => ({ ...f, cities: [...f.cities, city] }));
+    }
+    setCityInput("");
+  };
 
   const toggleSize = (id: number) =>
     setFilters(f => ({ ...f, sizes: f.sizes.includes(id) ? f.sizes.filter(x => x !== id) : [...f.sizes, id] }));
@@ -227,6 +239,30 @@ export default function SearchFilters({
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Cidade / Município</Label>
+          <div className="flex gap-1.5">
+            <Input
+              placeholder="Ex: SAO PAULO"
+              value={cityInput}
+              onChange={e => setCityInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && addCity()}
+              className="flex-1"
+              data-testid="input-filtro-cidade"
+            />
+            <Button size="sm" variant="outline" onClick={addCity} data-testid="button-adicionar-cidade">Adicionar</Button>
+          </div>
+          {filters.cities.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {filters.cities.map(city => (
+                <Badge key={city} variant="secondary" className="gap-1 cursor-pointer" onClick={() => setFilters(f => ({ ...f, cities: f.cities.filter(c => c !== city) }))} data-testid={`badge-cidade-${city}`}>
+                  {city} <X className="w-3 h-3" />
+                </Badge>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="space-y-1.5">

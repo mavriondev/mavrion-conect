@@ -15,7 +15,7 @@ export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) 
     try {
       const q = req.query as Record<string, string>;
       const {
-        names, state, cnae, cnae_side, size, status: statusParam,
+        names, state, city, cnae, cnae_side, size, status: statusParam,
         nature, simples, mei, head, has_phone, has_email,
         founded_from, founded_to, equity_min, equity_max, ddd,
         limit = "50",
@@ -26,6 +26,7 @@ export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) 
 
       if (names) params.set("names.in", names);
       if (state) params.set("address.state.in", state.split(",").map(s => s.trim()).join(","));
+      if (city) params.set("address.city.in", city.split(",").map(c => c.trim()).join(","));
 
       if (cnae) {
         const codes = cnae.split(",").map(c => parseInt(c.trim(), 10)).filter(n => !isNaN(n));

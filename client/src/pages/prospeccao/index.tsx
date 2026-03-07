@@ -118,6 +118,7 @@ export default function ProspeccaoPage() {
       const params = new URLSearchParams();
       if (filters.names.trim()) params.set("names", filters.names.trim());
       if (filters.states.length > 0) params.set("state", filters.states.join(","));
+      if (filters.cities.length > 0) params.set("city", filters.cities.join(","));
       if (filters.cnaeIds.length > 0) params.set("cnae", filters.cnaeIds.join(","));
       if (filters.cnaeSideIds.length > 0) params.set("cnae_side", filters.cnaeSideIds.join(","));
       if (filters.sizes.length > 0) params.set("size", filters.sizes.join(","));
