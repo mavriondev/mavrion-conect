@@ -158,7 +158,7 @@ export default function SearchFilters({
     setFilters(f => ({ ...f, states: f.states.includes(s) ? f.states.filter(x => x !== s) : [...f.states, s] }));
 
   const addCity = () => {
-    const city = cityInput.trim().toUpperCase();
+    const city = cityInput.trim().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     if (city && !filters.cities.includes(city)) {
       setFilters(f => ({ ...f, cities: [...f.cities, city] }));
     }
