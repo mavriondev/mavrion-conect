@@ -7,7 +7,7 @@ import {
   Bug, AlertCircle, CheckCircle2, Clock, AlertTriangle,
   Info, Eye, Filter, BarChart3, RefreshCw,
   Monitor, User, Globe, Zap, ChevronDown,
-  XCircle, ArrowUpDown, Search,
+  XCircle, ArrowUpDown, Search, Brain, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -455,6 +455,8 @@ export default function ErrorReportsPage() {
                   </div>
                 )}
 
+                <AiDiagnosticSection errorId={selectedReport.id} />
+
                 <div className="flex gap-2 pt-2 border-t">
                   {selectedReport.status !== "in_progress" && (
                     <Button
@@ -517,6 +519,55 @@ function InfoField({ label, value }: { label: string; value?: string | null }) {
     <div>
       <Label>{label}</Label>
       <p className="text-sm mt-0.5">{value || "—"}</p>
+    </div>
+  );
+}
+
+function AiDiagnosticSection({ errorId }: { errorId: number }) {
+  const [diagnostico, setDiagnostico] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
+
+  const runDiagnose = async () => {
+    setLoading(true);
+    try {
+      const res = await apiRequest("POST", `/api/ai/diagnose-error/${errorId}`);
+      const data = await res.json();
+      if (data.diagnostico) {
+        setDiagnostico(data.diagnostico);
+      } else {
+        toast({ title: "Erro", description: data.message || "Erro no diagnóstico", variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Erro", description: e.message, variant: "destructive" });
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-3 pt-3 border-t">
+      <Button
+        size="sm"
+        variant="outline"
+        className="gap-1.5 w-full"
+        onClick={runDiagnose}
+        disabled={loading}
+        data-testid="button-diagnosticar-ia"
+      >
+        {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Brain className="w-3.5 h-3.5 text-violet-500" />}
+        {loading ? "Diagnosticando..." : diagnostico ? "Rediagnosticar com IA" : "Diagnosticar com IA"}
+      </Button>
+      {diagnostico && (
+        <div className="p-3 rounded-lg border bg-violet-50 dark:bg-violet-950/30 text-sm" data-testid="text-diagnostico-ia">
+          <div className="whitespace-pre-wrap leading-relaxed">
+            {diagnostico.split("\n").map((line, i) => {
+              if (line.startsWith("## ")) return <h4 key={i} className="text-sm font-semibold mt-3 mb-1">{line.replace("## ", "")}</h4>;
+              return <p key={i} className="my-0.5">{line}</p>;
+            })}
+          </div>
+          <p className="text-xs text-muted-foreground mt-2 pt-1 border-t">GPT-4o-mini</p>
+        </div>
+      )}
     </div>
   );
 }

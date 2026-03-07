@@ -15,7 +15,7 @@ import {
   Building2, MapPin, Briefcase, Phone, Mail, Users, Loader2, UserPlus,
   ExternalLink, FileText, Globe, Calendar, ArrowLeft, Hash, AlertCircle,
   Network, Download, Eye, Sparkles, Search, Code, Tag, Share2, CheckCircle2,
-  Clock, Plus, Trash2, Save, BookOpen, TriangleAlert, Target, Layers,
+  Clock, Plus, Trash2, Save, BookOpen, TriangleAlert, Target, Layers, Brain,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -364,6 +364,7 @@ export default function EmpresaDetailPage() {
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               {company.porte && <Badge variant="outline">{company.porte}</Badge>}
+              <AiCompanySummaryButton companyId={company.id} />
               {company.lead ? (
                 <>
                   <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${LEAD_STATUS_COLORS[company.lead.status] || LEAD_STATUS_COLORS.new}`}>
@@ -1141,5 +1142,68 @@ export default function EmpresaDetailPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+function AiCompanySummaryButton({ companyId }: { companyId: number }) {
+  const [resumo, setResumo] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const { toast } = useToast();
+
+  const runSummary = async () => {
+    setLoading(true);
+    setOpen(true);
+    try {
+      const res = await apiRequest("POST", `/api/ai/summarize-company/${companyId}`);
+      const data = await res.json();
+      if (data.resumo) {
+        setResumo(data.resumo);
+      } else {
+        toast({ title: "Erro", description: data.message || "Erro no resumo", variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Erro", description: e.message, variant: "destructive" });
+    }
+    setLoading(false);
+  };
+
+  return (
+    <>
+      <Button size="sm" variant="outline" className="gap-1.5" onClick={runSummary} disabled={loading} data-testid="button-resumo-ia">
+        {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Brain className="w-3.5 h-3.5 text-violet-500" />}
+        Resumo IA
+      </Button>
+      {open && (
+        <AlertDialog open={open} onOpenChange={setOpen}>
+          <AlertDialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
+                <Brain className="w-5 h-5 text-violet-500" />
+                Resumo Inteligente
+              </AlertDialogTitle>
+            </AlertDialogHeader>
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-violet-500" />
+                <span className="ml-3 text-muted-foreground">Analisando empresa...</span>
+              </div>
+            ) : resumo ? (
+              <div className="whitespace-pre-wrap text-sm leading-relaxed" data-testid="text-resumo-ia">
+                {resumo.split("\n").map((line, i) => {
+                  if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-4 mb-1">{line.replace("## ", "")}</h3>;
+                  if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="font-semibold mt-2">{line.replace(/\*\*/g, "")}</p>;
+                  return <p key={i} className="my-0.5">{line}</p>;
+                })}
+                <p className="text-xs text-muted-foreground mt-3 pt-2 border-t">GPT-4o-mini</p>
+              </div>
+            ) : null}
+            <AlertDialogFooter>
+              <AlertDialogCancel>Fechar</AlertDialogCancel>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
+    </>
   );
 }

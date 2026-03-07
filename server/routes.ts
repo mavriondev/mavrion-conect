@@ -23,6 +23,7 @@ import { registerAuthRoutes } from "./routes/auth";
 import { registerExportRoutes } from "./routes/export";
 import { registerDocumentRoutes } from "./routes/documents";
 import { registerCvmRoutes } from "./routes/cvm";
+import { registerAiRoutes } from "./routes/ai";
 
 const uploadsDir = path.join(process.cwd(), "server", "uploads");
 
@@ -48,6 +49,7 @@ export async function registerRoutes(
   registerExportRoutes(app, storage);
   registerDocumentRoutes(app);
   registerCvmRoutes(app);
+  registerAiRoutes(app);
   await seedDatabase();
 
   return httpServer;
