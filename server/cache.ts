@@ -8,6 +8,7 @@ const TTL_SECONDS = {
   cnpja: 60 * 60 * 24,
   geo: 60 * 60 * 24,
   caf_municipio: 60 * 60 * 12,
+  ibge_pam: 60 * 60 * 24,
 };
 
 type CacheNS = keyof typeof TTL_SECONDS;

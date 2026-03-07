@@ -12,6 +12,7 @@ import { sql } from "drizzle-orm";
 import { consultarEmbargoIbama, consultarEmbargoIbamaCoordenadas } from "../lib/ibama";
 import { getUsoTerraMapBiomas } from "../lib/mapbiomas";
 import { getNDVISentinel } from "../lib/sentinel";
+import { getProducaoMunicipio } from "../lib/contexto-regional";
 
 export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgDatabase<any>) {
   app.get(api.matching.assets.list.path, async (req, res) => {
@@ -577,5 +578,39 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
       temEmbargoIbama,
       erros,
     });
+  });
+
+  app.post("/api/matching/assets/:id/contexto-regional", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const user = req.user as any;
+      const orgId = user?.orgId;
+      const assetId = Number(req.params.id);
+      const asset = await storage.getAsset(assetId);
+      if (!asset || asset.orgId !== orgId) return res.status(404).json({ message: "Ativo não encontrado" });
+
+      if (!["TERRA", "AGRO"].includes(asset.tipo)) {
+        return res.status(400).json({ message: "Contexto regional disponível apenas para ativos agrícolas" });
+      }
+
+      const campos = (asset.camposEspecificos || {}) as any;
+      const codigoIbge = campos.codigoIbge;
+      if (!codigoIbge) {
+        return res.status(400).json({ message: "Ativo sem código IBGE do município. Enriqueça o ativo com dados geoespaciais primeiro." });
+      }
+
+      const contexto = await getProducaoMunicipio(codigoIbge);
+      if (!contexto) {
+        return res.status(400).json({ message: "Não foi possível obter dados de produção agrícola para este município" });
+      }
+
+      const camposAtualizados = { ...campos, contextoRegional: contexto };
+      await storage.updateAsset(asset.id, { camposEspecificos: camposAtualizados });
+
+      res.json({ success: true, contexto });
+    } catch (error: any) {
+      console.error("Erro contexto regional:", error);
+      res.status(500).json({ message: "Erro ao carregar contexto regional" });
+    }
   });
 }

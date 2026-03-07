@@ -16,7 +16,7 @@ import {
   TreePine, Pickaxe, Briefcase, Home, Wheat, Factory, Link2,
   Tag, MessageSquare, Zap, Search, Leaf, Thermometer, Droplets,
   FlaskConical, RefreshCw, Upload, ExternalLink, Paperclip, X as XIcon,
-  Filter, ChevronRight, Phone, Mail, Handshake, Camera, Image, Users,
+  Filter, ChevronRight, Phone, Mail, Handshake, Camera, Image, Users, BarChart3,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
@@ -713,6 +713,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
   const [cafLoading, setCafLoading] = useState(false);
   const [cafSearched, setCafSearched] = useState(false);
   const [cafEnriching, setCafEnriching] = useState(false);
+  const [contextoLoading, setContextoLoading] = useState(false);
   const [cafLeadCreating, setCafLeadCreating] = useState<number | null>(null);
 
   const salvarEnrichment = async (key: string, value: any) => {
@@ -2592,6 +2593,137 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                     )}
                   </CardContent>
                 </Card>
+
+                {(() => {
+                  const cr = campos.contextoRegional;
+                  const carregarContexto = async () => {
+                    setContextoLoading(true);
+                    try {
+                      const r = await apiRequest("POST", `/api/matching/assets/${id}/contexto-regional`);
+                      const data = await r.json();
+                      if (data.success) {
+                        queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", id] });
+                        toast({ title: "Contexto regional carregado!" });
+                      } else {
+                        toast({ title: data.message || "Erro ao carregar contexto", variant: "destructive" });
+                      }
+                    } catch {
+                      toast({ title: "Erro ao carregar contexto regional", variant: "destructive" });
+                    }
+                    setContextoLoading(false);
+                  };
+
+                  return (
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <div className="flex items-center justify-between">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <BarChart3 className="w-4 h-4" />
+                            Contexto Regional — Produção Agrícola
+                          </CardTitle>
+                          {cr && (
+                            <Badge variant="outline" className="text-[10px]" data-testid="badge-contexto-fonte">
+                              {cr.fonte} · {cr.anoReferencia}
+                            </Badge>
+                          )}
+                        </div>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {!codigoIbge ? (
+                          <p className="text-sm text-muted-foreground" data-testid="text-contexto-sem-ibge">
+                            Enriqueça o ativo com dados geoespaciais para obter o código IBGE do município.
+                          </p>
+                        ) : !cr ? (
+                          <div className="text-center py-4">
+                            <BarChart3 className="w-8 h-8 mx-auto text-muted-foreground opacity-30 mb-2" />
+                            <p className="text-sm text-muted-foreground mb-3">
+                              Carregue dados de produção agrícola do município (IBGE PAM).
+                            </p>
+                            <Button
+                              onClick={carregarContexto}
+                              disabled={contextoLoading}
+                              variant="outline"
+                              size="sm"
+                              className="gap-1.5"
+                              data-testid="button-carregar-contexto"
+                            >
+                              {contextoLoading
+                                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Carregando...</>
+                                : <><BarChart3 className="w-3.5 h-3.5" /> Carregar Contexto Regional</>}
+                            </Button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="grid grid-cols-3 gap-2">
+                              <div className="p-2.5 rounded bg-muted/50 text-center">
+                                <p className="text-[10px] text-muted-foreground">Área Colhida</p>
+                                <p className="text-sm font-bold" data-testid="text-contexto-area">
+                                  {cr.totalAreaColhida?.toLocaleString("pt-BR")} ha
+                                </p>
+                              </div>
+                              <div className="p-2.5 rounded bg-muted/50 text-center">
+                                <p className="text-[10px] text-muted-foreground">Produção</p>
+                                <p className="text-sm font-bold" data-testid="text-contexto-producao">
+                                  {cr.totalQuantidadeProduzida?.toLocaleString("pt-BR")} t
+                                </p>
+                              </div>
+                              <div className="p-2.5 rounded bg-muted/50 text-center">
+                                <p className="text-[10px] text-muted-foreground">Valor</p>
+                                <p className="text-sm font-bold" data-testid="text-contexto-valor">
+                                  R$ {cr.totalValorProducao?.toLocaleString("pt-BR")} mil
+                                </p>
+                              </div>
+                            </div>
+
+                            {cr.culturas?.length > 0 && (
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="border-b text-muted-foreground">
+                                      <th className="text-left py-1.5 pr-2">Cultura</th>
+                                      <th className="text-right py-1.5 px-2">Área (ha)</th>
+                                      <th className="text-right py-1.5 px-2">Produção (t)</th>
+                                      <th className="text-right py-1.5 pl-2">Valor (R$ mil)</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {cr.culturas.map((c: any, i: number) => (
+                                      <tr key={i} className="border-b border-border/50" data-testid={`row-contexto-cultura-${i}`}>
+                                        <td className="py-1.5 pr-2 font-medium">{c.nome}</td>
+                                        <td className="text-right py-1.5 px-2">{c.areaColhida?.toLocaleString("pt-BR") || "—"}</td>
+                                        <td className="text-right py-1.5 px-2">{c.quantidadeProduzida?.toLocaleString("pt-BR") || "—"}</td>
+                                        <td className="text-right py-1.5 pl-2">{c.valorProducao?.toLocaleString("pt-BR") || "—"}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+
+                            {cr.culturas?.length === 0 && (
+                              <p className="text-sm text-muted-foreground text-center" data-testid="text-contexto-sem-culturas">
+                                Nenhuma cultura registrada neste município.
+                              </p>
+                            )}
+
+                            <Button
+                              onClick={carregarContexto}
+                              disabled={contextoLoading}
+                              variant="ghost"
+                              size="sm"
+                              className="w-full gap-1.5"
+                              data-testid="button-recarregar-contexto"
+                            >
+                              {contextoLoading
+                                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Atualizando...</>
+                                : <><RefreshCw className="w-3.5 h-3.5" /> Recarregar</>}
+                            </Button>
+                          </>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })()}
                 </>
               );
             })()}
