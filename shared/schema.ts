@@ -699,6 +699,54 @@ export const insertInvestorDynamicProfileSchema = createInsertSchema(investorDyn
 export type InsertInvestorDynamicProfile = z.infer<typeof insertInvestorDynamicProfileSchema>;
 export type InvestorDynamicProfile = typeof investorDynamicProfile.$inferSelect;
 
+export const companyBuyerProfiles = pgTable("company_buyer_profiles", {
+  id: serial("id").primaryKey(),
+  orgId: integer("org_id").references(() => organizations.id),
+  companyId: integer("company_id").references(() => companies.id).notNull().unique(),
+  totalDeals: integer("total_deals").default(0),
+  preferredTypes: jsonb("preferred_types").default([]),
+  preferredCultures: jsonb("preferred_cultures").default([]),
+  avgAreaHa: doublePrecision("avg_area_ha"),
+  minAreaHa: doublePrecision("min_area_ha"),
+  maxAreaHa: doublePrecision("max_area_ha"),
+  avgPricePerHa: doublePrecision("avg_price_per_ha"),
+  minPricePerHa: doublePrecision("min_price_per_ha"),
+  maxPricePerHa: doublePrecision("max_price_per_ha"),
+  avgGeoScore: integer("avg_geo_score"),
+  minGeoScore: integer("min_geo_score"),
+  maxGeoScore: integer("max_geo_score"),
+  requiresCompleteDocs: boolean("requires_complete_docs").default(false),
+  acceptsPendingDocs: boolean("accepts_pending_docs").default(false),
+  acceptsIrregularDocs: boolean("accepts_irregular_docs").default(false),
+  lastVisitDate: timestamp("last_visit_date"),
+  visitsLast30Days: integer("visits_last_30_days").default(0),
+  rejectionsLast30Days: integer("rejections_last_30_days").default(0),
+  acceptancesLast30Days: integer("acceptances_last_30_days").default(0),
+  avgDecisionDays: integer("avg_decision_days"),
+  portfolioRegions: jsonb("portfolio_regions").default([]),
+  portfolioCultures: jsonb("portfolio_cultures").default([]),
+  portfolioConcentration: jsonb("portfolio_concentration").default({}),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const companyVisitLog = pgTable("company_visit_log", {
+  id: serial("id").primaryKey(),
+  orgId: integer("org_id").references(() => organizations.id),
+  companyId: integer("company_id").references(() => companies.id),
+  assetId: integer("asset_id").references(() => assets.id),
+  visitedAt: timestamp("visited_at").defaultNow(),
+});
+
+export const companyRejectionLog = pgTable("company_rejection_log", {
+  id: serial("id").primaryKey(),
+  orgId: integer("org_id").references(() => organizations.id),
+  companyId: integer("company_id").references(() => companies.id),
+  assetId: integer("asset_id").references(() => assets.id),
+  reason: text("reason"),
+  rejectedAt: timestamp("rejected_at").defaultNow(),
+});
+
 export const sicarImoveisCache = pgTable("sicar_imoveis_cache", {
   id: serial("id").primaryKey(),
   codImovel: text("cod_imovel").notNull().unique(),

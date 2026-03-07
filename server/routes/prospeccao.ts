@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
-import { companies, assets } from "@shared/schema";
+import { companies, assets, companyBuyerProfiles } from "@shared/schema";
 import { storage } from "../storage";
 import { getOrgId } from "../lib/tenant";
 
@@ -212,6 +212,97 @@ export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) 
     return CNAE_MAP[tipo] || CNAE_MAP["NEGOCIO"];
   }
 
+  const APTIDAO_CNAE_MAP: Record<string, { primary: number[]; secondary: number[] }> = {
+    "soja": { primary: [111301, 111302, 111303, 111399, 4623108, 4623109], secondary: [1051100, 4683400, 6470101] },
+    "milho": { primary: [111301, 111302, 111399, 4623108], secondary: [1066000, 4683400, 6470101] },
+    "algodao": { primary: [111399, 131800], secondary: [1340501, 4641901, 6470101] },
+    "arroz": { primary: [112101, 112102, 112199], secondary: [1061901, 4623108, 6470101] },
+    "trigo": { primary: [111301, 111302, 111399], secondary: [1061902, 4623108, 6470101] },
+    "feijao": { primary: [111399, 112199], secondary: [4623108, 6470101] },
+    "sorgo": { primary: [111399, 4623108], secondary: [6470101, 4683400] },
+    "pecuaria": { primary: [141501, 141502, 142300, 151201, 151202], secondary: [1011201, 1012101, 4622200, 6470101] },
+    "gado": { primary: [141501, 141502, 151201, 151202], secondary: [1011201, 1012101, 4622200] },
+    "boi": { primary: [141501, 141502, 151201, 151202], secondary: [1011201, 1012101, 4622200] },
+    "leite": { primary: [141501, 142300, 1051100, 1052000], secondary: [4622200, 6470101] },
+    "suino": { primary: [155501, 155502, 155503], secondary: [1012101, 1012102, 4622200] },
+    "aves": { primary: [155504, 155505, 155509], secondary: [1012103, 1012104, 4622200] },
+    "frango": { primary: [155504, 155505], secondary: [1012103, 1012104, 4622200] },
+    "eucalipto": { primary: [210101, 210102, 210107, 210108], secondary: [1610001, 1610002, 6470101] },
+    "pinus": { primary: [210101, 210102, 210109], secondary: [1610001, 1610002, 6470101] },
+    "madeira": { primary: [210101, 210102, 161001, 161002], secondary: [1610001, 1620001, 6470101] },
+    "cana": { primary: [115600, 116401, 116402, 116499], secondary: [1071600, 1072401, 6470101] },
+    "etanol": { primary: [115600, 116401, 1072401], secondary: [6470101, 4681801] },
+    "frutas": { primary: [113000, 114800, 119901], secondary: [4637102, 4637199, 6470101] },
+    "citrus": { primary: [113000, 114800], secondary: [1033301, 4637102, 6470101] },
+    "laranja": { primary: [113000, 1033301], secondary: [4637102, 6470101] },
+    "uva": { primary: [121101, 121102], secondary: [1111901, 1111902, 4635401] },
+    "vinho": { primary: [121101, 1111901, 1111902], secondary: [4635401, 6470101] },
+    "cafe": { primary: [133401, 133402, 133403, 133499], secondary: [1081301, 4637199, 6470101] },
+    "irrigacao": { primary: [111301, 111302, 113000], secondary: [3721100, 4623108, 6470101] },
+    "aquicultura": { primary: [321301, 321399], secondary: [1020101, 4634601, 6470101] },
+    "peixe": { primary: [321301, 321399, 1020101], secondary: [4634601, 6470101] },
+  };
+
+  function getCnaeConfigTerra(
+    tipo: string,
+    aptidao: string | null,
+    areaHa: number | null,
+    temAgua: boolean,
+    geoScore: number | null
+  ): { primary: number[]; secondary: number[]; keywords: string[] } {
+    const base = CNAE_MAP["TERRA"];
+    if (!aptidao) return base;
+
+    const termos = aptidao
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .split(/[,;\/\s]+/)
+      .map(t => t.trim())
+      .filter(t => t.length > 2);
+
+    const primarySet = new Set<number>(base.primary);
+    const secondarySet = new Set<number>(base.secondary);
+    const keywords: string[] = [...base.keywords];
+
+    for (const termo of termos) {
+      for (const [key, config] of Object.entries(APTIDAO_CNAE_MAP)) {
+        if (termo.includes(key) || key.includes(termo)) {
+          config.primary.forEach(c => primarySet.add(c));
+          config.secondary.forEach(c => secondarySet.add(c));
+          keywords.push(key);
+          break;
+        }
+      }
+    }
+
+    if (areaHa && areaHa >= 10000) {
+      primarySet.add(6470101);
+      primarySet.add(6499301);
+      primarySet.add(6630400);
+      keywords.push("fundo terra", "FIAGRO");
+    }
+    if (areaHa && areaHa >= 50000) {
+      primarySet.add(4623108);
+      primarySet.add(4683400);
+      keywords.push("trading", "agronegócio");
+    }
+    if (temAgua) {
+      APTIDAO_CNAE_MAP["irrigacao"].primary.forEach(c => primarySet.add(c));
+      keywords.push("irrigação");
+    }
+    if (geoScore && geoScore >= 70) {
+      primarySet.add(6470101);
+      primarySet.add(6630400);
+      keywords.push("fundo terra premium");
+    }
+
+    return {
+      primary: Array.from(primarySet),
+      secondary: Array.from(secondarySet),
+      keywords: [...new Set(keywords)],
+    };
+  }
+
   app.get("/api/prospeccao/reversa", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
@@ -223,10 +314,24 @@ export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) 
         porteOverride,
         estadoOverride,
         ocultarCrm,
+        aptidao,
+        areaHa,
+        geoScore,
+        temAgua,
+        assetId,
       } = req.query as Record<string, string>;
 
       const precoNum = preco ? parseFloat(preco) : null;
-      const config = getCnaeConfig(tipo, substancia);
+      const areaHaNum = areaHa ? parseFloat(areaHa) : null;
+      const geoScoreNum = geoScore ? parseInt(geoScore) : null;
+      const temAguaBool = temAgua === "true";
+
+      let config;
+      if ((tipo === "TERRA" || tipo === "AGRO") && aptidao) {
+        config = getCnaeConfigTerra(tipo, aptidao, areaHaNum, temAguaBool, geoScoreNum);
+      } else {
+        config = getCnaeConfig(tipo, substancia);
+      }
 
       const baseParams: Record<string, string> = {
         "status.id.in": "2",
@@ -377,12 +482,78 @@ export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) 
         ? filtered.filter(r => !r.alreadySaved)
         : filtered;
 
+      const assetIdNum = assetId ? parseInt(assetId) : null;
+      let sorted = finalResults;
+
+      if (assetIdNum) {
+        try {
+          const { calculateIntelligentScore, updateCompanyBuyerProfile } = await import("../lib/intelligent-prospecting");
+          const [assetRow] = await db.select().from(assets).where(eq(assets.id, assetIdNum));
+
+          if (assetRow) {
+            const orgId = getOrgId(req);
+            const resultsWithScores = await Promise.all(
+              finalResults.map(async (r: any) => {
+                const companyId = r.savedCompanyId;
+                if (!companyId) {
+                  return {
+                    ...r,
+                    intelligentScore: 50,
+                    intelligentConfidence: "low",
+                    intelligentBreakdown: null,
+                    intelligentReason: "Empresa não está no CRM (sem histórico)",
+                  };
+                }
+
+                let profile = await db.select().from(companyBuyerProfiles)
+                  .where(eq(companyBuyerProfiles.companyId, companyId));
+
+                if (profile.length === 0) {
+                  await updateCompanyBuyerProfile(db, companyId, orgId);
+                  profile = await db.select().from(companyBuyerProfiles)
+                    .where(eq(companyBuyerProfiles.companyId, companyId));
+                }
+
+                if (profile.length === 0) {
+                  return {
+                    ...r,
+                    intelligentScore: 50,
+                    intelligentConfidence: "low",
+                    intelligentBreakdown: null,
+                    intelligentReason: "Perfil não disponível",
+                  };
+                }
+
+                const score = await calculateIntelligentScore(assetRow, companyId, profile[0] as any, db, orgId);
+                return {
+                  ...r,
+                  intelligentScore: score.totalScore,
+                  intelligentConfidence: score.confidence,
+                  intelligentBreakdown: score.breakdown,
+                  intelligentReason: score.humanReason,
+                };
+              })
+            );
+            sorted = resultsWithScores.sort((a, b) => (b.intelligentScore || 0) - (a.intelligentScore || 0));
+          }
+        } catch (scoreErr) {
+          console.warn("Intelligent scoring error (non-fatal):", scoreErr);
+        }
+      }
+
       res.json({
-        count:          finalResults.length,
-        primaryCount:   finalResults.filter(r => r.camada === 1).length,
-        secondaryCount: finalResults.filter(r => r.camada === 2).length,
-        fallbackCount:  finalResults.filter(r => r.camada === 3).length,
-        results:        finalResults,
+        count:          sorted.length,
+        primaryCount:   sorted.filter(r => r.camada === 1).length,
+        secondaryCount: sorted.filter(r => r.camada === 2).length,
+        fallbackCount:  sorted.filter(r => r.camada === 3).length,
+        results:        sorted,
+        meta: {
+          aptidaoDetectada: aptidao || null,
+          areaHa: areaHaNum || null,
+          temAgua: temAguaBool,
+          geoScore: geoScoreNum || null,
+          cnaesUsados: config.primary.length + config.secondary.length,
+        },
       });
     } catch (err) {
       console.error("Prospeccao reversa error:", err);

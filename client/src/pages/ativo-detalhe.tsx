@@ -844,12 +844,21 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
     if (!ativo) return;
     setBuscandoCompradores(true);
     try {
-      const params = new URLSearchParams({ tipo: ativo.type });
+      const params = new URLSearchParams({ tipo: ativo.type, assetId: String(id) });
       if (ativo.estado) params.set("estado", ativo.estado);
       if (ativo.priceAsking) params.set("preco", String(ativo.priceAsking));
+
+      const campos = (ativo.camposEspecificos as any) || {};
+      if (ativo.type === "TERRA" || ativo.type === "AGRO") {
+        const aptidao = campos.aptidaoAgricola || campos.culturas || "";
+        if (aptidao) params.set("aptidao", aptidao);
+        if (ativo.areaHa) params.set("areaHa", String(ativo.areaHa));
+        if (ativo.geoScore) params.set("geoScore", String(ativo.geoScore));
+        if ((ativo as any).geoTemRio || (ativo as any).geoTemLago) params.set("temAgua", "true");
+      }
+
       if (ativo.type === "MINA") {
-        const campos = (ativo.camposEspecificos as any) || {};
-        const attrs  = (ativo.attributesJson as any) || {};
+        const attrs = (ativo.attributesJson as any) || {};
         const sub = campos.substancia || attrs.anmSubstancia || campos.anmSubstancia;
         if (sub) params.set("substancia", sub);
       }
@@ -1703,6 +1712,15 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                         <div className="flex-1 min-w-0 space-y-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <p className="font-medium text-sm truncate">{c.tradeName || c.legalName}</p>
+                            {c.intelligentScore != null && (
+                              <Badge
+                                variant="outline"
+                                className={cn("text-xs font-bold border-0", c.intelligentScore >= 70 ? "bg-green-100 text-green-800" : c.intelligentScore >= 40 ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-600")}
+                                data-testid={`badge-score-${c.taxId}`}
+                              >
+                                {c.intelligentScore}pts
+                              </Badge>
+                            )}
                             {c.alreadySaved && (
                               <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
                                 No CRM
@@ -1723,8 +1741,16 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                                 Relacionado
                               </Badge>
                             )}
+                            {c.intelligentConfidence && (
+                              <span className="text-[10px] text-muted-foreground">
+                                {c.intelligentConfidence === "high" ? "✓ Alta" : c.intelligentConfidence === "medium" ? "◐ Média" : "○ Baixa"}
+                              </span>
+                            )}
                           </div>
                           <p className="text-xs text-muted-foreground font-mono">{c.taxId}</p>
+                          {c.intelligentReason && (
+                            <p className="text-[11px] text-muted-foreground italic" data-testid={`text-reason-${c.taxId}`}>{c.intelligentReason}</p>
+                          )}
                           <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
                             {c.cnaePrincipal && <span className="truncate max-w-[200px]">{c.cnaePrincipal}</span>}
                             {(c.city || c.state) && (
