@@ -9,6 +9,41 @@ const cnpjaHeaders = () => ({
   "Authorization": process.env.CNPJA_API_KEY || "",
 });
 
+function normalizeStr(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
+let ibgeMunicipiosCache: { nome: string; id: number; uf: string }[] | null = null;
+
+async function getIbgeMunicipios(): Promise<{ nome: string; id: number; uf: string }[]> {
+  if (ibgeMunicipiosCache) return ibgeMunicipiosCache;
+  try {
+    const resp = await fetch("https://servicodados.ibge.gov.br/api/v1/localidades/municipios?view=nivelado");
+    if (!resp.ok) return [];
+    const data = await resp.json() as any[];
+    ibgeMunicipiosCache = data.map((m: any) => ({
+      nome: m["municipio-nome"] || m.nome,
+      id: m["municipio-id"] || m.id,
+      uf: m["UF-sigla"] || m.microrregiao?.mesorregiao?.UF?.sigla || "",
+    }));
+    return ibgeMunicipiosCache;
+  } catch { return []; }
+}
+
+async function cidadesParaCodigosIbge(cidades: string[], uf?: string): Promise<number[]> {
+  const municipios = await getIbgeMunicipios();
+  const codigos: number[] = [];
+  for (const cidade of cidades) {
+    const cidadeNorm = normalizeStr(cidade);
+    const match = municipios.find(m => {
+      const nomeNorm = normalizeStr(m.nome);
+      return nomeNorm === cidadeNorm && (!uf || m.uf.toUpperCase() === uf.toUpperCase());
+    });
+    if (match) codigos.push(match.id);
+  }
+  return codigos;
+}
+
 export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) {
   app.get("/api/prospeccao/search", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
@@ -26,7 +61,13 @@ export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) 
 
       if (names) params.set("names.in", names);
       if (state) params.set("address.state.in", state.split(",").map(s => s.trim()).join(","));
-      if (city) params.set("address.city.in", city.split(",").map(c => c.trim()).join(","));
+      if (city) {
+        const cidadesArr = city.split(",").map(c => c.trim()).filter(Boolean);
+        const codigos = await cidadesParaCodigosIbge(cidadesArr, state);
+        if (codigos.length > 0) {
+          params.set("address.municipality.in", codigos.join(","));
+        }
+      }
 
       if (cnae) {
         const codes = cnae.split(",").map(c => parseInt(c.trim(), 10)).filter(n => !isNaN(n));

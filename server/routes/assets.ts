@@ -589,7 +589,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
       const asset = await storage.getAsset(assetId);
       if (!asset || asset.orgId !== orgId) return res.status(404).json({ message: "Ativo não encontrado" });
 
-      if (!["TERRA", "AGRO"].includes(asset.tipo)) {
+      if (!["TERRA", "AGRO"].includes(asset.type)) {
         return res.status(400).json({ message: "Contexto regional disponível apenas para ativos agrícolas" });
       }
 
