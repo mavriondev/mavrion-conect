@@ -559,6 +559,68 @@ export function registerPortalRoutes(app: Express, storage: IStorage, db: NodePg
 
       const anmLive = campos.anmLiveData?.features?.[0] || null;
 
+      let geometry: any = asset.geom_json ? JSON.parse(asset.geom_json) : null;
+
+      if (!geometry && asset.type === "MINA" && asset.anm_processo) {
+        try {
+          const processo = asset.anm_processo.replace(/[^0-9/]/g, "");
+          const ANM_URL = "https://geo.anm.gov.br/arcgis/rest/services/SIGMINE/dados_anm/MapServer/0/query";
+          const formBody = new URLSearchParams({
+            where: `PROCESSO='${processo}'`,
+            outFields: "PROCESSO",
+            returnGeometry: "true",
+            geometryType: "esriGeometryPolygon",
+            outSR: "4326",
+            f: "json",
+          });
+          const anmResp = await fetch(ANM_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: formBody.toString(),
+            signal: AbortSignal.timeout(15000),
+          });
+          if (anmResp.ok) {
+            const anmData = await anmResp.json() as any;
+            const features = anmData.features || [];
+            if (features.length > 0 && features[0].geometry?.rings) {
+              const rings = features[0].geometry.rings;
+              const coordinates = rings.map((ring: number[][]) => ring.map((c: number[]) => [c[0], c[1]]));
+              geometry = { type: "Polygon", coordinates };
+            }
+          }
+        } catch (anmErr: any) {
+          console.warn("Showcase ANM geometry fetch error:", anmErr?.message);
+        }
+      }
+
+      if (!geometry && asset.car_cod_imovel) {
+        try {
+          const carCode = asset.car_cod_imovel;
+          const carUrl = `https://www.car.gov.br/publico/imoveis/getGeoJSON?codigoImovel=${encodeURIComponent(carCode)}`;
+          const carResp = await fetch(carUrl, {
+            headers: { "User-Agent": "MavrionConnect/1.0", "Accept": "application/json" },
+            signal: AbortSignal.timeout(15000),
+            redirect: "follow",
+          });
+          if (carResp.ok) {
+            const ct = carResp.headers.get("content-type") || "";
+            if (ct.includes("json")) {
+              const carData = await carResp.json() as any;
+              if (carData?.type === "FeatureCollection" && carData.features?.length > 0) {
+                const feat = carData.features.find((f: any) => f.geometry?.type === "Polygon" || f.geometry?.type === "MultiPolygon") || carData.features[0];
+                if (feat?.geometry) {
+                  geometry = feat.geometry;
+                }
+              } else if (carData?.type === "Polygon" || carData?.type === "MultiPolygon") {
+                geometry = carData;
+              }
+            }
+          }
+        } catch (carErr: any) {
+          console.warn("Showcase CAR geometry fetch error:", carErr?.message);
+        }
+      }
+
       const showcase = {
         id: asset.id,
         type: asset.type,
@@ -573,7 +635,7 @@ export function registerPortalRoutes(app: Express, storage: IStorage, db: NodePg
         tags: asset.tags || [],
         fotos: asset.fotos || [],
 
-        geometry: asset.geom_json ? JSON.parse(asset.geom_json) : null,
+        geometry,
         latitude: campos.latitude || null,
         longitude: campos.longitude || null,
 
