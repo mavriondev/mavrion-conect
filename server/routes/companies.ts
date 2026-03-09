@@ -431,9 +431,18 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
 
       if (existing.length > 0) {
         company = existing[0];
+        const currentEnrichment = (company.enrichmentData as any) || {};
+        if (!currentEnrichment.buyerType) {
+          await db.update(companies)
+            .set({
+              enrichmentData: { ...currentEnrichment, buyerType: "estrategico", importedAsInvestor: true, investorImportedAt: new Date().toISOString() },
+            } as any)
+            .where(eq(companies.id, company.id));
+          company = { ...company, enrichmentData: { ...currentEnrichment, buyerType: "estrategico", importedAsInvestor: true, investorImportedAt: new Date().toISOString() } };
+        }
       } else {
         [company] = await db.insert(companies).values({
-          orgId: getOrgId(),
+          orgId: getOrgId(req),
           legalName,
           tradeName,
           cnpj: cleanCnpj,
@@ -444,6 +453,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
           emails,
           address: data.address || {},
           notes: `Situação: ${data.status?.text || "?"} | ${data.company?.nature?.text || ""}`,
+          enrichmentData: { buyerType: "estrategico", importedAsInvestor: true, investorImportedAt: new Date().toISOString() },
         } as any).returning();
       }
 
@@ -453,7 +463,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
       }
 
       const [lead] = await db.insert(leads).values({
-        orgId: getOrgId(),
+        orgId: getOrgId(req),
         companyId: company.id,
         status: "new",
         score: 50,
