@@ -37,6 +37,7 @@ import ErrorReportsPage from "@/pages/error-reports";
 import ArquiteturaPage from "@/pages/arquitetura";
 import IaGuiaPdf from "@/pages/ia-guia-pdf";
 import MADealsPage from "@/pages/ma-deals";
+import NegociosInvestidoresPage from "@/pages/negocios-investidores";
 import MapaConexoesPage from "@/pages/mapa-conexoes";
 import HonorariosPage from "@/pages/honorarios";
 import FiiFundosPage from "@/pages/fii-fundos";
@@ -154,6 +155,10 @@ function Router() {
 
       <Route path="/relatorios">
         {() => <PrivateRoute component={RelatoriosPage} />}
+      </Route>
+
+      <Route path="/ativos/tipo/NEGOCIO">
+        {() => <PrivateRoute component={NegociosInvestidoresPage} />}
       </Route>
 
       <Route path="/ativos/tipo/:tipo">
