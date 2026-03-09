@@ -121,7 +121,8 @@ export async function waterfallEnrich(params: {
 
   if (cnpj && process.env.DATASTONE_TOKEN) {
     const ds = await enrichViaDataStone(cnpj);
-    if (hasSufficientData(ds)) {
+    const hasStructuredData = hasSufficientData(ds) || !!ds.employeeCount || !!ds.estimatedRevenue || ds.shareCapital !== undefined;
+    if (hasStructuredData) {
       console.log(`[Waterfall] DataStone encontrou dados para ${cnpj}`);
       return {
         phones: ds.phones || [], emails: ds.emails || [], website: ds.website, source: "datastone",
