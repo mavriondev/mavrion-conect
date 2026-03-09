@@ -121,7 +121,7 @@ export interface IStorage {
   getErrorReport(id: number): Promise<ErrorReport | undefined>;
   createErrorReport(report: InsertErrorReport): Promise<ErrorReport>;
   updateErrorReport(id: number, orgId: number, data: Partial<InsertErrorReport>): Promise<ErrorReport>;
-  getErrorReportStats(orgId: number): Promise<{ total: number; open: number; resolved: number; autoCapture: number }>;
+  getErrorReportStats(orgId: number): Promise<{ total: number; open: number; resolved: number; autoCapture: number; apiError: number }>;
 
   getAssetLandingPages(orgId: number): Promise<(AssetLandingPage & { asset: Asset | null })[]>;
   getAssetLandingPage(id: number): Promise<(AssetLandingPage & { asset: Asset | null }) | undefined>;
@@ -674,6 +674,7 @@ export class DatabaseStorage implements IStorage {
       open: all.filter(r => r.status === "open" || r.status === "in_progress").length,
       resolved: all.filter(r => r.status === "resolved" || r.status === "closed").length,
       autoCapture: all.filter(r => r.type === "auto_capture").length,
+      apiError: all.filter(r => r.type === "api_error").length,
     };
   }
 

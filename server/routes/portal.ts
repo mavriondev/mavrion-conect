@@ -5,6 +5,7 @@ import { sendNotification, notifId } from "../notifications";
 import { insertPortalListingSchema, insertAssetLandingPageSchema, companies, leads, deals, pipelineStages, portalInquiries, assets } from "@shared/schema";
 import { eq, and, asc, sql } from "drizzle-orm";
 import { getOrgId } from "../lib/tenant";
+import { logApiError } from "../lib/api-error-logger";
 
 function computeIntent(data: { phone?: string; message?: string; assetId?: number | null }) {
   let score = 20;
@@ -590,6 +591,7 @@ export function registerPortalRoutes(app: Express, storage: IStorage, db: NodePg
           }
         } catch (anmErr: any) {
           console.warn("Showcase ANM geometry fetch error:", anmErr?.message);
+          logApiError({ service: "ANM", endpoint: "geo.anm.gov.br/arcgis", errorMessage: anmErr?.message || "Geometry fetch failed" });
         }
       }
 
@@ -618,6 +620,7 @@ export function registerPortalRoutes(app: Express, storage: IStorage, db: NodePg
           }
         } catch (carErr: any) {
           console.warn("Showcase CAR geometry fetch error:", carErr?.message);
+          logApiError({ service: "SICAR", endpoint: "car.gov.br/publico/imoveis/getGeoJSON", errorMessage: carErr?.message || "Geometry fetch failed" });
         }
       }
 

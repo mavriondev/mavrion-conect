@@ -5,6 +5,7 @@ import {
   companies,
   leads,
 } from "@shared/schema";
+import { logApiError } from "../lib/api-error-logger";
 import {
   eq,
   and,
@@ -260,6 +261,7 @@ export function registerCafExtratorRoutes(app: Express) {
             }
           } catch (e: any) {
             console.error(`[CAF] Erro ao salvar ${lead.nufpa}:`, e.message);
+            logApiError({ service: "CAF", endpoint: "caf-extrator/salvar", errorMessage: `Erro ao salvar ${lead.nufpa}: ${e.message}` });
           }
         }
       ).catch((err) => {
@@ -464,6 +466,7 @@ export function registerCafExtratorRoutes(app: Express) {
           sdrResult = await enviarParaSdr(parseInt(req.params.id), orgId);
         } catch (sdrErr: any) {
           console.error(`[CAF] Auto-envio ao SDR falhou para registro ${req.params.id}:`, sdrErr.message);
+          logApiError({ service: "CAF", endpoint: "caf-extrator/sdr-envio", errorMessage: `SDR falhou para registro ${req.params.id}: ${sdrErr.message}` });
         }
       }
 

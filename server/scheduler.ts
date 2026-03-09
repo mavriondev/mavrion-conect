@@ -2,6 +2,7 @@ import cron from "node-cron";
 import { db } from "./db";
 import { connectors } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { logApiError } from "./lib/api-error-logger";
 
 const activeJobs = new Map<number, cron.ScheduledTask>();
 
@@ -37,6 +38,7 @@ async function runConnectorJob(connector: { id: number; type: string; configJson
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
     console.error(`[Scheduler] Erro no connector ${connector.id}:`, errorMsg);
+    logApiError({ service: `Connector:${connector.name}`, endpoint: connector.type, errorMessage: errorMsg });
     await db.update(connectors)
       .set({ lastRunAt: new Date(), lastError: errorMsg } as any)
       .where(eq(connectors.id, connector.id));

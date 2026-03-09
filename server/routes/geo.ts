@@ -5,6 +5,7 @@ import { assets, sicarImoveisCache, norionCafRegistros } from "@shared/schema";
 import { sql, eq, ilike, and, gte, lte } from "drizzle-orm";
 import { getCached, setCached } from "../cache";
 import { getOrgId } from "../lib/tenant";
+import { logApiError } from "../lib/api-error-logger";
 import {
   enriquecerFazenda,
   consultarSoloSoilGrids,
@@ -796,8 +797,9 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
                   fetched_at = NOW()
               `);
             }
-          } catch (cacheErr) {
+          } catch (cacheErr: any) {
             console.error("[SICAR CAR Cache] Erro ao persistir:", cacheErr);
+            logApiError({ service: "SICAR", endpoint: "geoserver.car.gov.br (cache persist)", errorMessage: cacheErr?.message || "Cache persist failed" });
           }
         });
 
@@ -841,6 +843,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
       });
     } catch (err: any) {
       console.error("[CAR Busca] Erro:", err);
+      logApiError({ service: "SICAR", endpoint: "geoserver.car.gov.br/busca", errorMessage: err?.message || "CAR search failed" });
       res.status(500).json({ message: "Erro ao buscar imóvel por código CAR" });
     }
   });
@@ -949,6 +952,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
             console.log(`[SICAR Cache] Persistidos ${features.length} imóveis para ${ufLower.toUpperCase()}`);
           } catch (cacheErr) {
             console.error("[SICAR Cache] Erro ao persistir:", cacheErr);
+            logApiError({ service: "SICAR", endpoint: "geoserver.car.gov.br (fazendas cache)", errorMessage: (cacheErr as any)?.message || "Cache persist failed" });
           }
         });
 

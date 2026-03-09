@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import type { IStorage } from "../storage";
 import { api } from "@shared/routes";
-import { rawIngests, deals, assets, leads, matchSuggestions, pipelineStages, portalInquiries } from "@shared/schema";
+import { rawIngests, deals, assets, leads, matchSuggestions, pipelineStages, portalInquiries, errorReports } from "@shared/schema";
 import { z } from "zod";
 import { sql, count, sum, and, eq, gte, lt, desc } from "drizzle-orm";
 import multer from "multer";
@@ -254,6 +254,25 @@ export function registerSystemRoutes(app: Express, storage: IStorage) {
     const report = await storage.updateErrorReport(Number(req.params.id), getOrgId(), updates);
     if (!report) return res.status(404).json({ message: "Not found" });
     res.json(report);
+  });
+
+  app.post("/api/error-reports/bulk-close-api", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    const user = req.user as any;
+    const orgId = getOrgId();
+    const result = await db.update(errorReports)
+      .set({
+        status: "closed",
+        resolvedAt: new Date(),
+        resolvedBy: user.username || user.name || "system",
+      } as any)
+      .where(and(
+        eq(errorReports.orgId, orgId),
+        eq(errorReports.type as any, "api_error"),
+        eq(errorReports.status as any, "resolved"),
+      ))
+      .returning();
+    res.json({ closed: result.length });
   });
 
   app.get("/api/health/services", async (_req, res) => {

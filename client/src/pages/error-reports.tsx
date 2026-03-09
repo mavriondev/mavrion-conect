@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -7,7 +7,7 @@ import {
   Bug, AlertCircle, CheckCircle2, Clock, AlertTriangle,
   Info, Eye, Filter, BarChart3, RefreshCw,
   Monitor, User, Globe, Zap, ChevronDown,
-  XCircle, ArrowUpDown, Search, Brain, Loader2,
+  XCircle, ArrowUpDown, Search, Brain, Loader2, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -73,7 +73,7 @@ export default function ErrorReportsPage() {
   });
 
   const { data: stats } = useQuery<{
-    total: number; open: number; resolved: number; autoCapture: number;
+    total: number; open: number; resolved: number; autoCapture: number; apiError: number;
   }>({
     queryKey: ["/api/error-reports/stats"],
     refetchInterval: 15000,
@@ -90,9 +90,22 @@ export default function ErrorReportsPage() {
     },
   });
 
+  const bulkCloseApi = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/error-reports/bulk-close-api");
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/error-reports"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/error-reports/stats"] });
+      toast({ title: `${data.closed} erro(s) de API fechado(s)` });
+    },
+  });
+
   const filtered = reports.filter((r) => {
     if (tab === "user" && r.type !== "user_report") return false;
     if (tab === "auto" && r.type !== "auto_capture") return false;
+    if (tab === "apis" && r.type !== "api_error") return false;
     if (filterStatus !== "all" && r.status !== filterStatus) return false;
     if (filterPriority !== "all" && r.priority !== filterPriority) return false;
     if (filterType !== "all" && r.type !== filterType) return false;
@@ -108,6 +121,20 @@ export default function ErrorReportsPage() {
     }
     return true;
   });
+
+  const apiErrorsByService = useMemo(() => {
+    const apiErrors = reports.filter(r => r.type === "api_error");
+    const grouped: Record<string, { total: number; open: number; latest: string }> = {};
+    for (const r of apiErrors) {
+      const svc = r.module || "Desconhecido";
+      if (!grouped[svc]) grouped[svc] = { total: 0, open: 0, latest: "" };
+      grouped[svc].total++;
+      if (r.status === "open" || r.status === "in_progress") grouped[svc].open++;
+      const dt = r.createdAt ? new Date(r.createdAt).toISOString() : "";
+      if (dt > grouped[svc].latest) grouped[svc].latest = dt;
+    }
+    return Object.entries(grouped).sort((a, b) => b[1].open - a[1].open || b[1].total - a[1].total);
+  }, [reports]);
 
   const formatDate = (d: string | Date | null) => {
     if (!d) return "—";
@@ -168,7 +195,7 @@ export default function ErrorReportsPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <Card data-testid="card-stat-total">
           <CardContent className="p-4 flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center">
@@ -210,6 +237,17 @@ export default function ErrorReportsPage() {
             <div>
               <p className="text-2xl font-bold">{stats?.autoCapture || 0}</p>
               <p className="text-xs text-muted-foreground">Auto-captura</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card data-testid="card-stat-api">
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-orange-100 dark:bg-orange-900/40 flex items-center justify-center">
+              <Globe className="w-5 h-5 text-orange-600 dark:text-orange-400" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{stats?.apiError || 0}</p>
+              <p className="text-xs text-muted-foreground">Erros de APIs</p>
             </div>
           </CardContent>
         </Card>
@@ -263,6 +301,13 @@ export default function ErrorReportsPage() {
               <Monitor className="w-3.5 h-3.5" />
               Automáticos
             </TabsTrigger>
+            <TabsTrigger value="apis" className="gap-1.5" data-testid="tab-apis">
+              <Globe className="w-3.5 h-3.5" />
+              APIs
+              {(stats?.apiError || 0) > 0 && (
+                <Badge variant="secondary" className="ml-1 text-[10px] px-1.5 py-0">{stats?.apiError}</Badge>
+              )}
+            </TabsTrigger>
           </TabsList>
 
           <div className="flex items-center gap-2 flex-wrap">
@@ -303,7 +348,47 @@ export default function ErrorReportsPage() {
           </div>
         </div>
 
-        <TabsContent value={tab} className="mt-4">
+        <TabsContent value={tab} className="mt-4 space-y-4">
+          {tab === "apis" && apiErrorsByService.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold flex items-center gap-2">
+                  <Globe className="w-4 h-4 text-orange-500" />
+                  Erros por Serviço
+                </h3>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-xs"
+                  onClick={() => bulkCloseApi.mutate()}
+                  disabled={bulkCloseApi.isPending}
+                  data-testid="button-bulk-close-api"
+                >
+                  {bulkCloseApi.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                  Fechar Resolvidos
+                </Button>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                {apiErrorsByService.map(([svc, info]) => (
+                  <Card key={svc} className="border-orange-200/50 dark:border-orange-800/30" data-testid={`card-api-service-${svc}`}>
+                    <CardContent className="p-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-semibold truncate">{svc}</span>
+                        {info.open > 0 && (
+                          <Badge className="text-[10px] bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">{info.open} aberto(s)</Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                        <span>{info.total} total</span>
+                        <span>{info.latest ? formatDate(info.latest) : "—"}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
+
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
               <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
@@ -358,6 +443,8 @@ export default function ErrorReportsPage() {
                             <Badge variant="outline" className="text-[10px] gap-1">
                               {r.type === "auto_capture" ? (
                                 <><Monitor className="w-2.5 h-2.5" /> Auto</>
+                              ) : r.type === "api_error" ? (
+                                <><Globe className="w-2.5 h-2.5" /> API</>
                               ) : (
                                 <><User className="w-2.5 h-2.5" /> Manual</>
                               )}
@@ -436,6 +523,8 @@ export default function ErrorReportsPage() {
                 <DialogTitle className="flex items-center gap-2 text-lg">
                   {selectedReport.type === "auto_capture" ? (
                     <Monitor className="w-5 h-5 text-purple-500" />
+                  ) : selectedReport.type === "api_error" ? (
+                    <Globe className="w-5 h-5 text-orange-500" />
                   ) : (
                     <Bug className="w-5 h-5 text-red-500" />
                   )}
@@ -454,7 +543,7 @@ export default function ErrorReportsPage() {
                       {PRIORITY_CONFIG[selectedReport.priority || "medium"]?.label || selectedReport.priority}
                     </Badge>
                     <Badge variant="outline" className="text-xs">
-                      {selectedReport.type === "auto_capture" ? "Auto-captura" : "Reporte manual"}
+                      {selectedReport.type === "auto_capture" ? "Auto-captura" : selectedReport.type === "api_error" ? "Erro de API" : "Reporte manual"}
                     </Badge>
                   </div>
                 </div>
