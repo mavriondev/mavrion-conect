@@ -34,6 +34,10 @@ export async function runMatchingForAsset(
 ): Promise<number> {
   const asset = await storage.getAsset(assetId);
   if (!asset) return 0;
+  if (asset.orgId !== orgId) {
+    console.warn(`[Auto-match] Org mismatch: asset ${assetId} belongs to org ${asset.orgId}, called with org ${orgId}`);
+    return 0;
+  }
 
   if (["fechado", "arquivado", "em_negociacao"].includes(asset.statusAtivo || "")) return 0;
   if (asset.exclusivoAte && new Date(asset.exclusivoAte as string) > new Date()) return 0;

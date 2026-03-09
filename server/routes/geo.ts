@@ -642,8 +642,9 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         console.error("ANM geo lookup (non-fatal):", geoErr.message);
       }
 
+      const orgId = getOrgId(req);
       const asset = await storage.createAsset({
-        orgId: getOrgId(),
+        orgId,
         type: "MINA",
         title: `${substancia || "Processo"} - ${processo}`,
         description: `Processo minerário ANM: ${processo}\nTitular: ${nome || "N/A"}\nFase: ${fase || "N/A"}\nSubstância: ${substancia || "N/A"}\nUso: ${uso || "N/A"}\nÚltimo Evento: ${ultEvento || "N/A"}`,
@@ -672,11 +673,11 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
       });
 
       if (importedGeometry && latitude && longitude) {
-        runGeoAnalysisInBackground(asset.id, importedGeometry, bodyArea ? Number(bodyArea) : null, getOrgId());
+        runGeoAnalysisInBackground(asset.id, importedGeometry, bodyArea ? Number(bodyArea) : null, orgId);
       }
 
       setImmediate(() => {
-        runMatchingForAsset(asset.id, getOrgId(), storage, db).catch(err =>
+        runMatchingForAsset(asset.id, orgId, storage, db).catch(err =>
           console.error(`[Auto-match] Falha para ativo ANM ${asset.id}:`, err.message)
         );
       });
@@ -1369,8 +1370,9 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
 
       const codMunicipio = props.cod_municipio || props.COD_MUNICIPIO || props.cod_ibge || "";
 
+      const orgId = getOrgId(req);
       const asset = await storage.createAsset({
-        orgId: getOrgId(),
+        orgId,
         type: "TERRA",
         title: `Fazenda CAR — ${municipio}/${uf}`.slice(0, 200),
         description: `Imóvel rural do CAR${titular ? ` (${titular})` : ""}. Área: ${area ? `${Number(area).toLocaleString("pt-BR")} ha` : "N/D"}. Status: ${status || "N/D"}`,
@@ -1579,7 +1581,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
       }
 
       setImmediate(() => {
-        runMatchingForAsset(asset.id, getOrgId(), storage, db).catch(err =>
+        runMatchingForAsset(asset.id, orgId, storage, db).catch(err =>
           console.error(`[Auto-match] Falha para ativo fazenda ${asset.id}:`, err.message)
         );
       });
