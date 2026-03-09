@@ -201,7 +201,10 @@ function Router() {
       </Route>
 
       <Route path="/ma">
-        {() => <PrivateRoute component={MADealsPage} />}
+        {() => {
+          window.location.replace("/prospeccao");
+          return null;
+        }}
       </Route>
 
       <Route path="/mapa-conexoes">

@@ -208,7 +208,15 @@ function formatEquity(v: string) {
   return `R$ ${n.toLocaleString("pt-BR")}`;
 }
 
+export function MADealsContent() {
+  return <MADealsInner embedded />;
+}
+
 export default function MADealsPage() {
+  return <MADealsInner embedded={false} />;
+}
+
+function MADealsInner({ embedded = false }: { embedded?: boolean }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
@@ -425,23 +433,32 @@ export default function MADealsPage() {
   };
 
   return (
-    <div className="p-4 md:p-6 max-w-[1600px] mx-auto space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2" data-testid="text-page-title">
-            <Briefcase className="w-6 h-6 text-primary" />
-            M&A — Fusões & Aquisições
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Encontre empresas-alvo por setor, porte e localização usando dados oficiais da Receita Federal (CNPJA)
-          </p>
+    <div className={cn(embedded ? "space-y-6" : "p-4 md:p-6 max-w-[1600px] mx-auto space-y-6")}>
+      {!embedded && (
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2" data-testid="text-page-title">
+              <Briefcase className="w-6 h-6 text-primary" />
+              M&A — Fusões & Aquisições
+            </h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Encontre empresas-alvo por setor, porte e localização usando dados oficiais da Receita Federal (CNPJA)
+            </p>
+          </div>
+          {results.length > 0 && (
+            <Button variant="outline" size="sm" onClick={clearSearch} data-testid="button-limpar-busca">
+              <X className="w-4 h-4 mr-1.5" /> Limpar Busca
+            </Button>
+          )}
         </div>
-        {results.length > 0 && (
+      )}
+      {embedded && results.length > 0 && (
+        <div className="flex justify-end">
           <Button variant="outline" size="sm" onClick={clearSearch} data-testid="button-limpar-busca">
             <X className="w-4 h-4 mr-1.5" /> Limpar Busca
           </Button>
-        )}
-      </div>
+        </div>
+      )}
 
       {!activeSearch && (
         <>

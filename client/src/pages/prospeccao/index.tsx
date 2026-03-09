@@ -19,9 +19,12 @@ import {
   ExternalLink,
   Brain,
   Sparkles,
+  Handshake,
+  Building2,
 } from "lucide-react";
 import SearchFilters, { type Filters, INITIAL_FILTERS, getActiveFilterCount } from "./search-filters";
 import ResultsTable from "./results-table";
+import { MADealsContent } from "@/pages/ma-deals";
 
 
 interface CnpjDetail {
@@ -245,7 +248,7 @@ export default function ProspeccaoPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Prospecção</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Consulte e descubra empresas via base da Receita Federal. Leads já importados não aparecem nos resultados.
+            Consulte e descubra empresas via base da Receita Federal ou prospecte negócios M&A por setor.
           </p>
         </div>
         {creditos?.configured && (
@@ -264,6 +267,19 @@ export default function ProspeccaoPage() {
         )}
       </div>
 
+      <Tabs defaultValue="cnpj">
+        <TabsList className="mb-4">
+          <TabsTrigger value="cnpj" data-testid="tab-prospeccao-cnpj">
+            <Building2 className="w-4 h-4 mr-2" />
+            CNPJ
+          </TabsTrigger>
+          <TabsTrigger value="negocios" data-testid="tab-prospeccao-negocios">
+            <Handshake className="w-4 h-4 mr-2" />
+            Negócios M&A
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="cnpj">
       <Tabs defaultValue="simples">
         <TabsList>
           <TabsTrigger value="simples" data-testid="tab-busca-simples">
@@ -548,6 +564,12 @@ export default function ProspeccaoPage() {
           )}
         </TabsContent>
 
+      </Tabs>
+      </TabsContent>
+
+        <TabsContent value="negocios">
+          <MADealsContent />
+        </TabsContent>
       </Tabs>
     </div>
   );

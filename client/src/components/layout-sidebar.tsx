@@ -258,9 +258,8 @@ export default function Sidebar() {
         )}
 
         {hasPermission(user, "prospeccao") && (
-          <ExpandableNav href="/prospeccao" icon={Telescope} label={t("nav.prospeccao")} activePaths={["/prospeccao", "/ma", "/geo-rural", "/anm", "/fii-fundos"]}>
+          <ExpandableNav href="/prospeccao" icon={Telescope} label={t("nav.prospeccao")} activePaths={["/prospeccao", "/geo-rural", "/anm", "/fii-fundos"]}>
             <SubLink href="/prospeccao" icon={Telescope} label={t("nav.cnpj")} exact />
-            <SubLink href="/ma" icon={Handshake} label="Negócios" />
             <SubLink href="/geo-rural" icon={Map} label="Fazendas" />
             <SubLink href="/anm" icon={Pickaxe} label="Jazidas" />
             <SubLink href="/fii-fundos" icon={Landmark} label="FII / Fundos" />
