@@ -597,12 +597,12 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
           if (!investorName && rj.compradorNome) {
             investorName = rj.compradorNome;
           }
-          if (!investorName && rj.compradorId) {
+          if (!companyId && rj.compradorId) {
             try {
               const [co] = await db.select().from(companies)
                 .where(and(eq(companies.id, rj.compradorId), eq(companies.orgId, orgId))).limit(1);
               if (co) {
-                investorName = co.tradeName || co.legalName;
+                if (!investorName) investorName = co.tradeName || co.legalName;
                 investorCnpj = co.cnpj || null;
                 companyId = co.id;
               }
