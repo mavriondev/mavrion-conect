@@ -238,10 +238,6 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
       }
 
       const allCompanies = await storage.getCompanies?.(orgId) ?? [];
-      const compradores = allCompanies.filter((c: any) => {
-        const prefs = (c.enrichmentData as any) || {};
-        return prefs.buyerType === "estrategico" || ((prefs.cnaeInteresse || []).length > 0);
-      });
 
       const CNAE_POR_TIPO: Record<string, string[]> = {
         MINA:    ["0710", "0890", "0810", "0600"],
@@ -257,53 +253,100 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
         ],
         FII_CRI: ["6422", "6423", "6431", "6432", "6450", "6630"],
         DESENVOLVIMENTO: ["4110", "4120", "4211", "6810", "6821"],
-        NEGOCIO: [],
+        NEGOCIO: ["6420", "6430", "6470", "6499", "7490"],
       };
+
+      const existingSuggestionsAll = await db.select().from(matchSuggestions).where(eq(matchSuggestions.orgId, orgId));
+      const existingCompPairs = new Set(
+        existingSuggestionsAll
+          .filter(e => (e.reasonsJson as any)?.compradorId)
+          .map(e => `${e.assetId}-${(e.reasonsJson as any).compradorId}`)
+      );
 
       for (const asset of allAssets) {
         if (["fechado", "arquivado", "em_negociacao"].includes(asset.statusAtivo || "")) continue;
         if (asset.exclusivoAte && new Date(asset.exclusivoAte) > new Date()) continue;
 
-        for (const comprador of compradores) {
+        const cnaesEsperados = CNAE_POR_TIPO[asset.type] || [];
+
+        for (const comprador of allCompanies) {
+          if (existingCompPairs.has(`${asset.id}-${comprador.id}`)) continue;
+
           const enrichment = (comprador.enrichmentData as any) || {};
           const cnaeInteresse: string[] = enrichment.cnaeInteresse || [];
           const regioesInteresse: string[] = enrichment.regioesInteresse || [];
-          const cnaesEsperados = CNAE_POR_TIPO[asset.type] || [];
+          const isMarkedInvestor = enrichment.buyerType === "estrategico" || enrichment.buyerType === "financeiro";
+
+          const companyCnaes: string[] = [];
+          if (comprador.cnaePrincipal) companyCnaes.push(String(comprador.cnaePrincipal));
+          const secundarios = (comprador.cnaeSecundarios as string[]) || [];
+          for (const s of secundarios) companyCnaes.push(String(s));
+
+          const cnaeEmpresaMatch = cnaesEsperados.length > 0 && companyCnaes.some(cnae => {
+            const cnaeStr = cnae.replace(/[^0-9]/g, "");
+            return cnaesEsperados.some(esp => cnaeStr.startsWith(esp));
+          });
+
+          const cnaeInteresseMatch = cnaeInteresse.length > 0 && cnaesEsperados.length > 0 &&
+            cnaeInteresse.some(cnae => cnaesEsperados.some(esp => String(cnae).startsWith(esp)));
+
+          if (!cnaeEmpresaMatch && !cnaeInteresseMatch && !isMarkedInvestor) continue;
 
           let score = 0;
           const reasons: string[] = [];
           const penalties: string[] = [];
 
-          const cnaeMatch = cnaeInteresse.length === 0
-            ? asset.type === "NEGOCIO"
-            : cnaeInteresse.some(cnae => cnaesEsperados.some(esp => cnae.startsWith(esp)));
+          if (cnaeEmpresaMatch) {
+            score += 30;
+            reasons.push(`CNAE da empresa compatível com ${asset.type}`);
+          } else if (asset.type === "NEGOCIO" && isMarkedInvestor) {
+            score += 20;
+            reasons.push("Negócio — comprador genérico");
+          } else if (!cnaeInteresseMatch) {
+            penalties.push(`CNAE não compatível com ${asset.type}`);
+          }
 
-          if (cnaeMatch) { score += 40; reasons.push(`CNAE compatível com tipo ${asset.type}`); }
-          else if (asset.type === "NEGOCIO") { score += 20; reasons.push("Negócio — comprador estratégico genérico"); }
-          else { penalties.push(`CNAE não compatível com ${asset.type}`); }
+          if (cnaeInteresseMatch) {
+            score += 10;
+            reasons.push("Interesse declarado compatível");
+          }
 
-          if (regioesInteresse.length === 0) { score += 15; reasons.push("Comprador opera em qualquer região"); }
-          else if (matchesRegion(asset.location || asset.estado, regioesInteresse)) { score += 25; reasons.push("Região compatível"); }
-          else { penalties.push("Região fora do interesse"); }
+          if (isMarkedInvestor) {
+            score += 15;
+            reasons.push(`Investidor marcado (${enrichment.buyerType})`);
+          }
+
+          if (regioesInteresse.length === 0) {
+            score += 15;
+            reasons.push("Opera em qualquer região");
+          } else if (matchesRegion(asset.location || asset.estado, regioesInteresse)) {
+            score += 25;
+            reasons.push("Região compatível");
+          } else {
+            penalties.push("Região fora do interesse");
+          }
 
           if (asset.docsStatus === "completo") { score += 10; reasons.push("Documentação completa"); }
 
           if (score >= 40 && penalties.length <= 1) {
-            const existingComp = await db.select().from(matchSuggestions).where(
-              and(eq(matchSuggestions.assetId, asset.id), eq(matchSuggestions.orgId, orgId))
-            );
-            const jaExiste = existingComp.some(e => (e.reasonsJson as any)?.compradorId === comprador.id);
-            if (!jaExiste) {
-              await db.insert(matchSuggestions).values({
-                orgId,
-                assetId: asset.id,
-                investorProfileId: null,
-                score: Math.min(score, 100),
-                reasonsJson: { reasons, penalties, tipo: "estrategico", compradorId: comprador.id, compradorNome: comprador.tradeName || comprador.legalName, version: "v2" },
-                status: "new",
-              });
-              matchesFound++;
-            }
+            await db.insert(matchSuggestions).values({
+              orgId,
+              assetId: asset.id,
+              investorProfileId: null,
+              score: Math.min(score, 100),
+              reasonsJson: {
+                reasons, penalties,
+                tipo: isMarkedInvestor ? "estrategico" : "cnae_auto",
+                compradorId: comprador.id,
+                compradorNome: comprador.tradeName || comprador.legalName,
+                cnaeEmpresa: cnaeEmpresaMatch,
+                investidorMarcado: isMarkedInvestor,
+                version: "v3",
+              },
+              status: "new",
+            });
+            existingCompPairs.add(`${asset.id}-${comprador.id}`);
+            matchesFound++;
           }
         }
       }

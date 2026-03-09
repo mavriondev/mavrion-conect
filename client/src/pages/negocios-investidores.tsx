@@ -10,7 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Search, Briefcase, Building2, DollarSign, MapPin, Eye,
-  Users, TrendingUp, Target, Loader2, ArrowRight,
+  Users, TrendingUp, Target, Pickaxe, TreePine, Home, Wheat, Factory, Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +22,33 @@ function formatPrice(v: any) {
   if (n >= 1e6) return `R$ ${(n / 1e6).toFixed(1)}M`;
   if (n >= 1e3) return `R$ ${(n / 1e3).toFixed(0)}K`;
   return `R$ ${n.toLocaleString("pt-BR")}`;
+}
+
+const CNAE_POR_TIPO: Record<string, { prefixes: string[]; label: string; icon: any }> = {
+  MINA:    { prefixes: ["0710", "0890", "0810", "0600"], label: "Mineração", icon: Pickaxe },
+  TERRA:   { prefixes: ["0111", "0112", "0113", "0114", "0115", "0116", "0119", "0121", "0131", "0141", "0151", "0161", "0163", "0210", "6810", "4623", "6470"], label: "Terras", icon: TreePine },
+  AGRO:    { prefixes: ["0111", "0112", "0113", "0114", "0115", "0116", "0119", "0121", "0131", "0132", "0133", "0141", "0142", "0151", "0152", "0153", "0154", "0155", "0161", "0162", "0163", "0210", "1011", "1012", "1013", "1051", "1052", "1053", "4622", "4623", "4683", "6470", "6612"], label: "Agro", icon: Wheat },
+  FII_CRI: { prefixes: ["6422", "6423", "6431", "6432", "6450", "6630"], label: "FII/Fundos", icon: Home },
+  DESENVOLVIMENTO: { prefixes: ["4110", "4120", "4211", "6810", "6821"], label: "Desenv.", icon: Factory },
+  NEGOCIO: { prefixes: ["6420", "6430", "6470", "6499", "7490"], label: "M&A", icon: Briefcase },
+};
+
+function getCompanyMatchedTypes(company: any): string[] {
+  const cnaes: string[] = [];
+  if (company.cnaePrincipal) cnaes.push(String(company.cnaePrincipal));
+  const sec = (company.cnaeSecundarios as string[]) || [];
+  for (const s of sec) cnaes.push(String(s));
+  if (cnaes.length === 0) return [];
+
+  const matched: string[] = [];
+  for (const [tipo, cfg] of Object.entries(CNAE_POR_TIPO)) {
+    const hasMatch = cnaes.some(cnae => {
+      const clean = cnae.replace(/[^0-9]/g, "");
+      return cfg.prefixes.some(p => clean.startsWith(p));
+    });
+    if (hasMatch) matched.push(tipo);
+  }
+  return matched;
 }
 
 export default function NegociosInvestidoresPage() {
@@ -54,10 +81,15 @@ export default function NegociosInvestidoresPage() {
   }, [assets, searchNegocios]);
 
   const investidores = useMemo(() => {
-    let list = (companiesRaw as any[]).filter((c: any) => {
+    let list = (companiesRaw as any[]).map((c: any) => {
       const ed = c.enrichmentData || {};
-      return ed.buyerType === "estrategico" || ed.buyerType === "financeiro";
-    });
+      const isMarked = ed.buyerType === "estrategico" || ed.buyerType === "financeiro";
+      const matchedTypes = getCompanyMatchedTypes(c);
+      return { ...c, isMarked, matchedTypes, sortPriority: (isMarked ? 1000 : 0) + matchedTypes.length };
+    }).filter((c: any) => c.isMarked || c.matchedTypes.length > 0);
+
+    list.sort((a: any, b: any) => b.sortPriority - a.sortPriority);
+
     if (searchInvestidores) {
       const s = searchInvestidores.toLowerCase();
       list = list.filter((c: any) =>
@@ -65,7 +97,8 @@ export default function NegociosInvestidoresPage() {
         c.legalName?.toLowerCase().includes(s) ||
         c.taxId?.includes(s) ||
         c.address?.city?.toLowerCase().includes(s) ||
-        c.address?.state?.toLowerCase().includes(s)
+        c.address?.state?.toLowerCase().includes(s) ||
+        c.cnaePrincipal?.toLowerCase().includes(s)
       );
     }
     return list;
@@ -79,7 +112,7 @@ export default function NegociosInvestidoresPage() {
           Negócios & Investidores
         </h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Gerencie ativos M&A à venda e investidores interessados em aquisições.
+          Gerencie ativos M&A à venda e empresas com potencial de compra.
         </p>
       </div>
 
@@ -223,9 +256,9 @@ export default function NegociosInvestidoresPage() {
             <Card>
               <CardContent className="py-12 text-center">
                 <Users className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
-                <p className="text-muted-foreground">Nenhum investidor cadastrado ainda.</p>
+                <p className="text-muted-foreground">Nenhum investidor ou empresa compatível encontrado.</p>
                 <p className="text-xs text-muted-foreground mt-2 max-w-md mx-auto">
-                  Para marcar uma empresa como investidor, busque o CNPJ em Prospecção, abra o detalhe da empresa e defina o "Perfil de Comprador / Investidor" como Estratégico ou Financeiro.
+                  Empresas importadas via Prospecção com CNAE compatível com seus ativos aparecem automaticamente aqui. Marcar como investidor na página da empresa dá prioridade no matching.
                 </p>
               </CardContent>
             </Card>
@@ -233,13 +266,11 @@ export default function NegociosInvestidoresPage() {
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {investidores.map((c: any) => {
                 const ed = c.enrichmentData || {};
-                const isEstrategico = ed.buyerType === "estrategico";
                 const capacidade = ed.capacidadeAquisicao ? formatPrice(ed.capacidadeAquisicao) : null;
                 const regioes = (ed.regioesInteresse || []).join(", ");
-                const cnaes = (ed.cnaeInteresse || []);
 
                 return (
-                  <Card key={c.id} className="hover:shadow-md transition-shadow" data-testid={`card-investidor-${c.id}`}>
+                  <Card key={c.id} className={cn("hover:shadow-md transition-shadow", c.isMarked && "border-primary/30")} data-testid={`card-investidor-${c.id}`}>
                     <CardContent className="p-4 space-y-3">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
@@ -250,19 +281,39 @@ export default function NegociosInvestidoresPage() {
                             <p className="text-xs text-muted-foreground truncate">{c.legalName}</p>
                           )}
                         </div>
-                        <Badge className={cn(
-                          "shrink-0 text-xs",
-                          isEstrategico
-                            ? "bg-blue-100 text-blue-800"
-                            : "bg-green-100 text-green-800"
-                        )}>
-                          {isEstrategico ? "Estratégico" : "Financeiro"}
-                        </Badge>
+                        <div className="flex flex-col gap-1 items-end shrink-0">
+                          {c.isMarked && (
+                            <Badge className="text-xs bg-blue-100 text-blue-800">
+                              {ed.buyerType === "estrategico" ? "Estratégico" : "Financeiro"}
+                            </Badge>
+                          )}
+                          {c.matchedTypes.length > 0 && !c.isMarked && (
+                            <Badge className="text-xs bg-green-100 text-green-800">CNAE Compatível</Badge>
+                          )}
+                        </div>
                       </div>
+
+                      {c.matchedTypes.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {c.matchedTypes.map((tipo: string) => {
+                            const cfg = CNAE_POR_TIPO[tipo];
+                            if (!cfg) return null;
+                            const Icon = cfg.icon;
+                            return (
+                              <Badge key={tipo} variant="outline" className="text-xs py-0 gap-1">
+                                <Icon className="w-3 h-3" /> {cfg.label}
+                              </Badge>
+                            );
+                          })}
+                        </div>
+                      )}
 
                       <div className="space-y-1.5 text-xs">
                         {c.taxId && (
                           <p className="text-muted-foreground font-mono">{c.taxId.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5")}</p>
+                        )}
+                        {c.cnaePrincipal && (
+                          <p className="text-muted-foreground truncate">CNAE: {c.cnaePrincipal}</p>
                         )}
                         {(c.address?.city || c.address?.state) && (
                           <div className="flex items-center gap-1 text-muted-foreground">
@@ -282,21 +333,13 @@ export default function NegociosInvestidoresPage() {
                             <span className="truncate">Regiões: {regioes}</span>
                           </div>
                         )}
-                        {cnaes.length > 0 && (
-                          <div className="flex items-center gap-1 text-muted-foreground">
-                            <Target className="w-3 h-3" />
-                            <span className="truncate">{cnaes.length} CNAE(s) de interesse</span>
-                          </div>
-                        )}
                       </div>
 
-                      <div className="flex gap-2">
-                        <Link href={`/empresas/${c.id}`} className="flex-1">
-                          <Button variant="outline" size="sm" className="w-full" data-testid={`button-ver-investidor-${c.id}`}>
-                            <Eye className="w-3.5 h-3.5 mr-1.5" /> Ver Empresa
-                          </Button>
-                        </Link>
-                      </div>
+                      <Link href={`/empresas/${c.id}`} className="block">
+                        <Button variant="outline" size="sm" className="w-full" data-testid={`button-ver-investidor-${c.id}`}>
+                          <Eye className="w-3.5 h-3.5 mr-1.5" /> Ver Empresa
+                        </Button>
+                      </Link>
                     </CardContent>
                   </Card>
                 );
