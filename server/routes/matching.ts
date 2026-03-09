@@ -328,7 +328,8 @@ export function registerMatchingRoutes(app: Express, storage: IStorage, db: Node
 
           if (asset.docsStatus === "completo") { score += 10; reasons.push("Documentação completa"); }
 
-          if (score >= 40 && penalties.length <= 1) {
+          const minThreshold = cnaeEmpresaMatch ? 30 : 40;
+          if (score >= minThreshold && penalties.length <= 1) {
             await db.insert(matchSuggestions).values({
               orgId,
               assetId: asset.id,
