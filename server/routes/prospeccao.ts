@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { companies, assets, companyBuyerProfiles } from "@shared/schema";
 import { storage } from "../storage";
 import { getOrgId } from "../lib/tenant";
+import { runMatchingForAsset } from "../lib/auto-match";
 
 const cnpjaHeaders = () => ({
   "Authorization": process.env.CNPJA_API_KEY || "",
@@ -665,6 +666,12 @@ export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) 
           origemAtivo: "prospeccao_cnpj",
           cnaePrincipal: cnpjaData?.mainActivity?.text || null,
         },
+      });
+
+      setImmediate(() => {
+        runMatchingForAsset(asset.id, orgId, storage, db).catch(err =>
+          console.error(`[Auto-match] Falha para ativo ${asset.id}:`, err.message)
+        );
       });
 
       res.json({ asset, company, message: "Ativo NEGOCIO criado com sucesso" });

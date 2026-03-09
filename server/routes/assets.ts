@@ -7,6 +7,7 @@ import { matchSuggestions } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import { sendNotification, notifId } from "../notifications";
 import { matchesRegion } from "./matching";
+import { runMatchingForAsset } from "../lib/auto-match";
 import { enriquecerFazenda, consultarNDVIGrid } from "../enrichment/agro";
 import { sql } from "drizzle-orm";
 import { consultarEmbargoIbama, consultarEmbargoIbamaCoordenadas } from "../lib/ibama";
@@ -33,51 +34,11 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
       }
       const novoAtivo = await storage.createAsset(input);
 
-      const camposEsp = (novoAtivo.camposEspecificos as any) || {};
-      if (camposEsp.origemAtivo === "oferta_recebida" || camposEsp.origemAtivo === "indicacao") {
-        setImmediate(async () => {
-          try {
-            const allInvestors = await storage.getInvestors();
-            let autoMatches = 0;
-            for (const investor of allInvestors) {
-              const tipos = (investor.assetTypes as string[]) || [];
-              const regioes = (investor.regionsOfInterest as string[]) || [];
-              const tipoOk = tipos.length === 0 || tipos.includes(novoAtivo.type);
-              const regiaoOk = matchesRegion(novoAtivo.location || novoAtivo.estado, regioes);
-              if (tipoOk && regiaoOk) {
-                const [existing] = await db.select().from(matchSuggestions).where(
-                  and(
-                    eq(matchSuggestions.assetId, novoAtivo.id),
-                    eq(matchSuggestions.investorProfileId, investor.id)
-                  )
-                );
-                if (!existing) {
-                  await db.insert(matchSuggestions).values({
-                    orgId: novoAtivo.orgId,
-                    assetId: novoAtivo.id,
-                    investorProfileId: investor.id,
-                    score: 60,
-                    reasonsJson: { reasons: ["Ativo recebido por oferta — match prioritário"], penalties: [], origem: "oferta_automatica" },
-                    status: "new",
-                  });
-                  autoMatches++;
-                }
-              }
-            }
-            if (autoMatches > 0) {
-              sendNotification({
-                id: notifId(),
-                type: "new_match",
-                orgId: novoAtivo.orgId,
-                title: "Novo ativo por oferta",
-                message: `"${novoAtivo.title}" foi cadastrado e ${autoMatches} match(es) gerados automaticamente`,
-                link: `/ativos/${novoAtivo.id}`,
-                createdAt: new Date().toISOString(),
-              });
-            }
-          } catch (err) { console.error("Auto-matching oferta error:", err); }
-        });
-      }
+      setImmediate(() => {
+        runMatchingForAsset(novoAtivo.id, novoAtivo.orgId, storage, db).catch(err =>
+          console.error(`[Auto-match] Falha para ativo ${novoAtivo.id}:`, err.message)
+        );
+      });
 
       res.status(201).json(novoAtivo);
     } catch (err) {

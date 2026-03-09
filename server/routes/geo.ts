@@ -12,6 +12,7 @@ import {
   consultarParcelasSIGEF,
   type EnriquecimentoAgroCompleto
 } from '../enrichment/agro';
+import { runMatchingForAsset } from "../lib/auto-match";
 
 const ANM_MAPSERVER_URL = "https://geo.anm.gov.br/arcgis/rest/services/SIGMINE/dados_anm/MapServer/0/query";
 const SICAR_WFS = "https://geoserver.car.gov.br/geoserver/sicar/wfs";
@@ -673,6 +674,12 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
       if (importedGeometry && latitude && longitude) {
         runGeoAnalysisInBackground(asset.id, importedGeometry, bodyArea ? Number(bodyArea) : null, getOrgId());
       }
+
+      setImmediate(() => {
+        runMatchingForAsset(asset.id, getOrgId(), storage, db).catch(err =>
+          console.error(`[Auto-match] Falha para ativo ANM ${asset.id}:`, err.message)
+        );
+      });
 
       res.status(201).json(asset);
     } catch (err: any) {
@@ -1570,6 +1577,12 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
           }
         })();
       }
+
+      setImmediate(() => {
+        runMatchingForAsset(asset.id, getOrgId(), storage, db).catch(err =>
+          console.error(`[Auto-match] Falha para ativo fazenda ${asset.id}:`, err.message)
+        );
+      });
 
       res.status(201).json(asset);
     } catch (err: any) {
