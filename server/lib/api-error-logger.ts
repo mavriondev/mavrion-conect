@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { errorReports } from "@shared/schema";
+import { errorReports, organizations } from "@shared/schema";
 import { and, eq, gte } from "drizzle-orm";
 
 interface ApiErrorOpts {
@@ -9,6 +9,18 @@ interface ApiErrorOpts {
   errorMessage: string;
   metadata?: any;
   orgId?: number;
+}
+
+let cachedDefaultOrgId: number | null = null;
+async function getDefaultOrgId(): Promise<number | null> {
+  if (cachedDefaultOrgId !== null) return cachedDefaultOrgId;
+  try {
+    const [org] = await db.select({ id: organizations.id }).from(organizations).limit(1);
+    cachedDefaultOrgId = org?.id ?? null;
+    return cachedDefaultOrgId;
+  } catch {
+    return null;
+  }
 }
 
 const recentErrors = new Map<string, number>();
@@ -33,9 +45,10 @@ export async function logApiError(opts: ApiErrorOpts) {
     recentErrors.set(dedupKey, now);
 
     const title = `[${opts.service}] ${opts.errorMessage.slice(0, 120)}`;
+    const orgId = opts.orgId || await getDefaultOrgId();
 
     await db.insert(errorReports).values({
-      orgId: opts.orgId || null,
+      orgId,
       type: "api_error",
       title,
       description: opts.errorMessage,
