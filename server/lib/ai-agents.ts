@@ -145,6 +145,25 @@ export async function summarizeCompany(companyId: number, orgId: number): Promis
   const enrichment = (empresa.enrichmentData || {}) as any;
   const address = (empresa.address || {}) as any;
 
+  const merged = enrichment.merged || enrichment.search || {};
+  const social = merged.social || {};
+  const emails = merged.emails || enrichment.search?.emails_from_search || [];
+  const phones = merged.phones || enrichment.search?.phones_from_search || [];
+  const website = merged.website || enrichment.search?.official_site || null;
+
+  const contactInfo = [
+    emails.length > 0 ? `- E-mails: ${emails.join(", ")}` : null,
+    phones.length > 0 ? `- Telefones: ${phones.join(", ")}` : null,
+    website ? `- Website: ${website}` : null,
+    social.linkedin ? `- LinkedIn: ${social.linkedin}` : null,
+    social.instagram ? `- Instagram: ${social.instagram}` : null,
+    social.facebook ? `- Facebook: ${social.facebook}` : null,
+  ].filter(Boolean).join("\n");
+
+  const searchSnippets = (enrichment.search?.search_results || []).slice(0, 3)
+    .map((r: any) => `- "${r.title}": ${r.snippet || ""}`.slice(0, 200))
+    .join("\n");
+
   const dealsSummary = companyDeals.length > 0
     ? companyDeals.map(d => `- "${d.title}" | Estágio: ${d.stageId} | Valor: ${formatBRL(d.amountEstimate)} | Prob: ${d.probability || "N/D"}%`).join("\n")
     : "Nenhum deal registrado";
@@ -166,17 +185,23 @@ export async function summarizeCompany(companyId: number, orgId: number): Promis
   ).join("\n");
 
   const prompt = `Você é um especialista em análise de empresas para o mercado de ativos rurais e M&A no Brasil.
-Gere um resumo inteligente desta empresa. Seja objetivo, use apenas dados fornecidos.
+Gere um resumo inteligente desta empresa. REGRA FUNDAMENTAL: use APENAS os dados fornecidos abaixo. NÃO invente dados, NÃO suponha informações que não estão aqui. Se um dado não foi fornecido, diga "Não disponível" em vez de inventar.
 
 EMPRESA:
 - Razão Social: ${empresa.legalName}
-- Nome Fantasia: ${empresa.tradeName || "N/D"}
+- Nome Fantasia: ${empresa.tradeName || "Não informado"}
 - CNPJ: ${empresa.cnpj || "N/D"}
 - Porte: ${empresa.porte || "N/D"}
 - CNAE Principal: ${empresa.cnaePrincipal || "N/D"}
 - Receita estimada: ${formatBRL((empresa as any).revenueEstimate)}
-- Endereço: ${address.city || ""}, ${address.state || ""}
+- Endereço completo: ${address.street || ""} ${address.number || ""}, ${address.district || ""}, ${address.city || ""}-${address.state || ""}, CEP ${address.zip || "N/D"}
 - Perfil Norion: ${(empresa as any).norionProfile || "N/D"}
+
+CONTATOS E PRESENÇA DIGITAL:
+${contactInfo || "Nenhum contato disponível"}
+
+INFORMAÇÕES ENCONTRADAS NA WEB:
+${searchSnippets || "Nenhuma informação web disponível"}
 
 PERFIL DE COMPRADOR:
 ${buyerInfo}
@@ -190,21 +215,27 @@ ${assetsList}
 Gere o resumo neste formato:
 
 ## Dados Básicos
-Porte, segmento, situação, localização.
+Razão social, CNPJ, porte, segmento (CNAE), situação, localização. Use SOMENTE dados acima.
+
+## Contatos & Presença Digital
+E-mails, telefones, redes sociais, website. Se não há dados, diga "Não disponível".
+
+## O que Sabemos pela Web
+Informações coletadas de fontes públicas sobre a empresa.
 
 ## Histórico de Negociações
-Quantidade de deals, valores, tipos de ativo de interesse.
+Quantidade de deals no CRM, valores, tipos de ativo de interesse. Se zero, diga "Nenhuma negociação registrada".
 
 ## Padrão de Compra
 Tamanho preferido, preço, cultura, velocidade de decisão.
-Se não há dados suficientes, indique "dados insuficientes".
+Se não há dados suficientes, diga explicitamente "Dados insuficientes para determinar padrão".
 
 ## Sinal de Intenção
 Com base na atividade recente (visitas, aceites, rejeições):
-🟢 ALTA | 🟡 MÉDIA | 🔴 BAIXA
+🟢 ALTA | 🟡 MÉDIA | 🔴 BAIXA — Se não há dados, diga "Sem dados de atividade".
 
 ## Top 5 Ativos Compatíveis
-Liste os mais compatíveis dos ativos disponíveis, com motivo.
+Liste os mais compatíveis dos ativos disponíveis, com motivo. Se não é possível determinar compatibilidade, explique por quê.
 
 ## Recomendação
 Estratégia de abordagem e próximos passos.`;
