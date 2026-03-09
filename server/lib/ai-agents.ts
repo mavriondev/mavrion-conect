@@ -10,7 +10,8 @@ function getOpenAI(): OpenAI {
   }
   return _openai;
 }
-const MODEL = "gpt-4o-mini";
+const MODEL_MINI = "gpt-4o-mini";
+const MODEL_FULL = "gpt-4o";
 
 function safeNum(v: any): string {
   if (v === null || v === undefined) return "N/D";
@@ -109,7 +110,7 @@ Score 0-10 por dimensão e média ponderada.
 Máximo 3 linhas: ação recomendada.`;
 
   const response = await getOpenAI().chat.completions.create({
-    model: MODEL,
+    model: MODEL_MINI,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.3,
     max_tokens: 2000,
@@ -241,7 +242,7 @@ Liste os mais compatíveis dos ativos disponíveis, com motivo. Se não é poss�
 Estratégia de abordagem e próximos passos.`;
 
   const response = await getOpenAI().chat.completions.create({
-    model: MODEL,
+    model: MODEL_FULL,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.3,
     max_tokens: 1500,
@@ -284,7 +285,7 @@ Regras:
 - Retorne SOMENTE o JSON, sem texto adicional`;
 
   const filterResponse = await getOpenAI().chat.completions.create({
-    model: MODEL,
+    model: MODEL_MINI,
     messages: [{ role: "user", content: filterPrompt }],
     temperature: 0.1,
     max_tokens: 300,
@@ -341,7 +342,7 @@ Gere insights em 5-8 linhas:
 3. Sugestão de busca alternativa se poucos resultados`;
 
   const insightResponse = await getOpenAI().chat.completions.create({
-    model: MODEL,
+    model: MODEL_MINI,
     messages: [{ role: "user", content: insightPrompt }],
     temperature: 0.4,
     max_tokens: 300,
@@ -427,7 +428,7 @@ Curto prazo (1 semana), médio prazo (2-4 semanas).
 Score 0-10 com justificativa.`;
 
   const response = await getOpenAI().chat.completions.create({
-    model: MODEL,
+    model: MODEL_FULL,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.4,
     max_tokens: 2000,
@@ -482,7 +483,7 @@ O que o usuário experimenta quando este erro ocorre.
 O que a equipe técnica deveria investigar/corrigir.`;
 
   const response = await getOpenAI().chat.completions.create({
-    model: MODEL,
+    model: MODEL_MINI,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.3,
     max_tokens: 800,
@@ -566,7 +567,7 @@ Critérios de score:
 - 0-19: sem fit aparente`;
 
   const response = await getOpenAI().chat.completions.create({
-    model: MODEL,
+    model: MODEL_MINI,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.3,
     max_tokens: 400,
@@ -664,7 +665,7 @@ Confiabilidade da estimativa: ALTA/MÉDIA/BAIXA.
 Precificação sugerida para negociação.`;
 
   const response = await getOpenAI().chat.completions.create({
-    model: MODEL,
+    model: MODEL_FULL,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.3,
     max_tokens: 1200,
@@ -741,7 +742,7 @@ Lista priorizada do que a equipe técnica deveria resolver primeiro.
 Os erros estão aumentando, diminuindo ou estáveis?`;
 
   const response = await getOpenAI().chat.completions.create({
-    model: MODEL,
+    model: MODEL_MINI,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.3,
     max_tokens: 1200,
@@ -831,7 +832,7 @@ Estimativa de receita com base nos deals atuais e probabilidades.
 3-5 ações concretas para melhorar o pipeline.`;
 
   const response = await getOpenAI().chat.completions.create({
-    model: MODEL,
+    model: MODEL_FULL,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.3,
     max_tokens: 1500,
@@ -905,7 +906,7 @@ Sequência recomendada para completar a documentação, com prioridade e prazo e
 Estimativa dos custos para obter os documentos faltantes.`;
 
   const response = await getOpenAI().chat.completions.create({
-    model: MODEL,
+    model: MODEL_FULL,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.3,
     max_tokens: 1500,
