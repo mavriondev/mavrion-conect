@@ -220,6 +220,10 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
           if (result.website && !company.website) updateData.website = result.website;
           if (result.phones.length && !(company.phones as string[])?.length) updateData.phones = result.phones;
           if (result.emails.length && !(company.emails as string[])?.length) updateData.emails = result.emails;
+          if (result.estimatedRevenue) updateData.revenueEstimateLabel = result.estimatedRevenue;
+          if (result.employeeCount) updateData.employeeCount = result.employeeCount;
+          if (result.shareCapital) updateData.shareCapital = result.shareCapital;
+          if (result.tradingName && !company.tradeName) updateData.tradeName = result.tradingName;
 
           await db.update(companies).set(updateData as any).where(eq(companies.id, companyId));
 

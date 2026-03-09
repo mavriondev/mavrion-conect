@@ -466,6 +466,26 @@ export default function EmpresaDetailPage() {
                       <dd className="text-sm font-medium text-right">{company.porte}</dd>
                     </div>
                   )}
+                  {(company as any).employeeCount && (
+                    <div className="flex items-center justify-between py-2.5 gap-4">
+                      <dt className="text-xs text-muted-foreground shrink-0">Funcionários</dt>
+                      <dd className="text-sm font-medium text-right" data-testid="text-employee-count">{(company as any).employeeCount}</dd>
+                    </div>
+                  )}
+                  {(company as any).revenueEstimateLabel && (
+                    <div className="flex items-center justify-between py-2.5 gap-4">
+                      <dt className="text-xs text-muted-foreground shrink-0">Faturamento Est.</dt>
+                      <dd className="text-sm font-medium text-right" data-testid="text-revenue-estimate">{(company as any).revenueEstimateLabel}</dd>
+                    </div>
+                  )}
+                  {(company as any).shareCapital > 0 && (
+                    <div className="flex items-center justify-between py-2.5 gap-4">
+                      <dt className="text-xs text-muted-foreground shrink-0">Capital Social</dt>
+                      <dd className="text-sm font-medium text-right" data-testid="text-share-capital">
+                        {new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }).format((company as any).shareCapital)}
+                      </dd>
+                    </div>
+                  )}
                   {company.notes && (
                     <div className="py-2.5">
                       <dt className="text-xs text-muted-foreground mb-1">Situação / Natureza</dt>

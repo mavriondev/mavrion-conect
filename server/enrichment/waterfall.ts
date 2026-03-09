@@ -7,6 +7,11 @@ export interface EnrichmentResult {
   website?: string;
   linkedin?: string;
   source: "bigdatacorp" | "datastone" | "scraper" | "none";
+  employeeCount?: string;
+  estimatedRevenue?: string;
+  shareCapital?: number;
+  tradingName?: string;
+  partners?: Array<{ name: string; cpf?: string; cnpj?: string; ownership?: number; qualification?: string }>;
   raw?: any;
 }
 
@@ -40,15 +45,41 @@ async function enrichViaDataStone(cnpj: string): Promise<Partial<EnrichmentResul
   try {
     const cnpjClean = cnpj.replace(/\D/g, "");
     const response = await fetch(
-      `https://api.datastone.com.br/v1/company?cnpj=${cnpjClean}&fields=all`,
-      { method: "GET", headers: { "Authorization": `Token ${token}` }, signal: AbortSignal.timeout(15_000) }
+      `https://api.datastone.com.br/v1/companies/?cnpj=${cnpjClean}`,
+      { method: "GET", headers: { "Authorization": `Token ${token}`, "Accept": "application/json" }, signal: AbortSignal.timeout(15_000) }
     );
     if (!response.ok) { console.warn(`[DataStone] HTTP ${response.status}`); return {}; }
-    const data = await response.json();
-    const landLines = (data?.land_lines || []).map((p: any) => typeof p === "string" ? p : p?.number || "").filter(Boolean);
-    const mobiles = (data?.mobile_phones || []).map((p: any) => typeof p === "string" ? p : p?.number || "").filter(Boolean);
-    const emails = (data?.emails || []).map((e: any) => typeof e === "string" ? e : e?.email || "").filter(Boolean);
-    return { phones: [...mobiles, ...landLines].slice(0, 5), emails, website: data?.website, source: "datastone", raw: data };
+    const raw = await response.json();
+    const data = Array.isArray(raw) ? raw[0] : raw;
+    if (!data) return {};
+    const landLines = (data.land_lines || []).map((p: any) => {
+      if (typeof p === "string") return p;
+      return p?.ddd && p?.number ? `(${p.ddd}) ${p.number}` : (p?.number || "");
+    }).filter(Boolean);
+    const mobiles = (data.mobile_phones || []).map((p: any) => {
+      if (typeof p === "string") return p;
+      return p?.ddd && p?.number ? `(${p.ddd}) ${p.number}` : (p?.number || "");
+    }).filter(Boolean);
+    const emails = (data.emails || []).map((e: any) => typeof e === "string" ? e : e?.email || "").filter(Boolean);
+    const partners = (data.partners || []).map((p: any) => ({
+      name: p.name || "",
+      cpf: p.cpf || undefined,
+      cnpj: p.cnpj || undefined,
+      ownership: p.ownership ?? undefined,
+      qualification: p.qualification || undefined,
+    }));
+    return {
+      phones: [...mobiles, ...landLines].slice(0, 5),
+      emails: emails.slice(0, 5),
+      website: data.website || undefined,
+      source: "datastone",
+      employeeCount: data.employee_count || undefined,
+      estimatedRevenue: data.estimated_revenue || undefined,
+      shareCapital: data.share_capital ? parseFloat(data.share_capital) : undefined,
+      tradingName: data.trading_name || undefined,
+      partners,
+      raw: data,
+    };
   } catch (err: any) { console.warn("[DataStone] Erro:", err.message); return {}; }
 }
 
@@ -92,7 +123,12 @@ export async function waterfallEnrich(params: {
     const ds = await enrichViaDataStone(cnpj);
     if (hasSufficientData(ds)) {
       console.log(`[Waterfall] DataStone encontrou dados para ${cnpj}`);
-      return { phones: ds.phones || [], emails: ds.emails || [], website: ds.website, source: "datastone", raw: ds.raw };
+      return {
+        phones: ds.phones || [], emails: ds.emails || [], website: ds.website, source: "datastone",
+        employeeCount: ds.employeeCount, estimatedRevenue: ds.estimatedRevenue,
+        shareCapital: ds.shareCapital, tradingName: ds.tradingName, partners: ds.partners,
+        raw: ds.raw,
+      };
     }
     console.log("[Waterfall] DataStone sem dados — usando scraper...");
   }
