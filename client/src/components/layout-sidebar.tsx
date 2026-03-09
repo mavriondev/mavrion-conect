@@ -268,13 +268,10 @@ export default function Sidebar() {
 
         {hasPermission(user, "ativos") && (
           <ExpandableNav href="/ativos" icon={Layers} label={t("nav.ativos")}>
-            <SubLink href="/ativos" icon={Layers} label={t("nav.ativos")} exact />
-            <SubLink href="/ativos/tipo/TERRA" icon={TreePine} label="Terras & Fazendas" />
-            <SubLink href="/ativos/tipo/MINA" icon={Pickaxe} label="Mineração" />
-            <SubLink href="/ativos/tipo/NEGOCIO" icon={Briefcase} label="Negócios M&A" />
-            <SubLink href="/ativos/tipo/FII_CRI" icon={Home} label="FII / CRI / Imóveis" />
-            <SubLink href="/ativos/tipo/DESENVOLVIMENTO" icon={Factory} label="Desenvolvimento" />
-            <SubLink href="/ativos/tipo/AGRO" icon={Wheat} label="Agronegócio" />
+            <SubLink href="/ativos/tipo/NEGOCIO" icon={Briefcase} label="Negócios / Investidores" />
+            <SubLink href="/ativos/tipo/TERRA" icon={TreePine} label="Terras / Fazendas" />
+            <SubLink href="/ativos/tipo/MINA" icon={Pickaxe} label="Jazidas" />
+            <SubLink href="/ativos/tipo/FII_CRI" icon={Home} label="FII / Fundos" />
           </ExpandableNav>
         )}
 
