@@ -619,18 +619,19 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
       const ibamaProp = ibamaPropResult.status === "fulfilled" ? ibamaPropResult.value : null;
       const ibamaGeo = ibamaGeoResult.status === "fulfilled" ? ibamaGeoResult.value : null;
 
-      const temEmbargo = !!(ibamaProp?.temEmbargo || ibamaGeo?.temEmbargo);
+      const ibamaAvailable = !!(ibamaProp || ibamaGeo);
+      const temEmbargo = ibamaAvailable ? !!(ibamaProp?.temEmbargo || ibamaGeo?.temEmbargo) : null;
       const embargosLista = [
         ...(ibamaProp?.embargos || []),
         ...(ibamaGeo?.embargos || []),
       ];
 
-      const ibama = {
-        temEmbargo,
+      const ibama = ibamaAvailable ? {
+        temEmbargo: !!temEmbargo,
         totalEmbargos: embargosLista.length,
         embargos: embargosLista.slice(0, 20),
         fonte: "IBAMA — Dados Abertos + GeoServer",
-      };
+      } : null;
 
       const ambiental = {
         deter,
@@ -638,7 +639,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
         ibama,
         deterStatus: deter ? "ok" : "indisponivel",
         mapbiomasStatus: mapbiomas ? "ok" : "indisponivel",
-        ibamaStatus: (ibamaProp || ibamaGeo) ? "ok" : "indisponivel",
+        ibamaStatus: ibama ? "ok" : "indisponivel",
         consultadoEm: new Date().toISOString(),
       };
 

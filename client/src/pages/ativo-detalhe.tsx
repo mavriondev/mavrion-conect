@@ -201,12 +201,11 @@ function AmbientalTab({ assetId, camposEspecificos }: { assetId: number; camposE
 
   const allUnavailable = ambiental?.deterStatus === "indisponivel" && ambiental?.mapbiomasStatus === "indisponivel" && ambiental?.ibamaStatus === "indisponivel";
   const totalAlertasDesmatamento = (deter?.totalAlertas || 0) + (mapbiomas?.alertasDesmatamento || 0);
-  const temEmbargo = ibama?.temEmbargo || false;
-  const embargoMapbiomas = mapbiomas?.embargoMapbiomas || 0;
+  const temEmbargo = ibama?.temEmbargo === true;
 
   let riskLevel: "baixo" | "atencao" | "alto" | "indisponivel" = "baixo";
   if (allUnavailable) riskLevel = "indisponivel";
-  else if (temEmbargo || totalAlertasDesmatamento > 3 || embargoMapbiomas > 0) riskLevel = "alto";
+  else if (temEmbargo || totalAlertasDesmatamento > 3) riskLevel = "alto";
   else if (totalAlertasDesmatamento > 0) riskLevel = "atencao";
 
   const riskConfig = {
@@ -260,8 +259,7 @@ function AmbientalTab({ assetId, camposEspecificos }: { assetId: number; camposE
               </div>
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                 <span data-testid="text-total-alertas">{totalAlertasDesmatamento} alerta(s) de desmatamento</span>
-                <span data-testid="text-ibama-status">{temEmbargo ? `${ibama.totalEmbargos} embargo(s) IBAMA` : "Sem embargos IBAMA"}</span>
-                {embargoMapbiomas > 0 && <span>{embargoMapbiomas} área(s) embargada(s) MapBiomas</span>}
+                <span data-testid="text-ibama-status">{!ibama ? "IBAMA não consultado" : temEmbargo ? `${ibama.totalEmbargos} embargo(s) IBAMA` : "Sem embargos IBAMA"}</span>
               </div>
             </div>
           </div>

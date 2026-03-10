@@ -303,6 +303,12 @@ export async function getUsoTerraMapBiomas(
       }
     }
 
+    const gotRealData = historico.length > 0 || bioma !== "Não identificado" || alertCount > 0 || propriedade !== null;
+    if (!token || !gotRealData) {
+      console.warn("[MapBiomas] Nenhum dado real obtido");
+      return null;
+    }
+
     return {
       lat,
       lon,
