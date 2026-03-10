@@ -1527,7 +1527,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
             console.log(`[Auto-ambiental] Consultando DETER + MapBiomas para ativo ${asset.id}...`);
             const [deterRes, mapbiomasRes] = await Promise.allSettled([
               consultarDeterINPE(centroidLat!, centroidLon!),
-              getUsoTerraMapBiomas(centroidLat!, centroidLon!),
+              getUsoTerraMapBiomas(centroidLat!, centroidLon!, asset.carCodImovel || undefined),
             ]);
             const deter = deterRes.status === "fulfilled" ? deterRes.value : null;
             const mapbiomas = mapbiomasRes.status === "fulfilled" ? mapbiomasRes.value : null;

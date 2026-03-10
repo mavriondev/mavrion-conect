@@ -536,7 +536,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
         ? consultarEmbargoIbamaCoordenadas(lat, lon)
         : Promise.resolve(null),
       lat && lon
-        ? getUsoTerraMapBiomas(lat, lon)
+        ? getUsoTerraMapBiomas(lat, lon, campos.car_cod_imovel || asset.carCodImovel || undefined)
         : Promise.resolve(null),
       lat && lon
         ? getNDVISentinel(lat, lon, polygon)
@@ -595,9 +595,11 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
         return res.status(400).json({ message: "Ativo sem coordenadas (latitude/longitude)" });
       }
 
+      const carCode = campos.car_cod_imovel || asset.carCodImovel || undefined;
+
       const [deterResult, mapbiomasResult] = await Promise.allSettled([
         consultarDeterINPE(lat, lon),
-        getUsoTerraMapBiomas(lat, lon),
+        getUsoTerraMapBiomas(lat, lon, carCode),
       ]);
 
       const deter = deterResult.status === "fulfilled" ? deterResult.value : null;

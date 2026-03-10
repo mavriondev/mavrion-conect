@@ -40,8 +40,7 @@ const CLASSES_MAPBIOMAS: Record<number, string> = {
   62: "Algodão",
 };
 
-const AUTH_URL = "https://plataforma.alerta.mapbiomas.org/api/auth";
-const ALERTS_URL = "https://plataforma.alerta.mapbiomas.org/api/v1/validated_alerts";
+const GRAPHQL_URL = "https://plataforma.alerta.mapbiomas.org/api/v2/graphql";
 
 let cachedToken: string | null = null;
 let tokenExpiresAt = 0;
@@ -57,80 +56,107 @@ async function getToken(): Promise<string | null> {
   }
 
   try {
-    const res = await fetch(AUTH_URL, {
+    const res = await fetch(GRAPHQL_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-      signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({
+        query: `mutation { signIn(email: "${email}", password: "${password}") { token } }`,
+      }),
+      signal: AbortSignal.timeout(15000),
     });
 
     if (!res.ok) {
-      console.warn(`[MapBiomas] Auth falhou: ${res.status}`);
+      console.warn(`[MapBiomas] Auth HTTP falhou: ${res.status}`);
       return null;
     }
 
     const data = (await res.json()) as any;
-    const token = data?.token || data?.access_token || data?.auth_token || null;
+    const token = data?.data?.signIn?.token;
     if (token) {
       cachedToken = token;
       tokenExpiresAt = Date.now() + 3600000;
+      console.log("[MapBiomas] Token obtido com sucesso");
+    } else {
+      const errors = data?.errors?.map((e: any) => e.message).join("; ") || "resposta sem token";
+      console.warn(`[MapBiomas] Auth falhou: ${errors}`);
     }
-    return token;
+    return token || null;
   } catch (err) {
     console.error("[MapBiomas] Erro na autenticação:", (err as Error).message);
     return null;
   }
 }
 
-function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
 export async function getUsoTerraMapBiomas(
   lat: number,
-  lon: number
+  lon: number,
+  carCode?: string
 ): Promise<MapBiomasResult | null> {
   try {
     const token = await getToken();
 
-    let alertas: any[] = [];
+    let alertCount = 0;
     let totalArea = 0;
+    let bioma = "Não identificado";
 
     if (token) {
-      const now = new Date();
-      const twoYearsAgo = new Date(now);
-      twoYearsAgo.setFullYear(now.getFullYear() - 2);
+      let filterArg: string;
+      if (carCode) {
+        filterArg = `propertyCodes: ["${carCode}"]`;
+      } else {
+        const delta = 0.02;
+        const bbox = [lon - delta, lat - delta, lon + delta, lat + delta];
+        filterArg = `boundingBox: [${bbox.join(",")}]`;
+      }
 
-      const params = new URLSearchParams({
-        start_year: String(twoYearsAgo.getFullYear()),
-        start_month: String(twoYearsAgo.getMonth() + 1),
-        end_year: String(now.getFullYear()),
-        end_month: String(now.getMonth() + 1),
-      });
+      const query = `{
+        alerts(${filterArg}, limit: 100) {
+          collection {
+            alertCode
+            areaHa
+            detectedAt
+            statusName
+            crossedBiomesList
+          }
+        }
+      }`;
 
-      const res = await fetch(`${ALERTS_URL}?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(15000),
+      const res = await fetch(GRAPHQL_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ query }),
+        signal: AbortSignal.timeout(20000),
       }).catch(() => null);
 
       if (res?.ok) {
         const data = (await res.json()) as any;
-        const allAlerts = Array.isArray(data) ? data : data?.data || data?.alerts || [];
+        const collection = data?.data?.alerts?.collection || [];
 
-        alertas = allAlerts.filter((a: any) => {
-          const aLat = a.latitude || a.lat;
-          const aLon = a.longitude || a.lon || a.lng;
-          if (aLat == null || aLon == null) return false;
-          return haversineKm(lat, lon, Number(aLat), Number(aLon)) <= 25;
-        });
+        alertCount = collection.length;
+        totalArea = collection.reduce(
+          (s: number, a: any) => s + (a.areaHa || 0), 0
+        );
 
-        totalArea = alertas.reduce((s: number, a: any) => s + (a.area_ha || a.areaHa || 0), 0);
+        const firstAlert = collection[0];
+        if (firstAlert?.crossedBiomesList) {
+          try {
+            const biomes = typeof firstAlert.crossedBiomesList === "string"
+              ? JSON.parse(firstAlert.crossedBiomesList)
+              : firstAlert.crossedBiomesList;
+            if (Array.isArray(biomes) && biomes.length > 0) {
+              bioma = biomes[0]?.name || biomes[0] || bioma;
+            }
+          } catch {}
+        }
+
+        if (data?.errors) {
+          console.warn("[MapBiomas] GraphQL warnings:", data.errors.map((e: any) => e.message).join("; "));
+        }
+      } else if (res) {
+        console.warn(`[MapBiomas] Alerts query falhou: ${res.status}`);
       }
     }
 
@@ -142,6 +168,9 @@ export async function getUsoTerraMapBiomas(
     const classData = classRes?.ok ? (await classRes.json()) as any : null;
     const classeAtual = classData?.class_id || 15;
     const usoAtual = CLASSES_MAPBIOMAS[classeAtual] || "Não identificado";
+    if (classData?.biome && bioma === "Não identificado") {
+      bioma = classData.biome;
+    }
 
     return {
       lat,
@@ -149,9 +178,9 @@ export async function getUsoTerraMapBiomas(
       usoAtual,
       classeAtual,
       historico: [],
-      alertasDesmatamento: alertas.length,
+      alertasDesmatamento: alertCount,
       areaDesmatadaHa: Math.round(totalArea * 100) / 100,
-      bioma: classData?.biome || "Não identificado",
+      bioma,
       fonte: "MapBiomas Alerta",
       consultadoEm: new Date().toISOString(),
     };
