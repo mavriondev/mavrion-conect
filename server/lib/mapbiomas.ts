@@ -8,35 +8,64 @@ export interface MapBiomasResult {
     classe: number;
     descricao: string;
   }>;
+  transicoes: Array<{
+    de: string;
+    para: string;
+    ano: number;
+  }>;
   alertasDesmatamento: number;
   areaDesmatadaHa: number;
   bioma: string;
+  bacia: string;
+  municipio: string;
+  estado: string;
+  embargoMapbiomas: number;
+  propriedade: {
+    areaHa: number;
+    tipo: string;
+    alertasNaPropriedade: number;
+  } | null;
   fonte: string;
   consultadoEm: string;
 }
 
 const CLASSES_MAPBIOMAS: Record<number, string> = {
+  1:  "Floresta",
   3:  "Formação Florestal",
   4:  "Formação Savânica",
   5:  "Mangue",
+  6:  "Floresta Alagável",
+  9:  "Silvicultura",
   11: "Campo Alagado e Área Pantanosa",
   12: "Formação Campestre",
+  13: "Outra Formação não Florestal",
+  14: "Agropecuária",
   15: "Pastagem",
   18: "Agricultura",
   19: "Lavoura Temporária",
   20: "Cana",
   21: "Mosaico de Usos",
+  22: "Área não Vegetada",
   23: "Praia e Duna",
   24: "Área Urbana",
   25: "Outra Área não Vegetada",
+  26: "Corpo d'Água",
+  27: "Não Observado",
   29: "Afloramento Rochoso",
+  30: "Mineração",
+  31: "Aquicultura",
+  32: "Apicum",
   33: "Rio, Lago e Oceano",
+  35: "Dendê",
+  36: "Lavoura Perene",
   39: "Soja",
   40: "Arroz",
   41: "Outras Lavouras Temporárias",
   46: "Café",
   47: "Citrus",
   48: "Outras Lavouras Perenes",
+  49: "Restinga Arborizada",
+  50: "Restinga Herbácea",
   62: "Algodão",
 };
 
@@ -87,6 +116,71 @@ async function getToken(): Promise<string | null> {
   }
 }
 
+async function gqlQuery(token: string, query: string): Promise<any> {
+  try {
+    const res = await fetch(GRAPHQL_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) {
+      console.warn("[MapBiomas] GraphQL HTTP:", res.status);
+      return null;
+    }
+    const data = await res.json() as any;
+    if (data?.errors && !data?.data) {
+      console.warn("[MapBiomas] GraphQL error:", data.errors.map((e: any) => e.message).join("; "));
+      return null;
+    }
+    if (data?.errors) {
+      console.warn("[MapBiomas] GraphQL partial:", data.errors.map((e: any) => e.message).join("; "));
+    }
+    return data?.data || null;
+  } catch (err) {
+    console.warn("[MapBiomas] GraphQL fetch error:", (err as Error).message);
+    return null;
+  }
+}
+
+function parseHistorico(history: Record<string, number>): {
+  historico: MapBiomasResult["historico"];
+  transicoes: MapBiomasResult["transicoes"];
+  classeAtual: number;
+  usoAtual: string;
+} {
+  const entries = Object.entries(history)
+    .map(([key, val]) => ({ ano: parseInt(key.replace("classification_", "")), classe: val }))
+    .filter(e => !isNaN(e.ano))
+    .sort((a, b) => a.ano - b.ano);
+
+  const historico = entries.map(e => ({
+    ano: e.ano,
+    classe: e.classe,
+    descricao: CLASSES_MAPBIOMAS[e.classe] || `Classe ${e.classe}`,
+  }));
+
+  const transicoes: MapBiomasResult["transicoes"] = [];
+  for (let i = 1; i < entries.length; i++) {
+    if (entries[i].classe !== entries[i - 1].classe) {
+      transicoes.push({
+        de: CLASSES_MAPBIOMAS[entries[i - 1].classe] || `Classe ${entries[i - 1].classe}`,
+        para: CLASSES_MAPBIOMAS[entries[i].classe] || `Classe ${entries[i].classe}`,
+        ano: entries[i].ano,
+      });
+    }
+  }
+
+  const last = entries[entries.length - 1];
+  const classeAtual = last?.classe || 0;
+  const usoAtual = CLASSES_MAPBIOMAS[classeAtual] || "Não identificado";
+
+  return { historico, transicoes, classeAtual, usoAtual };
+}
+
 export async function getUsoTerraMapBiomas(
   lat: number,
   lon: number,
@@ -98,78 +192,115 @@ export async function getUsoTerraMapBiomas(
     let alertCount = 0;
     let totalArea = 0;
     let bioma = "Não identificado";
+    let bacia = "";
+    let municipio = "";
+    let estado = "";
+    let historico: MapBiomasResult["historico"] = [];
+    let transicoes: MapBiomasResult["transicoes"] = [];
+    let classeAtual = 0;
+    let usoAtual = "Não identificado";
+    let embargoMapbiomas = 0;
+    let propriedade: MapBiomasResult["propriedade"] = null;
 
     if (token) {
-      let filterArg: string;
+      const delta = 0.005;
+      const pointInfoQuery = `{
+        pointInformation(boundingBox: {
+          swLat: ${lat - delta}, swLng: ${lon - delta},
+          neLat: ${lat + delta}, neLng: ${lon + delta}
+        }) {
+          historyCoverage { history }
+          territories { name categoryName }
+        }
+      }`;
+
+      let alertFilterArg: string;
       if (carCode) {
-        filterArg = `propertyCodes: ["${carCode}"]`;
+        alertFilterArg = `propertyCodes: ["${carCode}"]`;
       } else {
-        const delta = 0.02;
-        const bbox = [lon - delta, lat - delta, lon + delta, lat + delta];
-        filterArg = `boundingBox: [${bbox.join(",")}]`;
+        const aDelta = 0.02;
+        alertFilterArg = `boundingBox: [${lon - aDelta}, ${lat - aDelta}, ${lon + aDelta}, ${lat + aDelta}]`;
       }
 
-      const query = `{
-        alerts(${filterArg}, limit: 100) {
+      const alertsQuery = `{
+        alerts(${alertFilterArg}, limit: 100) {
           collection {
             alertCode
             areaHa
             detectedAt
             statusName
-            crossedBiomesList
           }
         }
       }`;
 
-      const res = await fetch(GRAPHQL_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ query }),
-        signal: AbortSignal.timeout(20000),
-      }).catch(() => null);
-
-      if (res?.ok) {
-        const data = (await res.json()) as any;
-        const collection = data?.data?.alerts?.collection || [];
-
-        alertCount = collection.length;
-        totalArea = collection.reduce(
-          (s: number, a: any) => s + (a.areaHa || 0), 0
-        );
-
-        const firstAlert = collection[0];
-        if (firstAlert?.crossedBiomesList) {
-          try {
-            const biomes = typeof firstAlert.crossedBiomesList === "string"
-              ? JSON.parse(firstAlert.crossedBiomesList)
-              : firstAlert.crossedBiomesList;
-            if (Array.isArray(biomes) && biomes.length > 0) {
-              bioma = biomes[0]?.name || biomes[0] || bioma;
-            }
-          } catch {}
-        }
-
-        if (data?.errors) {
-          console.warn("[MapBiomas] GraphQL warnings:", data.errors.map((e: any) => e.message).join("; "));
-        }
-      } else if (res) {
-        console.warn(`[MapBiomas] Alerts query falhou: ${res.status}`);
+      let ruralPropQuery: string | null = null;
+      if (carCode) {
+        ruralPropQuery = `{
+          ruralProperty(propertyCode: "${carCode}") {
+            propertyCode
+            areaHa
+            propertyType
+            stateAcronym
+            alerts { alertCode areaHa detectedAt statusName }
+          }
+        }`;
       }
-    }
 
-    const classRes = await fetch(
-      `https://api.mapbiomas.org/api/v1/classification?lat=${lat}&lng=${lon}&year=2023`,
-      { signal: AbortSignal.timeout(8000) }
-    ).catch(() => null);
+      const promises: Promise<any>[] = [
+        gqlQuery(token, pointInfoQuery),
+        gqlQuery(token, alertsQuery),
+      ];
+      if (ruralPropQuery) {
+        promises.push(gqlQuery(token, ruralPropQuery));
+      }
 
-    const classData = classRes?.ok ? (await classRes.json()) as any : null;
-    const classeAtual = classData?.class_id || 15;
-    const usoAtual = CLASSES_MAPBIOMAS[classeAtual] || "Não identificado";
-    if (classData?.biome && bioma === "Não identificado") {
-      bioma = classData.biome;
+      const results = await Promise.allSettled(promises);
+
+      const pointData = results[0].status === "fulfilled" ? results[0].value : null;
+      const alertsData = results[1].status === "fulfilled" ? results[1].value : null;
+      const ruralData = results.length > 2 && results[2].status === "fulfilled" ? results[2].value : null;
+
+      if (pointData?.pointInformation) {
+        const pi = pointData.pointInformation;
+
+        if (pi.historyCoverage?.history) {
+          const parsed = parseHistorico(pi.historyCoverage.history);
+          historico = parsed.historico;
+          transicoes = parsed.transicoes;
+          classeAtual = parsed.classeAtual;
+          usoAtual = parsed.usoAtual;
+        }
+
+        if (pi.territories && Array.isArray(pi.territories)) {
+          for (const t of pi.territories) {
+            const cat = t.categoryName?.toLowerCase() || "";
+            if (cat.includes("bioma") && bioma === "Não identificado") bioma = t.name;
+            else if (cat.includes("município") || cat.includes("municipio")) municipio = t.name;
+            else if (cat.includes("estado")) estado = t.name;
+            else if (cat.includes("bacia") && cat.includes("1") && !bacia) bacia = t.name;
+          }
+        }
+      }
+
+      if (alertsData?.alerts?.collection) {
+        const collection = alertsData.alerts.collection;
+        alertCount = collection.length;
+        totalArea = collection.reduce((s: number, a: any) => s + (a.areaHa || 0), 0);
+      }
+
+      if (ruralData?.ruralProperty) {
+        const rp = ruralData.ruralProperty;
+        const rpAlerts = rp.alerts || [];
+        propriedade = {
+          areaHa: rp.areaHa || 0,
+          tipo: rp.propertyType || "Desconhecido",
+          alertasNaPropriedade: rpAlerts.length,
+        };
+        if (rpAlerts.length > 0 && alertCount === 0) {
+          alertCount = rpAlerts.length;
+          totalArea = rpAlerts.reduce((s: number, a: any) => s + (a.areaHa || 0), 0);
+        }
+      }
     }
 
     return {
@@ -177,11 +308,17 @@ export async function getUsoTerraMapBiomas(
       lon,
       usoAtual,
       classeAtual,
-      historico: [],
+      historico,
+      transicoes,
       alertasDesmatamento: alertCount,
       areaDesmatadaHa: Math.round(totalArea * 100) / 100,
       bioma,
-      fonte: "MapBiomas Alerta",
+      bacia,
+      municipio,
+      estado,
+      embargoMapbiomas,
+      propriedade,
+      fonte: "MapBiomas Alerta + Cobertura",
       consultadoEm: new Date().toISOString(),
     };
   } catch (err) {

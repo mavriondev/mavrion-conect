@@ -17,7 +17,7 @@ import {
   Tag, MessageSquare, Zap, Search, Leaf, Thermometer, Droplets,
   FlaskConical, RefreshCw, Upload, ExternalLink, Paperclip, X as XIcon,
   Filter, ChevronRight, Phone, Mail, Handshake, Camera, Image, Users, BarChart3,
-  Brain, Sparkles, FileBarChart,
+  Brain, Sparkles, FileBarChart, Shield, ChevronDown, ChevronUp, Waves,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
@@ -95,12 +95,68 @@ function AssetPolygonMap({ assetId }: { assetId: number }) {
   );
 }
 
+const CLASSE_COR: Record<number, string> = {
+  1: "#006400", 3: "#1f6e1f", 4: "#b8af4f", 5: "#687537", 6: "#76a5af",
+  9: "#935132", 11: "#45c2a5", 12: "#b8d68f", 13: "#d6bc74", 14: "#ffefc3",
+  15: "#edde8e", 18: "#e974ed", 19: "#c27ba0", 20: "#db7093", 21: "#ffefc3",
+  22: "#d4271e", 23: "#ffa07a", 24: "#d4271e", 25: "#db4d4f", 26: "#0000ff",
+  29: "#ffaa5f", 30: "#9c0027", 31: "#091077", 33: "#0000ff", 39: "#d082de",
+  40: "#982c9e", 41: "#e6ccff", 46: "#cd49e4", 47: "#f3b4f1", 48: "#9065d0",
+  62: "#ff69b4",
+};
+
+function LandUseTimeline({ historico }: { historico: Array<{ ano: number; classe: number; descricao: string }> }) {
+  if (!historico || historico.length === 0) return null;
+  const groups: Array<{ classe: number; descricao: string; de: number; ate: number }> = [];
+  for (const h of historico) {
+    const last = groups[groups.length - 1];
+    if (last && last.classe === h.classe) { last.ate = h.ano; }
+    else { groups.push({ classe: h.classe, descricao: h.descricao, de: h.ano, ate: h.ano }); }
+  }
+  const totalYears = (historico[historico.length - 1]?.ano || 2024) - (historico[0]?.ano || 1985) + 1;
+  return (
+    <div className="space-y-2">
+      <div className="flex rounded-md overflow-hidden h-6" data-testid="timeline-uso-solo">
+        {groups.map((g, i) => {
+          const span = g.ate - g.de + 1;
+          const pct = (span / totalYears) * 100;
+          return (
+            <div
+              key={i}
+              className="relative group cursor-default"
+              style={{ width: `${pct}%`, backgroundColor: CLASSE_COR[g.classe] || "#888", minWidth: pct > 3 ? undefined : "4px" }}
+              title={`${g.descricao} (${g.de}–${g.ate})`}
+            >
+              {pct > 12 && <span className="absolute inset-0 flex items-center justify-center text-[9px] text-white font-medium truncate px-0.5">{g.descricao.length > 12 ? g.descricao.substring(0, 10) + "…" : g.descricao}</span>}
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex justify-between text-[10px] text-muted-foreground">
+        <span>{historico[0]?.ano}</span>
+        <span>{historico[historico.length - 1]?.ano}</span>
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
+        {groups.map((g, i) => (
+          <div key={i} className="flex items-center gap-1 text-[10px]">
+            <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: CLASSE_COR[g.classe] || "#888" }} />
+            <span className="text-muted-foreground">{g.descricao} ({g.de === g.ate ? g.de : `${g.de}–${g.ate}`})</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AmbientalTab({ assetId, camposEspecificos }: { assetId: number; camposEspecificos: any }) {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const [showDeterDetails, setShowDeterDetails] = useState(false);
+  const [showIbamaDetails, setShowIbamaDetails] = useState(false);
   const ambiental = camposEspecificos?.ambiental || null;
   const deter = ambiental?.deter || null;
   const mapbiomas = ambiental?.mapbiomas || null;
+  const ibama = ambiental?.ibama || null;
 
   const consultarMutation = useMutation({
     mutationFn: async () => {
@@ -126,7 +182,7 @@ function AmbientalTab({ assetId, camposEspecificos }: { assetId: number; camposE
             Dados ambientais ainda não consultados para este ativo
           </p>
           <p className="text-xs text-muted-foreground">
-            Consulta alertas de desmatamento via DETER/INPE e MapBiomas Alerta
+            Consulta DETER/INPE, MapBiomas Alerta, IBAMA Embargos e histórico de uso do solo
           </p>
           <Button
             size="sm"
@@ -143,21 +199,37 @@ function AmbientalTab({ assetId, camposEspecificos }: { assetId: number; camposE
     );
   }
 
-  const bothUnavailable = ambiental?.deterStatus === "indisponivel" && ambiental?.mapbiomasStatus === "indisponivel";
-  const totalAlertas = (deter?.totalAlertas || 0) + (mapbiomas?.alertasDesmatamento || 0);
-  const riskColor = bothUnavailable ? "text-gray-500" : totalAlertas === 0 ? "text-green-600" : totalAlertas <= 3 ? "text-yellow-600" : "text-red-600";
-  const riskBg = bothUnavailable ? "bg-gray-50 border-gray-200" : totalAlertas === 0 ? "bg-green-50 border-green-200" : totalAlertas <= 3 ? "bg-yellow-50 border-yellow-200" : "bg-red-50 border-red-200";
-  const riskLabel = bothUnavailable ? "Dados indisponíveis" : totalAlertas === 0 ? "Sem alertas" : totalAlertas <= 3 ? "Atenção" : "Risco elevado";
-  const riskBadge = bothUnavailable ? "bg-gray-100 text-gray-600 border-gray-200" : totalAlertas === 0 ? "bg-green-100 text-green-700 border-green-200" : totalAlertas <= 3 ? "bg-yellow-100 text-yellow-700 border-yellow-200" : "bg-red-100 text-red-700 border-red-200";
+  const allUnavailable = ambiental?.deterStatus === "indisponivel" && ambiental?.mapbiomasStatus === "indisponivel" && ambiental?.ibamaStatus === "indisponivel";
+  const totalAlertasDesmatamento = (deter?.totalAlertas || 0) + (mapbiomas?.alertasDesmatamento || 0);
+  const temEmbargo = ibama?.temEmbargo || false;
+  const embargoMapbiomas = mapbiomas?.embargoMapbiomas || 0;
+
+  let riskLevel: "baixo" | "atencao" | "alto" | "indisponivel" = "baixo";
+  if (allUnavailable) riskLevel = "indisponivel";
+  else if (temEmbargo || totalAlertasDesmatamento > 3 || embargoMapbiomas > 0) riskLevel = "alto";
+  else if (totalAlertasDesmatamento > 0) riskLevel = "atencao";
+
+  const riskConfig = {
+    baixo: { color: "text-green-600", bg: "bg-green-50 border-green-200", badge: "bg-green-100 text-green-700 border-green-200", label: "Baixo risco", icon: CheckCircle2 },
+    atencao: { color: "text-yellow-600", bg: "bg-yellow-50 border-yellow-200", badge: "bg-yellow-100 text-yellow-700 border-yellow-200", label: "Atenção", icon: AlertCircle },
+    alto: { color: "text-red-600", bg: "bg-red-50 border-red-200", badge: "bg-red-100 text-red-700 border-red-200", label: "Risco elevado", icon: AlertCircle },
+    indisponivel: { color: "text-gray-500", bg: "bg-gray-50 border-gray-200", badge: "bg-gray-100 text-gray-600 border-gray-200", label: "Dados indisponíveis", icon: AlertCircle },
+  };
+  const rc = riskConfig[riskLevel];
+  const RiskIcon = rc.icon;
+
+  const transicoes = mapbiomas?.transicoes || [];
+  const historico = mapbiomas?.historico || [];
+  const usoEstavel = historico.length > 0 && transicoes.length === 0;
 
   return (
     <>
       <Card>
         <CardContent className="p-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-sm font-medium">Análise Ambiental — DETER/INPE + MapBiomas</p>
+            <p className="text-sm font-medium">Due Diligence Ambiental</p>
             {ambiental.consultadoEm && (
-              <Badge className={cn("text-xs", riskBadge)} data-testid="badge-ambiental-status">
+              <Badge className={cn("text-xs", rc.badge)} data-testid="badge-ambiental-status">
                 Consultado em {new Date(ambiental.consultadoEm).toLocaleDateString("pt-BR")}
               </Badge>
             )}
@@ -175,96 +247,213 @@ function AmbientalTab({ assetId, camposEspecificos }: { assetId: number; camposE
         </CardContent>
       </Card>
 
-      <Card className={cn("border", riskBg)}>
-        <CardContent className="p-6 text-center">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Risco Ambiental</p>
-          <p className={cn("text-4xl font-bold", riskColor)} data-testid="text-total-alertas">
-            {bothUnavailable ? "—" : totalAlertas}
-          </p>
-          <p className="text-xs text-muted-foreground">{bothUnavailable ? "fontes não responderam" : "alertas de desmatamento"}</p>
-          <Badge className={cn("mt-2 text-xs", riskBadge)} data-testid="badge-risco-ambiental">
-            {riskLabel}
-          </Badge>
+      <Card className={cn("border", rc.bg)}>
+        <CardContent className="p-5">
+          <div className="flex items-center gap-4">
+            <div className="shrink-0">
+              <RiskIcon className={cn("w-10 h-10", rc.color)} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <p className={cn("text-lg font-bold", rc.color)} data-testid="text-risk-level">{rc.label}</p>
+                <Badge className={cn("text-xs", rc.badge)} data-testid="badge-risco-ambiental">{rc.label}</Badge>
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                <span data-testid="text-total-alertas">{totalAlertasDesmatamento} alerta(s) de desmatamento</span>
+                <span data-testid="text-ibama-status">{temEmbargo ? `${ibama.totalEmbargos} embargo(s) IBAMA` : "Sem embargos IBAMA"}</span>
+                {embargoMapbiomas > 0 && <span>{embargoMapbiomas} área(s) embargada(s) MapBiomas</span>}
+              </div>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
-      <div className="grid md:grid-cols-2 gap-4">
+      {historico.length > 0 && (
         <Card>
-          <CardHeader className="pb-3">
+          <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-orange-500" />
-              DETER/INPE
+              <BarChart3 className="w-4 h-4 text-emerald-600" />
+              Histórico de Uso do Solo (1985–{historico[historico.length - 1]?.ano || 2024})
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {deter ? (
-              <>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-muted/40 rounded-lg p-3 text-center">
-                    <p className="text-2xl font-bold" data-testid="text-deter-alertas">{deter.totalAlertas}</p>
-                    <p className="text-xs text-muted-foreground">Alertas</p>
+            <LandUseTimeline historico={historico} />
+            {usoEstavel && (
+              <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2" data-testid="text-uso-estavel">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                Uso estável: <span className="font-medium">{mapbiomas.usoAtual}</span> desde {historico[0]?.ano}
+              </div>
+            )}
+            {transicoes.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground">Transições detectadas:</p>
+                {transicoes.map((t: any, i: number) => (
+                  <div key={i} className="flex items-center gap-2 text-xs bg-amber-50 rounded-lg px-3 py-2" data-testid={`row-transicao-${i}`}>
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                    <span className="text-amber-800"><strong>{t.ano}:</strong> {t.de} → {t.para}</span>
                   </div>
-                  <div className="bg-muted/40 rounded-lg p-3 text-center">
-                    <p className="text-2xl font-bold" data-testid="text-deter-area">{deter.areaDesmatadaHa}</p>
-                    <p className="text-xs text-muted-foreground">Hectares desm.</p>
-                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid md:grid-cols-3 gap-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-blue-500" />
+              Território
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div className="space-y-1.5">
+              {mapbiomas?.bioma && mapbiomas.bioma !== "Não identificado" && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">Bioma</span>
+                  <span className="font-medium" data-testid="text-bioma">{mapbiomas.bioma}</span>
                 </div>
-                {deter.alertas && deter.alertas.length > 0 && (
-                  <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
-                    <p className="text-xs font-medium text-muted-foreground">Alertas recentes:</p>
-                    {deter.alertas.slice(0, 10).map((a: any, i: number) => (
-                      <div key={i} className="flex items-center justify-between text-xs bg-muted/30 rounded px-2 py-1.5" data-testid={`row-deter-alerta-${i}`}>
-                        <span className="font-medium">{a.classe}</span>
-                        <span>{a.areaHa} ha</span>
-                        <span className="text-muted-foreground">{a.municipio}/{a.uf}</span>
-                        <span className="text-muted-foreground">{a.data}</span>
-                      </div>
-                    ))}
-                  </div>
+              )}
+              {mapbiomas?.bacia && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">Bacia</span>
+                  <span className="font-medium" data-testid="text-bacia">{mapbiomas.bacia}</span>
+                </div>
+              )}
+              {mapbiomas?.municipio && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">Município</span>
+                  <span className="font-medium" data-testid="text-municipio-mb">{mapbiomas.municipio}</span>
+                </div>
+              )}
+              {mapbiomas?.estado && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">Estado</span>
+                  <span className="font-medium" data-testid="text-estado-mb">{mapbiomas.estado}</span>
+                </div>
+              )}
+              {mapbiomas?.usoAtual && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">Uso atual</span>
+                  <span className="font-medium" data-testid="text-uso-solo">{mapbiomas.usoAtual}</span>
+                </div>
+              )}
+              {mapbiomas?.propriedade && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">Área CAR</span>
+                  <span className="font-medium" data-testid="text-area-car">{mapbiomas.propriedade.areaHa?.toFixed(1)} ha</span>
+                </div>
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground pt-1">MapBiomas Cobertura + Territórios</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Shield className="w-4 h-4 text-red-500" />
+              IBAMA
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {ibama ? (
+              <>
+                <div className={cn("rounded-lg p-3 text-center", ibama.temEmbargo ? "bg-red-50" : "bg-green-50")}>
+                  {ibama.temEmbargo ? (
+                    <>
+                      <p className="text-2xl font-bold text-red-600" data-testid="text-ibama-embargos">{ibama.totalEmbargos}</p>
+                      <p className="text-xs text-red-600">Embargo(s) encontrado(s)</p>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-6 h-6 text-green-600 mx-auto" />
+                      <p className="text-xs text-green-700 font-medium mt-1" data-testid="text-ibama-ok">Sem embargos IBAMA</p>
+                    </>
+                  )}
+                </div>
+                {ibama.embargos && ibama.embargos.length > 0 && (
+                  <Button
+                    variant="ghost" size="sm" className="w-full text-xs gap-1"
+                    onClick={() => setShowIbamaDetails(!showIbamaDetails)}
+                    data-testid="button-ibama-detalhes"
+                  >
+                    {showIbamaDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    {showIbamaDetails ? "Ocultar detalhes" : "Ver detalhes"}
+                  </Button>
                 )}
-                <p className="text-[10px] text-muted-foreground">{deter.fonte}</p>
+                {showIbamaDetails && ibama.embargos?.map((e: any, i: number) => (
+                  <div key={i} className="text-xs bg-red-50 rounded px-2.5 py-2 space-y-0.5" data-testid={`row-ibama-embargo-${i}`}>
+                    <div className="flex justify-between">
+                      <span className="font-medium">Auto: {e.numAuto || e.numero || "—"}</span>
+                      <span className="text-muted-foreground">{e.dataInfracao || e.data || "—"}</span>
+                    </div>
+                    {e.tipInfracao && <p className="text-muted-foreground truncate">{e.tipInfracao}</p>}
+                    {e.situacao && <Badge variant="outline" className="text-[10px]">{e.situacao}</Badge>}
+                  </div>
+                ))}
+                <p className="text-[10px] text-muted-foreground">{ibama.fonte}</p>
               </>
             ) : (
-              <p className="text-sm text-muted-foreground text-center py-4">Dados DETER indisponíveis</p>
+              <p className="text-xs text-muted-foreground text-center py-4">Dados IBAMA indisponíveis</p>
             )}
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="pb-3">
+          <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2">
-              <Leaf className="w-4 h-4 text-green-500" />
-              MapBiomas Alerta
+              <AlertCircle className="w-4 h-4 text-orange-500" />
+              Alertas de Desmatamento
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            {mapbiomas ? (
-              <>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-muted/40 rounded-lg p-3 text-center">
-                    <p className="text-2xl font-bold" data-testid="text-mapbiomas-alertas">{mapbiomas.alertasDesmatamento}</p>
-                    <p className="text-xs text-muted-foreground">Alertas</p>
-                  </div>
-                  <div className="bg-muted/40 rounded-lg p-3 text-center">
-                    <p className="text-2xl font-bold" data-testid="text-mapbiomas-area">{mapbiomas.areaDesmatadaHa}</p>
-                    <p className="text-xs text-muted-foreground">Hectares desm.</p>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-muted-foreground">Uso atual do solo:</span>
-                    <span className="font-medium" data-testid="text-uso-solo">{mapbiomas.usoAtual}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-muted-foreground">Bioma:</span>
-                    <span className="font-medium" data-testid="text-bioma">{mapbiomas.bioma}</span>
-                  </div>
-                </div>
-                <p className="text-[10px] text-muted-foreground">{mapbiomas.fonte}</p>
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground text-center py-4">Dados MapBiomas indisponíveis</p>
+          <CardContent className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-muted/40 rounded-lg p-2.5 text-center">
+                <p className="text-xl font-bold" data-testid="text-deter-alertas">{deter?.totalAlertas ?? "—"}</p>
+                <p className="text-[10px] text-muted-foreground">DETER</p>
+              </div>
+              <div className="bg-muted/40 rounded-lg p-2.5 text-center">
+                <p className="text-xl font-bold" data-testid="text-mapbiomas-alertas">{mapbiomas?.alertasDesmatamento ?? "—"}</p>
+                <p className="text-[10px] text-muted-foreground">MapBiomas</p>
+              </div>
+            </div>
+            {(deter?.areaDesmatadaHa > 0 || mapbiomas?.areaDesmatadaHa > 0) && (
+              <div className="text-xs text-center text-muted-foreground" data-testid="text-area-desmatada">
+                Área total: {((deter?.areaDesmatadaHa || 0) + (mapbiomas?.areaDesmatadaHa || 0)).toFixed(1)} ha
+              </div>
             )}
+            {deter?.alertas && deter.alertas.length > 0 && (
+              <>
+                <Button
+                  variant="ghost" size="sm" className="w-full text-xs gap-1"
+                  onClick={() => setShowDeterDetails(!showDeterDetails)}
+                  data-testid="button-deter-detalhes"
+                >
+                  {showDeterDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  {showDeterDetails ? "Ocultar alertas" : `Ver ${deter.alertas.length} alerta(s)`}
+                </Button>
+                {showDeterDetails && (
+                  <div className="space-y-1 max-h-[180px] overflow-y-auto">
+                    {deter.alertas.slice(0, 10).map((a: any, i: number) => (
+                      <div key={i} className="flex items-center justify-between text-[10px] bg-muted/30 rounded px-2 py-1" data-testid={`row-deter-alerta-${i}`}>
+                        <span className="font-medium">{a.classe}</span>
+                        <span>{a.areaHa} ha</span>
+                        <span className="text-muted-foreground">{a.data}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+            {totalAlertasDesmatamento === 0 && (
+              <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                Nenhum alerta de desmatamento
+              </div>
+            )}
+            <p className="text-[10px] text-muted-foreground">DETER/INPE + MapBiomas Alerta</p>
           </CardContent>
         </Card>
       </div>

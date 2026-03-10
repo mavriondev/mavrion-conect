@@ -596,20 +596,49 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
       }
 
       const carCode = campos.car_cod_imovel || asset.carCodImovel || undefined;
+      const cpfCnpj = campos.cpfProprietario || campos.cnpjProprietario || null;
 
-      const [deterResult, mapbiomasResult] = await Promise.allSettled([
+      const existingIbamaProp = campos.ibamaProprietario || null;
+      const existingIbamaGeo = campos.ibamaGeo || null;
+
+      const [deterResult, mapbiomasResult, ibamaPropResult, ibamaGeoResult] = await Promise.allSettled([
         consultarDeterINPE(lat, lon),
         getUsoTerraMapBiomas(lat, lon, carCode),
+        existingIbamaProp
+          ? Promise.resolve(existingIbamaProp)
+          : cpfCnpj
+            ? consultarEmbargoIbama(cpfCnpj)
+            : Promise.resolve(null),
+        existingIbamaGeo
+          ? Promise.resolve(existingIbamaGeo)
+          : consultarEmbargoIbamaCoordenadas(lat, lon),
       ]);
 
       const deter = deterResult.status === "fulfilled" ? deterResult.value : null;
       const mapbiomas = mapbiomasResult.status === "fulfilled" ? mapbiomasResult.value : null;
+      const ibamaProp = ibamaPropResult.status === "fulfilled" ? ibamaPropResult.value : null;
+      const ibamaGeo = ibamaGeoResult.status === "fulfilled" ? ibamaGeoResult.value : null;
+
+      const temEmbargo = !!(ibamaProp?.temEmbargo || ibamaGeo?.temEmbargo);
+      const embargosLista = [
+        ...(ibamaProp?.embargos || []),
+        ...(ibamaGeo?.embargos || []),
+      ];
+
+      const ibama = {
+        temEmbargo,
+        totalEmbargos: embargosLista.length,
+        embargos: embargosLista.slice(0, 20),
+        fonte: "IBAMA — Dados Abertos + GeoServer",
+      };
 
       const ambiental = {
         deter,
         mapbiomas,
+        ibama,
         deterStatus: deter ? "ok" : "indisponivel",
         mapbiomasStatus: mapbiomas ? "ok" : "indisponivel",
+        ibamaStatus: (ibamaProp || ibamaGeo) ? "ok" : "indisponivel",
         consultadoEm: new Date().toISOString(),
       };
 
