@@ -362,7 +362,7 @@ function AmbientalTab({ assetId, camposEspecificos }: { assetId: number; camposE
                   {ibama.temEmbargo ? (
                     <>
                       <p className="text-2xl font-bold text-red-600" data-testid="text-ibama-embargos">{ibama.totalEmbargos}</p>
-                      <p className="text-xs text-red-600">Embargo(s) encontrado(s)</p>
+                      <p className="text-xs text-red-600">Embargo(s) no município</p>
                     </>
                   ) : (
                     <>
@@ -371,6 +371,12 @@ function AmbientalTab({ assetId, camposEspecificos }: { assetId: number; camposE
                     </>
                   )}
                 </div>
+                {ibama.totalInfracoes > 0 && (
+                  <div className="rounded-lg p-2 bg-muted/50 text-center">
+                    <p className="text-lg font-semibold" data-testid="text-ibama-infracoes">{ibama.totalInfracoes}</p>
+                    <p className="text-[10px] text-muted-foreground">Infrações ambientais no município</p>
+                  </div>
+                )}
                 {ibama.embargos && ibama.embargos.length > 0 && (
                   <Button
                     variant="ghost" size="sm" className="w-full text-xs gap-1"
@@ -378,17 +384,21 @@ function AmbientalTab({ assetId, camposEspecificos }: { assetId: number; camposE
                     data-testid="button-ibama-detalhes"
                   >
                     {showIbamaDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                    {showIbamaDetails ? "Ocultar detalhes" : "Ver detalhes"}
+                    {showIbamaDetails ? "Ocultar detalhes" : `Ver ${ibama.embargos.length} infração(ões)`}
                   </Button>
                 )}
                 {showIbamaDetails && ibama.embargos?.map((e: any, i: number) => (
-                  <div key={i} className="text-xs bg-red-50 rounded px-2.5 py-2 space-y-0.5" data-testid={`row-ibama-embargo-${i}`}>
+                  <div key={i} className={cn("text-xs rounded px-2.5 py-2 space-y-0.5", e.temEmbargo ? "bg-red-50" : "bg-muted/30")} data-testid={`row-ibama-embargo-${i}`}>
                     <div className="flex justify-between">
                       <span className="font-medium">Auto: {e.numAuto || e.numero || "—"}</span>
                       <span className="text-muted-foreground">{e.dataInfracao || e.data || "—"}</span>
                     </div>
-                    {e.tipInfracao && <p className="text-muted-foreground truncate">{e.tipInfracao}</p>}
-                    {e.situacao && <Badge variant="outline" className="text-[10px]">{e.situacao}</Badge>}
+                    {(e.tipInfracao || e.tipoInfracao) && <p className="text-muted-foreground truncate">{e.tipInfracao || e.tipoInfracao}</p>}
+                    {e.descricao && <p className="text-muted-foreground truncate">{e.descricao}</p>}
+                    <div className="flex gap-1">
+                      {e.situacao && <Badge variant="outline" className="text-[10px]">{e.situacao}</Badge>}
+                      {e.temEmbargo && <Badge variant="destructive" className="text-[10px]">Embargado</Badge>}
+                    </div>
                   </div>
                 ))}
                 <p className="text-[10px] text-muted-foreground">{ibama.fonte}</p>

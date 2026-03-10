@@ -10,7 +10,7 @@ import { matchesRegion } from "./matching";
 import { runMatchingForAsset } from "../lib/auto-match";
 import { enriquecerFazenda, consultarNDVIGrid } from "../enrichment/agro";
 import { sql } from "drizzle-orm";
-import { consultarEmbargoIbama, consultarEmbargoIbamaCoordenadas } from "../lib/ibama";
+import { consultarEmbargoIbama, consultarEmbargoIbamaCoordenadas, consultarEmbargoIbamaMunicipio } from "../lib/ibama";
 import { getUsoTerraMapBiomas } from "../lib/mapbiomas";
 import { consultarDeterINPE } from "../lib/deter-inpe";
 import { getNDVISentinel } from "../lib/sentinel";
@@ -616,8 +616,34 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
 
       const deter = deterResult.status === "fulfilled" ? deterResult.value : null;
       const mapbiomas = mapbiomasResult.status === "fulfilled" ? mapbiomasResult.value : null;
-      const ibamaProp = ibamaPropResult.status === "fulfilled" ? ibamaPropResult.value : null;
-      const ibamaGeo = ibamaGeoResult.status === "fulfilled" ? ibamaGeoResult.value : null;
+      let ibamaProp = ibamaPropResult.status === "fulfilled" ? ibamaPropResult.value : null;
+      let ibamaGeo = ibamaGeoResult.status === "fulfilled" ? ibamaGeoResult.value : null;
+
+      if (!ibamaGeo || (ibamaGeo as any).totalInfracoes === 0) {
+        const munName = mapbiomas?.municipio || campos.municipio || "";
+        const ufName = mapbiomas?.estado || campos.uf || "";
+        const ufSigla = ufName.length === 2 ? ufName :
+          { "Minas Gerais": "MG", "São Paulo": "SP", "Rio de Janeiro": "RJ", "Bahia": "BA",
+            "Goiás": "GO", "Mato Grosso": "MT", "Mato Grosso do Sul": "MS", "Paraná": "PR",
+            "Rio Grande do Sul": "RS", "Santa Catarina": "SC", "Pará": "PA", "Amazonas": "AM",
+            "Maranhão": "MA", "Piauí": "PI", "Ceará": "CE", "Pernambuco": "PE", "Tocantins": "TO",
+            "Rondônia": "RO", "Acre": "AC", "Amapá": "AP", "Roraima": "RR", "Sergipe": "SE",
+            "Alagoas": "AL", "Rio Grande do Norte": "RN", "Paraíba": "PB", "Espírito Santo": "ES",
+            "Distrito Federal": "DF" }[ufName] || "";
+        if (munName && ufSigla) {
+          try {
+            const munResult = await consultarEmbargoIbamaMunicipio(munName, ufSigla);
+            if (munResult) {
+              ibamaGeo = {
+                temEmbargo: munResult.temEmbargo,
+                totalInfracoes: munResult.totalInfracoes,
+                embargos: munResult.infracoes || [],
+                fonte: `IBAMA — Município ${munName}/${ufSigla}`,
+              };
+            }
+          } catch {}
+        }
+      }
 
       const ibamaAvailable = !!(ibamaProp || ibamaGeo);
       const temEmbargo = ibamaAvailable ? !!(ibamaProp?.temEmbargo || ibamaGeo?.temEmbargo) : null;
@@ -625,12 +651,14 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
         ...(ibamaProp?.embargos || []),
         ...(ibamaGeo?.embargos || []),
       ];
+      const totalInfracoes = (ibamaGeo as any)?.totalInfracoes || 0;
 
       const ibama = ibamaAvailable ? {
         temEmbargo: !!temEmbargo,
-        totalEmbargos: embargosLista.length,
+        totalEmbargos: embargosLista.filter((e: any) => e.temEmbargo).length,
+        totalInfracoes,
         embargos: embargosLista.slice(0, 20),
-        fonte: "IBAMA — Dados Abertos + GeoServer",
+        fonte: (ibamaGeo as any)?.fonte || "IBAMA — Base Local",
       } : null;
 
       const ambiental = {
