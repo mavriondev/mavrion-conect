@@ -12,6 +12,7 @@ import { enriquecerFazenda, consultarNDVIGrid } from "../enrichment/agro";
 import { sql } from "drizzle-orm";
 import { consultarEmbargoIbama, consultarEmbargoIbamaCoordenadas } from "../lib/ibama";
 import { getUsoTerraMapBiomas } from "../lib/mapbiomas";
+import { consultarDeterINPE } from "../lib/deter-inpe";
 import { getNDVISentinel } from "../lib/sentinel";
 import { getProducaoMunicipio } from "../lib/contexto-regional";
 import { consultarApiPaginadaPublica, calcularPerfilNorion } from "../services/caf-crawler";
@@ -541,6 +542,44 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
       temEmbargoIbama,
       erros,
     });
+  });
+
+  app.get("/api/matching/assets/:id/ambiental", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const asset = await storage.getAsset(Number(req.params.id));
+      if (!asset) return res.status(404).json({ message: "Ativo não encontrado" });
+
+      const campos = (asset.camposEspecificos as any) || {};
+      const lat = Number(campos.latitude);
+      const lon = Number(campos.longitude);
+
+      if (!lat || !lon || isNaN(lat) || isNaN(lon)) {
+        return res.status(400).json({ message: "Ativo sem coordenadas (latitude/longitude)" });
+      }
+
+      const [deterResult, mapbiomasResult] = await Promise.allSettled([
+        consultarDeterINPE(lat, lon),
+        getUsoTerraMapBiomas(lat, lon),
+      ]);
+
+      const deter = deterResult.status === "fulfilled" ? deterResult.value : null;
+      const mapbiomas = mapbiomasResult.status === "fulfilled" ? mapbiomasResult.value : null;
+
+      const ambiental = {
+        deter,
+        mapbiomas,
+        consultadoEm: new Date().toISOString(),
+      };
+
+      const camposAtualizados = { ...campos, ambiental };
+      await storage.updateAsset(asset.id, { camposEspecificos: camposAtualizados });
+
+      res.json(ambiental);
+    } catch (err) {
+      console.error("[Ambiental] Erro:", (err as Error).message);
+      res.status(500).json({ message: "Erro na consulta ambiental" });
+    }
   });
 
   app.post("/api/matching/assets/:id/contexto-regional", async (req, res) => {

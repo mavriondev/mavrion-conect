@@ -95,6 +95,182 @@ function AssetPolygonMap({ assetId }: { assetId: number }) {
   );
 }
 
+function AmbientalTab({ assetId, camposEspecificos }: { assetId: number; camposEspecificos: any }) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const ambiental = camposEspecificos?.ambiental || null;
+  const deter = ambiental?.deter || null;
+  const mapbiomas = ambiental?.mapbiomas || null;
+
+  const consultarMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("GET", `/api/matching/assets/${assetId}/ambiental`);
+      if (!res.ok) throw new Error("Falha na consulta");
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/matching/assets", assetId] });
+      toast({ title: "Consulta ambiental concluída" });
+    },
+    onError: () => {
+      toast({ title: "Erro na consulta ambiental", variant: "destructive" });
+    },
+  });
+
+  const totalAlertas = (deter?.totalAlertas || 0) + (mapbiomas?.alertasDesmatamento || 0);
+  const riskColor = totalAlertas === 0 ? "text-green-600" : totalAlertas <= 3 ? "text-yellow-600" : "text-red-600";
+  const riskBg = totalAlertas === 0 ? "bg-green-50 border-green-200" : totalAlertas <= 3 ? "bg-yellow-50 border-yellow-200" : "bg-red-50 border-red-200";
+  const riskLabel = totalAlertas === 0 ? "Sem alertas" : totalAlertas <= 3 ? "Atenção" : "Risco elevado";
+  const riskBadge = totalAlertas === 0 ? "bg-green-100 text-green-700 border-green-200" : totalAlertas <= 3 ? "bg-yellow-100 text-yellow-700 border-yellow-200" : "bg-red-100 text-red-700 border-red-200";
+
+  if (!ambiental) {
+    return (
+      <Card>
+        <CardContent className="p-6 text-center space-y-3">
+          <TreePine className="w-10 h-10 mx-auto text-muted-foreground opacity-30" />
+          <p className="text-sm text-muted-foreground" data-testid="text-ambiental-vazio">
+            Dados ambientais ainda não consultados para este ativo
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Consulta alertas de desmatamento via DETER/INPE e MapBiomas Alerta
+          </p>
+          <Button
+            size="sm"
+            disabled={consultarMutation.isPending}
+            onClick={() => consultarMutation.mutate()}
+            data-testid="button-consultar-ambiental"
+          >
+            {consultarMutation.isPending
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Consultando...</>
+              : <><Search className="w-3.5 h-3.5" /> Consultar dados ambientais</>}
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <>
+      <Card>
+        <CardContent className="p-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-medium">Análise Ambiental — DETER/INPE + MapBiomas</p>
+            {ambiental.consultadoEm && (
+              <Badge className={cn("text-xs", riskBadge)} data-testid="badge-ambiental-status">
+                Consultado em {new Date(ambiental.consultadoEm).toLocaleDateString("pt-BR")}
+              </Badge>
+            )}
+          </div>
+          <Button
+            size="sm" variant="outline" className="gap-1.5 shrink-0"
+            disabled={consultarMutation.isPending}
+            onClick={() => consultarMutation.mutate()}
+            data-testid="button-atualizar-ambiental"
+          >
+            {consultarMutation.isPending
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Atualizando...</>
+              : <><RefreshCw className="w-3.5 h-3.5" /> Atualizar</>}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className={cn("border", riskBg)}>
+        <CardContent className="p-6 text-center">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Risco Ambiental</p>
+          <p className={cn("text-4xl font-bold", riskColor)} data-testid="text-total-alertas">
+            {totalAlertas}
+          </p>
+          <p className="text-xs text-muted-foreground">alertas de desmatamento</p>
+          <Badge className={cn("mt-2 text-xs", riskBadge)} data-testid="badge-risco-ambiental">
+            {riskLabel}
+          </Badge>
+        </CardContent>
+      </Card>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-orange-500" />
+              DETER/INPE
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {deter ? (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-muted/40 rounded-lg p-3 text-center">
+                    <p className="text-2xl font-bold" data-testid="text-deter-alertas">{deter.totalAlertas}</p>
+                    <p className="text-xs text-muted-foreground">Alertas</p>
+                  </div>
+                  <div className="bg-muted/40 rounded-lg p-3 text-center">
+                    <p className="text-2xl font-bold" data-testid="text-deter-area">{deter.areaDesmatadaHa}</p>
+                    <p className="text-xs text-muted-foreground">Hectares desm.</p>
+                  </div>
+                </div>
+                {deter.alertas && deter.alertas.length > 0 && (
+                  <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                    <p className="text-xs font-medium text-muted-foreground">Alertas recentes:</p>
+                    {deter.alertas.slice(0, 10).map((a: any, i: number) => (
+                      <div key={i} className="flex items-center justify-between text-xs bg-muted/30 rounded px-2 py-1.5" data-testid={`row-deter-alerta-${i}`}>
+                        <span className="font-medium">{a.classe}</span>
+                        <span>{a.areaHa} ha</span>
+                        <span className="text-muted-foreground">{a.municipio}/{a.uf}</span>
+                        <span className="text-muted-foreground">{a.data}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[10px] text-muted-foreground">{deter.fonte}</p>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-4">Dados DETER indisponíveis</p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Leaf className="w-4 h-4 text-green-500" />
+              MapBiomas Alerta
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {mapbiomas ? (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-muted/40 rounded-lg p-3 text-center">
+                    <p className="text-2xl font-bold" data-testid="text-mapbiomas-alertas">{mapbiomas.alertasDesmatamento}</p>
+                    <p className="text-xs text-muted-foreground">Alertas</p>
+                  </div>
+                  <div className="bg-muted/40 rounded-lg p-3 text-center">
+                    <p className="text-2xl font-bold" data-testid="text-mapbiomas-area">{mapbiomas.areaDesmatadaHa}</p>
+                    <p className="text-xs text-muted-foreground">Hectares desm.</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted-foreground">Uso atual do solo:</span>
+                    <span className="font-medium" data-testid="text-uso-solo">{mapbiomas.usoAtual}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted-foreground">Bioma:</span>
+                    <span className="font-medium" data-testid="text-bioma">{mapbiomas.bioma}</span>
+                  </div>
+                </div>
+                <p className="text-[10px] text-muted-foreground">{mapbiomas.fonte}</p>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-4">Dados MapBiomas indisponíveis</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </>
+  );
+}
+
 const TIPO_CONFIG: Record<string, { label: string; icon: any; color: string; badge: string }> = {
   TERRA:           { label: "Terra / Fazenda",       icon: TreePine,  color: "text-green-600",  badge: "bg-green-100 text-green-800" },
   MINA:            { label: "Mineração",              icon: Pickaxe,   color: "text-orange-600", badge: "bg-orange-100 text-orange-800" },
@@ -117,6 +293,7 @@ const ABAS_POR_TIPO: Record<string, Array<{id: string, label: string}>> = {
     { id: "matches",    label: "Matches" },
     { id: "geo",        label: "Geo & SICAR" },
     { id: "embrapa",    label: "Embrapa" },
+    { id: "ambiental",  label: "Ambiental" },
     { id: "caf",        label: "CAF / PRONAF" },
     { id: "empresa",    label: "Empresa" },
     { id: "ia",         label: "IA" },
@@ -127,6 +304,7 @@ const ABAS_POR_TIPO: Record<string, Array<{id: string, label: string}>> = {
     { id: "matches",    label: "Matches" },
     { id: "geo",        label: "Geo & SICAR" },
     { id: "embrapa",    label: "Embrapa" },
+    { id: "ambiental",  label: "Ambiental" },
     { id: "caf",        label: "CAF / PRONAF" },
     { id: "empresa",    label: "Empresa" },
     { id: "ia",         label: "IA" },
@@ -1093,6 +1271,9 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                   <Badge variant="secondary" className="ml-1.5 h-5 px-1.5 text-[10px]">{linkedDeals.length + matchesInternos.length}</Badge>
                 )}
                 {aba.id === "embrapa" && (ativo.camposEspecificos as any)?.embrapa && (
+                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block ml-1" />
+                )}
+                {aba.id === "ambiental" && (ativo.camposEspecificos as any)?.ambiental && (
                   <span className="w-2 h-2 rounded-full bg-green-500 inline-block ml-1" />
                 )}
               </TabsTrigger>
@@ -2202,6 +2383,13 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
             )}
 
           </TabsContent>
+
+        {/* ── Ambiental Tab ── */}
+        {(ABAS_POR_TIPO[ativo.type] || ABAS_POR_TIPO["NEGOCIO"]).some(a => a.id === "ambiental") && (
+          <TabsContent value="ambiental" className="mt-4 space-y-4">
+            <AmbientalTab assetId={id} camposEspecificos={ativo.camposEspecificos} />
+          </TabsContent>
+        )}
 
         {/* ── Placeholder tabs (only rendered if present in ABAS_POR_TIPO for this type) ── */}
         {(ABAS_POR_TIPO[ativo.type] || ABAS_POR_TIPO["NEGOCIO"]).some(a => a.id === "geo") && (

@@ -13,6 +13,8 @@ import {
   type EnriquecimentoAgroCompleto
 } from '../enrichment/agro';
 import { runMatchingForAsset } from "../lib/auto-match";
+import { consultarDeterINPE } from "../lib/deter-inpe";
+import { getUsoTerraMapBiomas } from "../lib/mapbiomas";
 
 const ANM_MAPSERVER_URL = "https://geo.anm.gov.br/arcgis/rest/services/SIGMINE/dados_anm/MapServer/0/query";
 const SICAR_WFS = "https://geoserver.car.gov.br/geoserver/sicar/wfs";
@@ -1519,6 +1521,28 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
             console.warn(`[Auto-enrich] Falha no enriquecimento do ativo ${asset.id}:`, enrichErr.message);
           }
         })();
+
+        setImmediate(async () => {
+          try {
+            console.log(`[Auto-ambiental] Consultando DETER + MapBiomas para ativo ${asset.id}...`);
+            const [deterRes, mapbiomasRes] = await Promise.allSettled([
+              consultarDeterINPE(centroidLat!, centroidLon!),
+              getUsoTerraMapBiomas(centroidLat!, centroidLon!),
+            ]);
+            const deter = deterRes.status === "fulfilled" ? deterRes.value : null;
+            const mapbiomas = mapbiomasRes.status === "fulfilled" ? mapbiomasRes.value : null;
+            const ambiental = { deter, mapbiomas, consultadoEm: new Date().toISOString() };
+
+            const cur = await storage.getAsset(asset.id);
+            const curCampos = (cur?.camposEspecificos as any) || {};
+            await storage.updateAsset(asset.id, {
+              camposEspecificos: { ...curCampos, ambiental },
+            });
+            console.log(`[Auto-ambiental] Ativo ${asset.id}: DETER=${deter?.totalAlertas ?? 'N/A'}, MapBiomas=${mapbiomas?.alertasDesmatamento ?? 'N/A'}`);
+          } catch (err: any) {
+            console.warn(`[Auto-ambiental] Falha para ativo ${asset.id}:`, err.message);
+          }
+        });
       }
 
       if (codMunicipio && uf) {
