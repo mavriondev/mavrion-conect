@@ -547,8 +547,9 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
   app.get("/api/matching/assets/:id/ambiental", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
+      const user = req.user as any;
       const asset = await storage.getAsset(Number(req.params.id));
-      if (!asset) return res.status(404).json({ message: "Ativo não encontrado" });
+      if (!asset || asset.orgId !== user?.orgId) return res.status(404).json({ message: "Ativo não encontrado" });
 
       const campos = (asset.camposEspecificos as any) || {};
       const lat = Number(campos.latitude);
@@ -569,6 +570,8 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
       const ambiental = {
         deter,
         mapbiomas,
+        deterStatus: deter ? "ok" : "indisponivel",
+        mapbiomasStatus: mapbiomas ? "ok" : "indisponivel",
         consultadoEm: new Date().toISOString(),
       };
 

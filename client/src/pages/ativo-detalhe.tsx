@@ -117,11 +117,12 @@ function AmbientalTab({ assetId, camposEspecificos }: { assetId: number; camposE
     },
   });
 
+  const bothUnavailable = ambiental.deterStatus === "indisponivel" && ambiental.mapbiomasStatus === "indisponivel";
   const totalAlertas = (deter?.totalAlertas || 0) + (mapbiomas?.alertasDesmatamento || 0);
-  const riskColor = totalAlertas === 0 ? "text-green-600" : totalAlertas <= 3 ? "text-yellow-600" : "text-red-600";
-  const riskBg = totalAlertas === 0 ? "bg-green-50 border-green-200" : totalAlertas <= 3 ? "bg-yellow-50 border-yellow-200" : "bg-red-50 border-red-200";
-  const riskLabel = totalAlertas === 0 ? "Sem alertas" : totalAlertas <= 3 ? "Atenção" : "Risco elevado";
-  const riskBadge = totalAlertas === 0 ? "bg-green-100 text-green-700 border-green-200" : totalAlertas <= 3 ? "bg-yellow-100 text-yellow-700 border-yellow-200" : "bg-red-100 text-red-700 border-red-200";
+  const riskColor = bothUnavailable ? "text-gray-500" : totalAlertas === 0 ? "text-green-600" : totalAlertas <= 3 ? "text-yellow-600" : "text-red-600";
+  const riskBg = bothUnavailable ? "bg-gray-50 border-gray-200" : totalAlertas === 0 ? "bg-green-50 border-green-200" : totalAlertas <= 3 ? "bg-yellow-50 border-yellow-200" : "bg-red-50 border-red-200";
+  const riskLabel = bothUnavailable ? "Dados indisponíveis" : totalAlertas === 0 ? "Sem alertas" : totalAlertas <= 3 ? "Atenção" : "Risco elevado";
+  const riskBadge = bothUnavailable ? "bg-gray-100 text-gray-600 border-gray-200" : totalAlertas === 0 ? "bg-green-100 text-green-700 border-green-200" : totalAlertas <= 3 ? "bg-yellow-100 text-yellow-700 border-yellow-200" : "bg-red-100 text-red-700 border-red-200";
 
   if (!ambiental) {
     return (
@@ -178,9 +179,9 @@ function AmbientalTab({ assetId, camposEspecificos }: { assetId: number; camposE
         <CardContent className="p-6 text-center">
           <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Risco Ambiental</p>
           <p className={cn("text-4xl font-bold", riskColor)} data-testid="text-total-alertas">
-            {totalAlertas}
+            {bothUnavailable ? "—" : totalAlertas}
           </p>
-          <p className="text-xs text-muted-foreground">alertas de desmatamento</p>
+          <p className="text-xs text-muted-foreground">{bothUnavailable ? "fontes não responderam" : "alertas de desmatamento"}</p>
           <Badge className={cn("mt-2 text-xs", riskBadge)} data-testid="badge-risco-ambiental">
             {riskLabel}
           </Badge>
