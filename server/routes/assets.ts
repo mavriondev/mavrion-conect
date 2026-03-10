@@ -179,6 +179,42 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
         }
       }
 
+      if ((row?.type === "TERRA" || row?.type === "AGRO") && !row?.geojson) {
+        try {
+          const carResult = await db.execute(
+            sql`SELECT car_cod_imovel FROM assets WHERE id = ${assetId} AND org_id = ${orgId}`
+          );
+          const carCod = (carResult as any).rows?.[0]?.car_cod_imovel;
+          if (carCod) {
+            const ufCar = carCod.substring(0, 2);
+            const SICAR_WFS = "https://geoserver.car.gov.br/geoserver/sicar/wfs";
+            const params = new URLSearchParams({
+              service: "WFS",
+              version: "2.0.0",
+              request: "GetFeature",
+              typeName: `sicar:sicar_imoveis_${ufCar.toLowerCase()}`,
+              outputFormat: "application/json",
+              CQL_FILTER: `cod_imovel='${carCod}'`,
+              maxFeatures: "1",
+              srsName: "EPSG:4326",
+            });
+            const sicarResp = await fetch(`${SICAR_WFS}?${params}`, {
+              signal: AbortSignal.timeout(20000),
+            }).catch(() => null);
+
+            if (sicarResp?.ok) {
+              const sicarData = await sicarResp.json() as any;
+              const feature = sicarData?.features?.[0];
+              if (feature?.geometry) {
+                return res.json({ geometry: feature.geometry });
+              }
+            }
+          }
+        } catch (sicarErr: any) {
+          console.error("SICAR geometry fallback error:", sicarErr.message);
+        }
+      }
+
       return res.json({ geometry: null });
     } catch (err) { res.status(500).json({ message: "Erro interno" }); }
   });
