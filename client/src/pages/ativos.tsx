@@ -39,10 +39,6 @@ const TIPO_CONFIG: Record<string, { label: string; icon: any; color: string; bad
   AGRO:         { label: "Agronegócio",            icon: Wheat,     color: "text-yellow-600", badge: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300" },
 };
 
-const TIPOS_LIST = [
-  { value: "all", label: "Todos os tipos" },
-  ...Object.entries(TIPO_CONFIG).map(([value, cfg]) => ({ value, label: cfg.label })),
-];
 
 const ESTADOS_BR = [
   "AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT",
@@ -782,7 +778,12 @@ function AtivoCard({ ativo, onEdit, onDelete }: { ativo: any; onEdit: () => void
 
             {!ativo.anmProcesso && (() => {
               const attrs = ativo.attributesJson as Record<string, any> | null;
-              if (!attrs?.carCodImovel) return null;
+              const carCode = attrs?.carCodImovel || (ativo as any).carCodImovel;
+              if (!carCode) return null;
+              const geoScore = attrs?.geoScore ?? (ativo as any).geoScore;
+              const geoTemRio = attrs?.geoTemRio ?? (ativo as any).geoTemRio;
+              const geoTemEnergia = attrs?.geoTemEnergia ?? (ativo as any).geoTemEnergia;
+              const carMunicipio = attrs?.carMunicipio || ativo.municipio;
               return (
                 <div className="mt-2 rounded-lg border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-900/10 p-2.5 space-y-1.5 overflow-hidden" data-testid={`car-info-${ativo.id}`}>
                   <Link
@@ -791,13 +792,13 @@ function AtivoCard({ ativo, onEdit, onDelete }: { ativo: any; onEdit: () => void
                     data-testid={`badge-car-${ativo.id}`}
                   >
                     <TreePine className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate min-w-0">CAR: <span className="font-mono">{attrs.carCodImovel}</span></span>
+                    <span className="truncate min-w-0">CAR: <span className="font-mono">{carCode}</span></span>
                   </Link>
                   <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-                    {attrs.carMunicipio && <p><span className="font-medium">Município:</span> {attrs.carMunicipio}</p>}
-                    {attrs.geoScore != null && <p><span className="font-medium">Score:</span> {attrs.geoScore}/100</p>}
-                    {attrs.geoTemRio && <p><span className="font-medium">Água:</span> ✓ Rio/Córrego</p>}
-                    {attrs.geoTemEnergia && <p><span className="font-medium">Energia:</span> ✓ Próxima</p>}
+                    {carMunicipio && <p><span className="font-medium">Município:</span> {carMunicipio}</p>}
+                    {geoScore != null && <p><span className="font-medium">Score:</span> {geoScore}/100</p>}
+                    {geoTemRio && <p><span className="font-medium">Água:</span> ✓ Rio/Córrego</p>}
+                    {geoTemEnergia && <p><span className="font-medium">Energia:</span> ✓ Próxima</p>}
                   </div>
                 </div>
               );
@@ -917,13 +918,6 @@ export default function AtivosPage({ filterType }: { filterType?: string }) {
     toast({ title: "Ativo excluído" });
   };
 
-  const typeCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: (assets as any[]).length };
-    for (const a of assets as any[]) {
-      counts[a.type] = (counts[a.type] || 0) + 1;
-    }
-    return counts;
-  }, [assets]);
 
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-5 max-w-7xl mx-auto">
@@ -955,36 +949,6 @@ export default function AtivosPage({ filterType }: { filterType?: string }) {
             <Plus className="w-4 h-4 mr-1.5" /> Cadastrar Ativo
           </Button>
         </div>
-      </div>
-
-      {/* Type filter chips */}
-      <div className="flex gap-2 flex-wrap">
-        {TIPOS_LIST.map(t => {
-          const cfg = t.value !== "all" ? TIPO_CONFIG[t.value] : null;
-          const Icon = cfg?.icon;
-          const active = tipoFilter === t.value;
-          return (
-            <button
-              key={t.value}
-              onClick={() => setTipoFilter(t.value)}
-              data-testid={`filter-tipo-${t.value}`}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all",
-                active
-                  ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                  : "bg-background border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
-              )}
-            >
-              {Icon && <Icon className="w-3.5 h-3.5" />}
-              {t.label}
-              {typeCounts[t.value] != null && (
-                <span className={cn("ml-0.5 opacity-70", active && "opacity-90")}>
-                  ({typeCounts[t.value] || 0})
-                </span>
-              )}
-            </button>
-          );
-        })}
       </div>
 
       {/* Search + filters */}

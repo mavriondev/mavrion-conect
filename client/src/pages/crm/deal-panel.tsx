@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useStages } from "@/hooks/use-crm";
 import { apiRequest } from "@/lib/queryClient";
@@ -168,6 +168,20 @@ export default function DealDetailPanel({
   const [tipoAtividade, setTipoAtividade] = useState("nota");
   const [salvandoAtividade, setSalvandoAtividade] = useState(false);
 
+  const [localAmount, setLocalAmount] = useState("");
+  const [localProbability, setLocalProbability] = useState("");
+  const [localFeePercent, setLocalFeePercent] = useState("");
+  const [localFeeNotes, setLocalFeeNotes] = useState("");
+
+  useEffect(() => {
+    if (deal) {
+      setLocalAmount(deal.amountEstimate != null ? String(deal.amountEstimate) : "");
+      setLocalProbability(deal.probability != null ? String(deal.probability) : "");
+      setLocalFeePercent(deal.feePercent != null ? String(deal.feePercent) : "");
+      setLocalFeeNotes(deal.feeNotes || "");
+    }
+  }, [deal?.id, deal?.amountEstimate, deal?.probability, deal?.feePercent, deal?.feeNotes]);
+
   const { data: atividades = [], refetch: refetchAtividades } = useQuery({
     queryKey: ["/api/crm/deals", deal?.id, "activities"],
     queryFn: () => apiRequest("GET", `/api/crm/deals/${deal?.id}/activities`).then(r => r.json()),
@@ -199,30 +213,64 @@ export default function DealDetailPanel({
 
   const updateField = async (field: string, value: any) => {
     if (!dealId) return;
-    await apiRequest("PATCH", `/api/crm/deals/${dealId}`, { [field]: value });
-    invalidate();
+    queryClient.setQueryData(["/api/crm/deals", dealId], (old: any) =>
+      old ? { ...old, [field]: value } : old
+    );
+    try {
+      await apiRequest("PATCH", `/api/crm/deals/${dealId}`, { [field]: value });
+      invalidate();
+    } catch {
+      invalidate();
+      toast({ title: "Erro ao salvar campo", description: `Não foi possível atualizar "${field}".`, variant: "destructive" });
+    }
+  };
+
+  const updateFields = async (fields: Record<string, any>) => {
+    if (!dealId) return;
+    queryClient.setQueryData(["/api/crm/deals", dealId], (old: any) =>
+      old ? { ...old, ...fields } : old
+    );
+    try {
+      await apiRequest("PATCH", `/api/crm/deals/${dealId}`, fields);
+      invalidate();
+    } catch {
+      invalidate();
+      toast({ title: "Erro ao salvar", variant: "destructive" });
+    }
   };
 
   const addComment = async () => {
     if (!newComment.trim() || !dealId) return;
-    await apiRequest("POST", "/api/deal-comments", { dealId, content: newComment, authorName: "Usuário" });
-    setNewComment("");
-    queryClient.invalidateQueries({ queryKey: ["/api/deal-comments", dealId] });
+    try {
+      await apiRequest("POST", "/api/deal-comments", { dealId, content: newComment, authorName: "Usuário" });
+      setNewComment("");
+      queryClient.invalidateQueries({ queryKey: ["/api/deal-comments", dealId] });
+    } catch {
+      toast({ title: "Erro ao salvar comentário", variant: "destructive" });
+    }
   };
 
   const deleteComment = async (commentId: number) => {
-    await apiRequest("DELETE", `/api/deal-comments/${commentId}`);
-    setConfirmDeleteCommentId(null);
-    queryClient.invalidateQueries({ queryKey: ["/api/deal-comments", dealId] });
+    try {
+      await apiRequest("DELETE", `/api/deal-comments/${commentId}`);
+      setConfirmDeleteCommentId(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/deal-comments", dealId] });
+    } catch {
+      toast({ title: "Erro ao excluir comentário", variant: "destructive" });
+    }
   };
 
   const deleteDeal = async () => {
     if (!dealId) return;
-    await apiRequest("DELETE", `/api/crm/deals/${dealId}`);
-    setConfirmDeleteDeal(false);
-    invalidate();
-    onClose();
-    toast({ title: "Deal excluído" });
+    try {
+      await apiRequest("DELETE", `/api/crm/deals/${dealId}`);
+      setConfirmDeleteDeal(false);
+      invalidate();
+      onClose();
+      toast({ title: "Deal excluído" });
+    } catch {
+      toast({ title: "Erro ao excluir deal", variant: "destructive" });
+    }
   };
 
   const addLabel = () => {
@@ -237,23 +285,37 @@ export default function DealDetailPanel({
     updateField("labels", (deal.labels || []).filter((l: string) => l !== lbl));
   };
 
-  const addAttachment = () => {
+  const addAttachment = async () => {
     if (!newAttachName.trim() || !newAttachUrl.trim() || !deal) return;
+    const savedName = newAttachName.trim();
+    const savedUrl = newAttachUrl.trim();
     const attachments = [...((deal.attachments as any[]) || []), {
-      name: newAttachName.trim(),
-      url: newAttachUrl.trim(),
+      name: savedName,
+      url: savedUrl,
       uploadedAt: new Date().toISOString(),
     }];
-    updateField("attachments", attachments);
+    queryClient.setQueryData(["/api/crm/deals", dealId], (old: any) =>
+      old ? { ...old, attachments } : old
+    );
     setNewAttachName("");
     setNewAttachUrl("");
     setShowAddAttach(false);
+    try {
+      await apiRequest("PATCH", `/api/crm/deals/${dealId}`, { attachments });
+      invalidate();
+    } catch {
+      setNewAttachName(savedName);
+      setNewAttachUrl(savedUrl);
+      setShowAddAttach(true);
+      invalidate();
+      toast({ title: "Erro ao salvar anexo", variant: "destructive" });
+    }
   };
 
-  const removeAttachment = (idx: number) => {
+  const removeAttachment = async (idx: number) => {
     if (!deal) return;
     const attachments = ((deal.attachments as any[]) || []).filter((_: any, i: number) => i !== idx);
-    updateField("attachments", attachments);
+    await updateField("attachments", attachments);
   };
 
   const stages = allStages?.filter(s => deal && s.pipelineType === deal.pipelineType)
@@ -442,8 +504,24 @@ export default function DealDetailPanel({
                   <Input
                     type="date"
                     className="h-8 text-sm mt-1"
-                    value={deal.dueDate ? format(new Date(deal.dueDate), "yyyy-MM-dd") : ""}
-                    onChange={e => updateField("dueDate", e.target.value ? new Date(e.target.value).toISOString() : null)}
+                    value={(() => {
+                      try {
+                        return deal.dueDate ? format(new Date(deal.dueDate), "yyyy-MM-dd") : "";
+                      } catch { return ""; }
+                    })()}
+                    onChange={e => {
+                      if (!e.target.value) {
+                        updateField("dueDate", null);
+                      } else {
+                        try {
+                          const d = new Date(e.target.value);
+                          if (!isNaN(d.getTime())) {
+                            updateField("dueDate", d.toISOString());
+                          }
+                        } catch { /* ignore invalid date */ }
+                      }
+                    }}
+                    data-testid="input-due-date"
                   />
                 </div>
               </div>
@@ -454,8 +532,18 @@ export default function DealDetailPanel({
                   <Input
                     className="h-8 text-sm mt-1"
                     type="number"
-                    defaultValue={deal.amountEstimate || ""}
-                    onBlur={e => updateField("amountEstimate", e.target.value ? parseFloat(e.target.value) : null)}
+                    value={localAmount}
+                    onChange={e => setLocalAmount(e.target.value)}
+                    onBlur={e => {
+                      const val = e.target.value ? parseFloat(e.target.value) : null;
+                      const updates: Record<string, any> = { amountEstimate: val };
+                      const pct = parseFloat(localFeePercent);
+                      if (val != null && Number.isFinite(pct)) {
+                        updates.feeValue = val * pct / 100;
+                      }
+                      updateFields(updates);
+                    }}
+                    data-testid="input-amount-estimate"
                   />
                 </div>
                 <div>
@@ -464,8 +552,10 @@ export default function DealDetailPanel({
                     className="h-8 text-sm mt-1"
                     type="number"
                     min={0} max={100}
-                    defaultValue={deal.probability || ""}
+                    value={localProbability}
+                    onChange={e => setLocalProbability(e.target.value)}
                     onBlur={e => updateField("probability", e.target.value ? parseInt(e.target.value) : null)}
+                    data-testid="input-probability"
                   />
                 </div>
               </div>
@@ -508,7 +598,7 @@ export default function DealDetailPanel({
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="text-xs text-muted-foreground">Tipo de fee</label>
-                    <Select value={deal.feeType || ""} onValueChange={v => updateField("feeType", v)}>
+                    <Select value={deal.feeType || undefined} onValueChange={v => updateField("feeType", v)}>
                       <SelectTrigger className="h-8 text-xs" data-testid="select-fee-type"><SelectValue placeholder="Selecionar..." /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="success_fee">Success Fee</SelectItem>
@@ -521,14 +611,14 @@ export default function DealDetailPanel({
                     <label className="text-xs text-muted-foreground">Percentual (%)</label>
                     <Input
                       className="h-8 text-xs" type="number" step="0.1"
-                      placeholder="ex: 1.5" value={deal.feePercent || ""}
+                      placeholder="ex: 1.5"
+                      value={localFeePercent}
                       data-testid="input-fee-percent"
-                      onChange={async e => {
-                        if (!dealId) return;
+                      onChange={e => setLocalFeePercent(e.target.value)}
+                      onBlur={e => {
                         const pct = parseFloat(e.target.value) || 0;
-                        const base = deal.amountEstimate || 0;
-                        await apiRequest("PATCH", `/api/crm/deals/${dealId}`, { feePercent: pct, feeValue: base * pct / 100 });
-                        invalidate();
+                        const base = parseFloat(localAmount) || 0;
+                        updateFields({ feePercent: pct, feeValue: base * pct / 100 });
                       }}
                     />
                   </div>
@@ -556,9 +646,10 @@ export default function DealDetailPanel({
                 <Textarea
                   className="text-xs min-h-[60px]"
                   placeholder="Notas sobre a comissão (ex: pagamento em 2x, NF pendente...)"
-                  value={deal.feeNotes || ""}
+                  value={localFeeNotes}
                   data-testid="textarea-fee-notes"
-                  onChange={e => updateField("feeNotes", e.target.value)}
+                  onChange={e => setLocalFeeNotes(e.target.value)}
+                  onBlur={e => updateField("feeNotes", e.target.value)}
                 />
               </div>
 
