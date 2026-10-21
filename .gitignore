@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.git/
+*.log
+uploads/
+backups/
+.cache/
+*.bundle
+*.tar.gz
+# Published dist builds are intentionally tracked for analysis.

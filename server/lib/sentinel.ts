@@ -1,0 +1,144 @@
+/**
+ * Sentinel Hub (Copernicus/ESA) — NDVI alta resolução 10m
+ * Cadastro: https://www.sentinel-hub.com/
+ * Secrets: SENTINEL_HUB_CLIENT_ID, SENTINEL_HUB_CLIENT_SECRET
+ */
+
+export interface SentinelNDVIResult {
+  ndvi: number;
+  ndviMin: number;
+  ndviMax: number;
+  ndviStdDev: number;
+  classificacao: string;
+  variabilidade: string;
+  resolucao: string;
+  dataImagem: string;
+  fonte: string;
+  consultadoEm: string;
+}
+
+async function getSentinelToken(): Promise<string | null> {
+  const clientId     = process.env.SENTINEL_HUB_CLIENT_ID;
+  const clientSecret = process.env.SENTINEL_HUB_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return null;
+
+  try {
+    const res = await fetch(
+      "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "client_credentials",
+          client_id: clientId,
+          client_secret: clientSecret,
+        }),
+        signal: AbortSignal.timeout(10000),
+      }
+    );
+    if (!res.ok) return null;
+    const data = await res.json() as any;
+    return data.access_token || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getNDVISentinel(
+  lat: number,
+  lon: number,
+  polygon?: number[][][] | null
+): Promise<SentinelNDVIResult | null> {
+  const token = await getSentinelToken();
+  if (!token) return null;
+
+  let bbox: [number, number, number, number];
+  if (polygon && polygon[0]?.length > 0) {
+    const lngs = polygon[0].map((c: number[]) => c[0]);
+    const lats = polygon[0].map((c: number[]) => c[1]);
+    bbox = [Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)];
+  } else {
+    const d = 0.02;
+    bbox = [lon - d, lat - d, lon + d, lat + d];
+  }
+
+  const hoje = new Date();
+  const trintaDias = new Date(hoje.getTime() - 30 * 86400000);
+  const toISO = (d: Date) => d.toISOString().split("T")[0];
+
+  const evalscript = `//VERSION=3
+function setup() {
+  return { input: [{ bands: ["B04","B08","dataMask"] }], output: { bands: 1 }, mosaicking: "ORBIT" };
+}
+function evaluatePixel(samples) {
+  let sum=0,min=1,max=-1,count=0,sumSq=0;
+  for(let s of samples){
+    if(s.dataMask===0)continue;
+    const n=(s.B08-s.B04)/(s.B08+s.B04+0.0001);
+    sum+=n; sumSq+=n*n; if(n<min)min=n; if(n>max)max=n; count++;
+  }
+  if(count===0)return[0];
+  const mean=sum/count;
+  return[mean];
+}`;
+
+  try {
+    const res = await fetch("https://sh.dataspace.copernicus.eu/api/v1/statistics", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: {
+          bounds: { bbox, properties: { crs: "http://www.opengis.net/def/crs/OGC/1.3/CRS84" } },
+          data: [{
+            type: "sentinel-2-l2a",
+            dataFilter: {
+              timeRange: { from: `${toISO(trintaDias)}T00:00:00Z`, to: `${toISO(hoje)}T23:59:59Z` },
+              maxCloudCoverage: 20,
+            },
+          }],
+        },
+        aggregation: {
+          timeRange: { from: `${toISO(trintaDias)}T00:00:00Z`, to: `${toISO(hoje)}T23:59:59Z` },
+          aggregationInterval: { of: "P30D" },
+          evalscript,
+          resx: 0.0001, resy: 0.0001,
+        },
+        calculations: { default: { statistics: { default: { percentiles: { k: [25, 75] } } } } },
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!res.ok) return null;
+    const data = await res.json() as any;
+    const stats = data?.data?.[0]?.outputs?.default?.bands?.B0?.stats;
+    if (!stats) return null;
+
+    const ndvi    = Math.round((stats.mean    || 0.5) * 1000) / 1000;
+    const ndviMin = Math.round((stats.min     || 0.0) * 1000) / 1000;
+    const ndviMax = Math.round((stats.max     || 1.0) * 1000) / 1000;
+    const ndviStd = Math.round((stats.stDev   || 0.1) * 1000) / 1000;
+
+    const classificacao =
+      ndvi >= 0.6 ? "Vegetação densa e saudável" :
+      ndvi >= 0.4 ? "Vegetação moderada" :
+      ndvi >= 0.2 ? "Vegetação esparsa" :
+                    "Solo exposto ou vegetação muito baixa";
+
+    const variabilidade = ndviStd > 0.2
+      ? "Alta variação interna — possível área degradada ou uso misto"
+      : ndviStd > 0.1
+      ? "Variação moderada"
+      : "Vegetação homogênea";
+
+    return {
+      ndvi, ndviMin, ndviMax, ndviStdDev: ndviStd,
+      classificacao, variabilidade,
+      resolucao: "10m (Sentinel-2)",
+      dataImagem: toISO(hoje),
+      fonte: "Sentinel Hub / Copernicus",
+      consultadoEm: new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}

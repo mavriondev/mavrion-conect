@@ -1,0 +1,102 @@
+/**
+ * Certidões e processos para due diligence de empresas
+ * PGFN: Dívida ativa federal
+ * CNJ DataJud: Processos judiciais
+ * TCU CEIS: Empresas sancionadas
+ */
+
+export interface CertidoesResult {
+  cnpj: string;
+  pgfn: {
+    temDebitoAtivo: boolean | null;
+    situacao: string;
+    consultadoEm: string;
+  };
+  cnj: {
+    totalProcessos: number;
+    processos: Array<{
+      numero: string;
+      tribunal: string;
+      classe: string;
+      assunto: string;
+      dataAjuizamento: string;
+      situacao: string;
+    }>;
+    consultadoEm: string;
+  };
+  ceis: {
+    sancionado: boolean;
+    sancoes: any[];
+    consultadoEm: string;
+  };
+  fonte: string;
+}
+
+export async function consultarCertidoes(cnpj: string): Promise<CertidoesResult> {
+  const doc = cnpj.replace(/\D/g, "");
+  const agora = new Date().toISOString();
+
+  const [pgfnRes, cnjRes, ceisRes] = await Promise.allSettled([
+    fetch(
+      `https://www.regularize.pgfn.gov.br/api/sitregulae/contribuinte/${doc}/situacao`,
+      { signal: AbortSignal.timeout(8000) }
+    ).then(r => r.ok ? r.json() : null).catch(() => null),
+
+    fetch(
+      `https://api-publica.datajud.cnj.jus.br/api_publica_tjsp/_search`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": "ApiKey cDZHYzlZa0JadVREZDJCendFbXNJSHAyRmRyNVowQTU6VjloenNrdHVuMEMxNWZ2OHB3",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: { match: { "dados.partes.nome": doc } },
+          size: 10,
+        }),
+        signal: AbortSignal.timeout(10000),
+      }
+    ).then(r => r.ok ? r.json() : null).catch(() => null),
+
+    fetch(
+      `https://api.portaldatransparencia.gov.br/api-de-dados/ceis?cnpj=${doc}&pagina=1`,
+      {
+        headers: { "Accept": "application/json" },
+        signal: AbortSignal.timeout(8000),
+      }
+    ).then(r => r.ok ? r.json() : null).catch(() => null),
+  ]);
+
+  const pgfn = pgfnRes.status === "fulfilled" ? pgfnRes.value : null;
+  const cnj  = cnjRes.status  === "fulfilled" ? cnjRes.value  : null;
+  const ceis = ceisRes.status === "fulfilled" ? ceisRes.value : null;
+
+  const processosCnj = cnj?.hits?.hits?.map((h: any) => ({
+    numero:          h._source?.dados?.numero || "",
+    tribunal:        h._source?.tribunal || "",
+    classe:          h._source?.dados?.classe?.nome || "",
+    assunto:         h._source?.dados?.assuntos?.[0]?.nome || "",
+    dataAjuizamento: h._source?.dados?.dataAjuizamento || "",
+    situacao:        h._source?.dados?.movimentos?.[0]?.nome || "",
+  })) || [];
+
+  return {
+    cnpj: doc,
+    pgfn: {
+      temDebitoAtivo: pgfn ? (pgfn.situacao !== "REGULAR") : null,
+      situacao: pgfn?.situacao || "Não consultado",
+      consultadoEm: agora,
+    },
+    cnj: {
+      totalProcessos: cnj?.hits?.total?.value || 0,
+      processos: processosCnj,
+      consultadoEm: agora,
+    },
+    ceis: {
+      sancionado: Array.isArray(ceis) && ceis.length > 0,
+      sancoes: Array.isArray(ceis) ? ceis : [],
+      consultadoEm: agora,
+    },
+    fonte: "PGFN + CNJ DataJud + TCU CEIS",
+  };
+}

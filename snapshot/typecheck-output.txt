@@ -1,0 +1,164 @@
+
+> rest-express@1.0.0 check
+> tsc --noEmit --pretty false
+
+client/src/hooks/use-error-capture.ts(13,24): error TS2802: Type 'MapIterator<[string, number]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+client/src/hooks/use-sdr.ts(7,20): error TS2339: Property 'sdr' does not exist on type '{ auth: { login: { method: "POST"; path: "/api/login"; input: ZodObject<{ username: ZodString; password: ZodString; }, "strip", ZodTypeAny, { username: string; password: string; }, { ...; }>; responses: { ...; }; }; logout: { ...; }; me: { ...; }; }; connectors: { ...; }; crm: { ...; }; matching: { ...; }; stats: { ...'.
+client/src/hooks/use-sdr.ts(9,35): error TS2339: Property 'sdr' does not exist on type '{ auth: { login: { method: "POST"; path: "/api/login"; input: ZodObject<{ username: ZodString; password: ZodString; }, "strip", ZodTypeAny, { username: string; password: string; }, { ...; }>; responses: { ...; }; }; logout: { ...; }; me: { ...; }; }; connectors: { ...; }; crm: { ...; }; matching: { ...; }; stats: { ...'.
+client/src/hooks/use-sdr.ts(11,18): error TS2339: Property 'sdr' does not exist on type '{ auth: { login: { method: "POST"; path: "/api/login"; input: ZodObject<{ username: ZodString; password: ZodString; }, "strip", ZodTypeAny, { username: string; password: string; }, { ...; }>; responses: { ...; }; }; logout: { ...; }; me: { ...; }; }; connectors: { ...; }; crm: { ...; }; matching: { ...; }; stats: { ...'.
+client/src/hooks/use-sdr.ts(22,32): error TS2339: Property 'sdr' does not exist on type '{ auth: { login: { method: "POST"; path: "/api/login"; input: ZodObject<{ username: ZodString; password: ZodString; }, "strip", ZodTypeAny, { username: string; password: string; }, { ...; }>; responses: { ...; }; }; logout: { ...; }; me: { ...; }; }; connectors: { ...; }; crm: { ...; }; matching: { ...; }; stats: { ...'.
+client/src/hooks/use-sdr.ts(24,21): error TS2339: Property 'sdr' does not exist on type '{ auth: { login: { method: "POST"; path: "/api/login"; input: ZodObject<{ username: ZodString; password: ZodString; }, "strip", ZodTypeAny, { username: string; password: string; }, { ...; }>; responses: { ...; }; }; logout: { ...; }; me: { ...; }; }; connectors: { ...; }; crm: { ...; }; matching: { ...; }; stats: { ...'.
+client/src/hooks/use-sdr.ts(29,18): error TS2339: Property 'sdr' does not exist on type '{ auth: { login: { method: "POST"; path: "/api/login"; input: ZodObject<{ username: ZodString; password: ZodString; }, "strip", ZodTypeAny, { username: string; password: string; }, { ...; }>; responses: { ...; }; }; logout: { ...; }; me: { ...; }; }; connectors: { ...; }; crm: { ...; }; matching: { ...; }; stats: { ...'.
+client/src/hooks/use-sdr.ts(32,54): error TS2339: Property 'sdr' does not exist on type '{ auth: { login: { method: "POST"; path: "/api/login"; input: ZodObject<{ username: ZodString; password: ZodString; }, "strip", ZodTypeAny, { username: string; password: string; }, { ...; }>; responses: { ...; }; }; logout: { ...; }; me: { ...; }; }; connectors: { ...; }; crm: { ...; }; matching: { ...; }; stats: { ...'.
+client/src/pages/anm.tsx(647,56): error TS2345: Argument of type '{ fase: string; ultEvento?: undefined; } | { ultEvento: string; fase?: undefined; }' is not assignable to parameter of type 'Record<string, string>'.
+  Type '{ fase: string; ultEvento?: undefined; }' is not assignable to type 'Record<string, string>'.
+    Property 'ultEvento' is incompatible with index signature.
+      Type 'undefined' is not assignable to type 'string'.
+client/src/pages/empresa/detail.tsx(876,60): error TS2367: This comparison appears to be unintentional because the types '"financeiro" | "estrategico"' and '"nao_definido"' have no overlap.
+client/src/pages/empresa/detail.tsx(1062,27): error TS2339: Property 'enrichedAt' does not exist on type 'CompanyWithLead'.
+client/src/pages/empresa/detail.tsx(1065,54): error TS2339: Property 'enrichedAt' does not exist on type 'CompanyWithLead'.
+client/src/pages/geo-rural.tsx(135,19): error TS18048: 'analysisLayers' is possibly 'undefined'.
+client/src/pages/geo-rural.tsx(140,19): error TS18048: 'analysisLayers' is possibly 'undefined'.
+client/src/pages/geo-rural.tsx(145,19): error TS18048: 'analysisLayers' is possibly 'undefined'.
+client/src/pages/geo-rural.tsx(512,9): error TS2353: Object literal may only specify known properties, and 'projection' does not exist in type 'MapOptions'.
+client/src/pages/geo-rural.tsx(1946,57): error TS2552: Cannot find name 'navigate'. Did you mean 'navigator'?
+client/src/pages/matching.tsx(1304,33): error TS2551: Property 'company' does not exist on type '{ id: number; name: string; createdAt: Date | null; orgId: number | null; tags: unknown; companyId: number | null; contactId: number | null; regionsOfInterest: unknown; assetTypes: unknown; ticketMin: number | null; ... 6 more ...; capacidadeAquisicao: number | null; }'. Did you mean 'companyId'?
+client/src/pages/matching.tsx(1307,37): error TS2551: Property 'company' does not exist on type '{ id: number; name: string; createdAt: Date | null; orgId: number | null; tags: unknown; companyId: number | null; contactId: number | null; regionsOfInterest: unknown; assetTypes: unknown; ticketMin: number | null; ... 6 more ...; capacidadeAquisicao: number | null; }'. Did you mean 'companyId'?
+client/src/pages/matching.tsx(1307,67): error TS2551: Property 'company' does not exist on type '{ id: number; name: string; createdAt: Date | null; orgId: number | null; tags: unknown; companyId: number | null; contactId: number | null; regionsOfInterest: unknown; assetTypes: unknown; ticketMin: number | null; ... 6 more ...; capacidadeAquisicao: number | null; }'. Did you mean 'companyId'?
+client/src/pages/matching.tsx(1308,37): error TS2551: Property 'company' does not exist on type '{ id: number; name: string; createdAt: Date | null; orgId: number | null; tags: unknown; companyId: number | null; contactId: number | null; regionsOfInterest: unknown; assetTypes: unknown; ticketMin: number | null; ... 6 more ...; capacidadeAquisicao: number | null; }'. Did you mean 'companyId'?
+client/src/pages/matching.tsx(1308,98): error TS2551: Property 'company' does not exist on type '{ id: number; name: string; createdAt: Date | null; orgId: number | null; tags: unknown; companyId: number | null; contactId: number | null; regionsOfInterest: unknown; assetTypes: unknown; ticketMin: number | null; ... 6 more ...; capacidadeAquisicao: number | null; }'. Did you mean 'companyId'?
+client/src/pages/sdr.tsx(144,54): error TS2339: Property 'sdr' does not exist on type '{ auth: { login: { method: "POST"; path: "/api/login"; input: ZodObject<{ username: ZodString; password: ZodString; }, "strip", ZodTypeAny, { username: string; password: string; }, { ...; }>; responses: { ...; }; }; logout: { ...; }; me: { ...; }; }; connectors: { ...; }; crm: { ...; }; matching: { ...; }; stats: { ...'.
+client/src/pages/sdr.tsx(257,54): error TS2339: Property 'sdr' does not exist on type '{ auth: { login: { method: "POST"; path: "/api/login"; input: ZodObject<{ username: ZodString; password: ZodString; }, "strip", ZodTypeAny, { username: string; password: string; }, { ...; }>; responses: { ...; }; }; logout: { ...; }; me: { ...; }; }; connectors: { ...; }; crm: { ...; }; matching: { ...; }; stats: { ...'.
+client/src/pages/sdr.tsx(457,19): error TS7006: Parameter 'l' implicitly has an 'any' type.
+client/src/pages/sdr.tsx(514,56): error TS2339: Property 'sdr' does not exist on type '{ auth: { login: { method: "POST"; path: "/api/login"; input: ZodObject<{ username: ZodString; password: ZodString; }, "strip", ZodTypeAny, { username: string; password: string; }, { ...; }>; responses: { ...; }; }; logout: { ...; }; me: { ...; }; }; connectors: { ...; }; crm: { ...; }; matching: { ...; }; stats: { ...'.
+client/src/pages/sdr.tsx(526,25): error TS7006: Parameter 'lead' implicitly has an 'any' type.
+client/src/pages/sdr.tsx(853,33): error TS7006: Parameter 'lead' implicitly has an 'any' type.
+server/google-drive.ts(12,33): error TS2345: Argument of type 'ReadableStream<Uint8Array> | null' is not assignable to parameter of type 'string'.
+  Type 'null' is not assignable to type 'string'.
+server/google-drive.ts(28,33): error TS2345: Argument of type 'ReadableStream<Uint8Array> | null' is not assignable to parameter of type 'string'.
+  Type 'null' is not assignable to type 'string'.
+server/google-drive.ts(65,27): error TS2345: Argument of type 'ReadableStream<Uint8Array> | null' is not assignable to parameter of type 'string'.
+  Type 'null' is not assignable to type 'string'.
+server/google-drive.ts(77,29): error TS2345: Argument of type 'ReadableStream<Uint8Array> | null' is not assignable to parameter of type 'string'.
+  Type 'null' is not assignable to type 'string'.
+server/lib/ai-agents.ts(100,34): error TS2339: Property 'geoDistRodoviaM' does not exist on type '{ id: number; orgId: number | null; type: string; title: string; description: string | null; location: string | null; municipio: string | null; estado: string | null; priceAsking: number | null; ... 29 more ...; createdAt: Date | null; }'.
+server/lib/ai-agents.ts(101,41): error TS2339: Property 'geoDistSedeM' does not exist on type '{ id: number; orgId: number | null; type: string; title: string; description: string | null; location: string | null; municipio: string | null; estado: string | null; priceAsking: number | null; ... 29 more ...; createdAt: Date | null; }'.
+server/lib/ai-agents.ts(774,28): error TS2339: Property 'geoDistRodoviaM' does not exist on type '{ id: number; orgId: number | null; type: string; title: string; description: string | null; location: string | null; municipio: string | null; estado: string | null; priceAsking: number | null; ... 29 more ...; createdAt: Date | null; }'.
+server/lib/ai-agents.ts(774,71): error TS2339: Property 'geoDistSedeM' does not exist on type '{ id: number; orgId: number | null; type: string; title: string; description: string | null; location: string | null; municipio: string | null; estado: string | null; priceAsking: number | null; ... 29 more ...; createdAt: Date | null; }'.
+server/lib/ai-agents.ts(855,27): error TS2802: Type 'MapIterator<[string, number]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/lib/ai-agents.ts(938,29): error TS2802: Type 'MapIterator<[string, { id: number; orgId: number | null; pipelineType: string; stageId: number | null; title: string; amountEstimate: number | null; probability: number | null; expectedCloseDate: Date | null; ... 14 more ...; createdAt: Date | null; }[]]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/lib/ai-agents.ts(939,43): error TS7006: Parameter 's' implicitly has an 'any' type.
+server/lib/ai-agents.ts(939,46): error TS7006: Parameter 'd' implicitly has an 'any' type.
+server/lib/ai-enrichment.ts(503,21): error TS2802: Type 'string' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/lib/api-error-logger.ts(31,27): error TS2802: Type 'Map<string, number>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/lib/auto-match.ts(29,38): error TS2352: Conversion of type 'Date' to type 'string' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+server/lib/intelligent-prospecting.ts(386,23): error TS2802: Type 'Set<string | null>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/lib/intelligent-prospecting.ts(397,25): error TS2802: Type 'Set<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/lib/intelligent-prospecting.ts(398,28): error TS2802: Type 'Set<string | undefined>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/lib/intelligent-prospecting.ts(412,28): error TS2802: Type 'Set<string | undefined>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/lib/scm-scraper.ts(27,31): error TS2802: Type 'Map<string, CaptchaSession>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/lib/smart-matching.ts(705,23): error TS2322: Type 'Map<number | null, { id: number; orgId: number | null; investorProfileId: number | null; typeWeights: unknown; regionWeights: unknown; realTicketMin: number | null; realTicketMax: number | null; ... 8 more ...; updatedAt: Date | null; }>' is not assignable to type 'Map<number, any>'.
+  Type 'number | null' is not assignable to type 'number'.
+    Type 'null' is not assignable to type 'number'.
+server/lib/smart-matching.ts(759,29): error TS2802: Type 'Set<number>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/routes/assets.ts(100,43): error TS2345: Argument of type 'number | null' is not assignable to parameter of type 'number'.
+  Type 'null' is not assignable to type 'number'.
+server/routes/assets.ts(420,41): error TS2345: Argument of type 'number | null' is not assignable to parameter of type 'number'.
+  Type 'null' is not assignable to type 'number'.
+server/routes/assets.ts(509,19): error TS2304: Cannot find name 'sicarEnriched'.
+server/routes/assets.ts(510,21): error TS2304: Cannot find name 'sicarEnriched'.
+server/routes/assets.ts(511,17): error TS2304: Cannot find name 'sicarEnriched'.
+server/routes/assets.ts(512,25): error TS2304: Cannot find name 'sicarEnriched'.
+server/routes/assets.ts(513,17): error TS2304: Cannot find name 'sicarEnriched'.
+server/routes/assets.ts(514,22): error TS2304: Cannot find name 'sicarEnriched'.
+server/routes/assets.ts(515,15): error TS2304: Cannot find name 'sicarEnriched'.
+server/routes/assets.ts(516,24): error TS2304: Cannot find name 'sicarEnriched'.
+server/routes/assets.ts(517,28): error TS2304: Cannot find name 'sicarEnriched'.
+server/routes/assets.ts(518,23): error TS2304: Cannot find name 'sicarEnriched'.
+server/routes/assets.ts(521,25): error TS2304: Cannot find name 'sicarEnriched'.
+server/routes/assets.ts(877,11): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type '{ "Minas Gerais": string; "S\u00E3o Paulo": string; "Rio de Janeiro": string; Bahia: string; Goiás: string; "Mato Grosso": string; "Mato Grosso do Sul": string; Paraná: string; "Rio Grande do Sul": string; "Santa Catarina": string; ... 16 more ...; "Distrito Federal": string; }'.
+server/routes/caf-extrator.ts(151,38): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.
+server/routes/caf-extrator.ts(159,33): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.
+server/routes/caf-extrator.ts(160,19): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.
+server/routes/caf-extrator.ts(180,40): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.
+server/routes/caf-extrator.ts(288,46): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.
+server/routes/caf-extrator.ts(314,46): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.
+server/routes/caf-extrator.ts(332,51): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.
+server/routes/caf-extrator.ts(347,46): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.
+server/routes/caf-extrator.ts(383,32): error TS2339: Property 'toUpperCase' does not exist on type 'string | string[]'.
+  Property 'toUpperCase' does not exist on type 'string[]'.
+server/routes/companies.ts(246,94): error TS2769: No overload matches this call.
+  Overload 1 of 3, '(left: PgColumn<{ name: "org_id"; tableName: "leads"; dataType: "number"; columnType: "PgInteger"; data: number; driverParam: string | number; notNull: false; hasDefault: false; isPrimaryKey: false; isAutoincrement: false; ... 4 more ...; generated: undefined; }, {}, {}>, right: number | SQLWrapper): SQL<...>', gave the following error.
+    Argument of type 'number | null' is not assignable to parameter of type 'number | SQLWrapper'.
+      Type 'null' is not assignable to type 'number | SQLWrapper'.
+  Overload 2 of 3, '(left: Aliased<number | null>, right: number | SQLWrapper | null): SQL<unknown>', gave the following error.
+    Argument of type 'PgColumn<{ name: "org_id"; tableName: "leads"; dataType: "number"; columnType: "PgInteger"; data: number; driverParam: string | number; notNull: false; hasDefault: false; isPrimaryKey: false; isAutoincrement: false; ... 4 more ...; generated: undefined; }, {}, {}>' is not assignable to parameter of type 'Aliased<number | null>'.
+      Type 'PgColumn<{ name: "org_id"; tableName: "leads"; dataType: "number"; columnType: "PgInteger"; data: number; driverParam: string | number; notNull: false; hasDefault: false; isPrimaryKey: false; isAutoincrement: false; ... 4 more ...; generated: undefined; }, {}, {}>' is missing the following properties from type 'Aliased<number | null>': sql, fieldAlias
+  Overload 3 of 3, '(left: never, right: unknown): SQL<unknown>', gave the following error.
+    Argument of type 'PgColumn<{ name: "org_id"; tableName: "leads"; dataType: "number"; columnType: "PgInteger"; data: number; driverParam: string | number; notNull: false; hasDefault: false; isPrimaryKey: false; isAutoincrement: false; ... 4 more ...; generated: undefined; }, {}, {}>' is not assignable to parameter of type 'never'.
+server/routes/companies.ts(248,100): error TS2769: No overload matches this call.
+  Overload 1 of 3, '(left: PgColumn<{ name: "org_id"; tableName: "deals"; dataType: "number"; columnType: "PgInteger"; data: number; driverParam: string | number; notNull: false; hasDefault: false; isPrimaryKey: false; isAutoincrement: false; ... 4 more ...; generated: undefined; }, {}, {}>, right: number | SQLWrapper): SQL<...>', gave the following error.
+    Argument of type 'number | null' is not assignable to parameter of type 'number | SQLWrapper'.
+      Type 'null' is not assignable to type 'number | SQLWrapper'.
+  Overload 2 of 3, '(left: Aliased<number | null>, right: number | SQLWrapper | null): SQL<unknown>', gave the following error.
+    Argument of type 'PgColumn<{ name: "org_id"; tableName: "deals"; dataType: "number"; columnType: "PgInteger"; data: number; driverParam: string | number; notNull: false; hasDefault: false; isPrimaryKey: false; isAutoincrement: false; ... 4 more ...; generated: undefined; }, {}, {}>' is not assignable to parameter of type 'Aliased<number | null>'.
+      Type 'PgColumn<{ name: "org_id"; tableName: "deals"; dataType: "number"; columnType: "PgInteger"; data: number; driverParam: string | number; notNull: false; hasDefault: false; isPrimaryKey: false; isAutoincrement: false; ... 4 more ...; generated: undefined; }, {}, {}>' is missing the following properties from type 'Aliased<number | null>': sql, fieldAlias
+  Overload 3 of 3, '(left: never, right: unknown): SQL<unknown>', gave the following error.
+    Argument of type 'PgColumn<{ name: "org_id"; tableName: "deals"; dataType: "number"; columnType: "PgInteger"; data: number; driverParam: string | number; notNull: false; hasDefault: false; isPrimaryKey: false; isAutoincrement: false; ... 4 more ...; generated: undefined; }, {}, {}>' is not assignable to parameter of type 'never'.
+server/routes/companies.ts(886,80): error TS2339: Property 'execute' does not exist on type 'SQL<unknown>'.
+server/routes/companies.ts(932,80): error TS2339: Property 'execute' does not exist on type 'SQL<unknown>'.
+server/routes/geo.ts(251,31): error TS7006: Parameter 'r' implicitly has an 'any' type.
+server/routes/geo.ts(392,14): error TS1252: Function declarations are not allowed inside blocks in strict mode when targeting 'ES5'. Modules are automatically in strict mode.
+server/routes/geo.ts(827,11): error TS2322: Type 'string | null' is not assignable to type '[any, ...any[]]'.
+  Type 'null' is not assignable to type '[any, ...any[]]'.
+server/routes/geo.ts(1234,43): error TS2345: Argument of type 'number | null' is not assignable to parameter of type 'number'.
+  Type 'null' is not assignable to type 'number'.
+server/routes/geo.ts(1617,9): error TS2322: Type '{ latitude: number | null; longitude: number | null; codigoIbge: any; }' is not assignable to type '{ [x: string]: [any, ...any[]]; origemAtivo?: unknown; ofertanteNome?: unknown; ofertanteTelefone?: unknown; ofertanteEmail?: unknown; ofertanteObservacoes?: unknown; exclusividadeAte?: unknown; exclusividadeEmpresa?: unknown; latitude?: unknown; longitude?: unknown; codigoIbge?: unknown; ... 55 more ...; ccirRawDat...'.
+  Property 'latitude' is incompatible with index signature.
+    Type 'number | null' is not assignable to type '[any, ...any[]]'.
+      Type 'null' is not assignable to type '[any, ...any[]]'.
+server/routes/geo.ts(1860,17): error TS2461: Type 'QueryResult<Record<string, unknown>>' is not an array type.
+server/routes/geo.ts(2334,31): error TS2802: Type 'MapIterator<{ produto: string; valor: number; area: number; count: number; }>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/routes/matching.ts(494,64): error TS2339: Property 'estado' does not exist on type '{ address: unknown; id: number; createdAt: Date | null; orgId: number | null; legalName: string; tradeName: string | null; cnpj: string | null; cnaePrincipal: string | null; cnaeSecundarios: unknown; ... 15 more ...; norionProfile: string | null; }'.
+server/routes/matching.ts(495,64): error TS2339: Property 'estado' does not exist on type '{ address: unknown; id: number; createdAt: Date | null; orgId: number | null; legalName: string; tradeName: string | null; cnpj: string | null; cnaePrincipal: string | null; cnaeSecundarios: unknown; ... 15 more ...; norionProfile: string | null; }'.
+server/routes/matching.ts(507,41): error TS18047: 'compradorEstado' is possibly 'null'.
+server/routes/matching.ts(575,32): error TS2802: Type 'Set<number>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/routes/portal.ts(312,11): error TS2322: Type '"new_deal_portal" | "new_lead_portal"' is not assignable to type '"deal_due" | "new_inquiry" | "new_match" | "lead_stale" | "connector_error" | "deal_stage"'.
+  Type '"new_deal_portal"' is not assignable to type '"deal_due" | "new_inquiry" | "new_match" | "lead_stale" | "connector_error" | "deal_stage"'.
+server/routes/portal.ts(323,57): error TS2304: Cannot find name 'dealId'.
+server/routes/portal.ts(323,65): error TS18004: No value exists in scope for the shorthand property 'dealId'. Either declare one or provide an initializer.
+server/routes/portal.ts(557,43): error TS2551: Property 'getOrgSettings' does not exist on type 'IStorage'. Did you mean 'getOrgSetting'?
+server/routes/prospeccao.ts(346,21): error TS2802: Type 'Set<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/routes/prospeccao.ts(701,9): error TS2322: Type '{ cnpj: string; origemAtivo: string; cnaePrincipal: any; }' is not assignable to type '{ [x: string]: [any, ...any[]]; origemAtivo?: unknown; ofertanteNome?: unknown; ofertanteTelefone?: unknown; ofertanteEmail?: unknown; ofertanteObservacoes?: unknown; exclusividadeAte?: unknown; exclusividadeEmpresa?: unknown; latitude?: unknown; longitude?: unknown; codigoIbge?: unknown; ... 55 more ...; ccirRawDat...'.
+  Property 'cnpj' is incompatible with index signature.
+    Type 'string' is not assignable to type '[any, ...any[]]'.
+server/routes/scm.ts(45,47): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.
+server/routes/scm.ts(141,52): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.
+server/routes/sdr.ts(12,15): error TS2339: Property 'sdr' does not exist on type '{ auth: { login: { method: "POST"; path: "/api/login"; input: ZodObject<{ username: ZodString; password: ZodString; }, "strip", ZodTypeAny, { username: string; password: string; }, { ...; }>; responses: { ...; }; }; logout: { ...; }; me: { ...; }; }; connectors: { ...; }; crm: { ...; }; matching: { ...; }; stats: { ...'.
+server/routes/sdr.ts(19,17): error TS2339: Property 'sdr' does not exist on type '{ auth: { login: { method: "POST"; path: "/api/login"; input: ZodObject<{ username: ZodString; password: ZodString; }, "strip", ZodTypeAny, { username: string; password: string; }, { ...; }>; responses: { ...; }; }; logout: { ...; }; me: { ...; }; }; connectors: { ...; }; crm: { ...; }; matching: { ...; }; stats: { ...'.
+server/routes/sdr.ts(24,25): error TS2339: Property 'sdr' does not exist on type '{ auth: { login: { method: "POST"; path: "/api/login"; input: ZodObject<{ username: ZodString; password: ZodString; }, "strip", ZodTypeAny, { username: string; password: string; }, { ...; }>; responses: { ...; }; }; logout: { ...; }; me: { ...; }; }; connectors: { ...; }; crm: { ...; }; matching: { ...; }; stats: { ...'.
+server/scheduler.ts(7,36): error TS2503: Cannot find namespace 'cron'.
+server/services/caf-crawler.ts(514,37): error TS2802: Type 'Map<string, CafApiResult[]>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+server/services/caf-crawler.ts(520,39): error TS7006: Parameter 'm' implicitly has an 'any' type.
+server/services/caf-crawler.ts(526,17): error TS7006: Parameter 'm' implicitly has an 'any' type.
+server/services/caf-crawler.ts(527,14): error TS7006: Parameter 'm' implicitly has an 'any' type.
+server/storage.ts(336,54): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(value: { title: string | SQL<unknown> | Placeholder<string, any>; type: string | SQL<unknown> | Placeholder<string, any>; id?: number | SQL<unknown> | Placeholder<string, any> | undefined; ... 35 more ...; fotos?: unknown; }): PgInsertBase<...>', gave the following error.
+    Argument of type '{ title: string; type: string; location?: string | null | undefined; description?: string | null | undefined; orgId?: number | null | undefined; tags?: Json | undefined; municipio?: string | ... 1 more ... | undefined; ... 29 more ...; fotos?: Json | undefined; }' is not assignable to parameter of type '{ title: string | SQL<unknown> | Placeholder<string, any>; type: string | SQL<unknown> | Placeholder<string, any>; id?: number | SQL<unknown> | Placeholder<string, any> | undefined; ... 35 more ...; fotos?: unknown; }'.
+      Types of property 'camposEspecificos' are incompatible.
+        Type '{ [x: string]: [any, ...any[]]; origemAtivo?: unknown; ofertanteNome?: unknown; ofertanteTelefone?: unknown; ofertanteEmail?: unknown; ofertanteObservacoes?: unknown; exclusividadeAte?: unknown; exclusividadeEmpresa?: unknown; latitude?: unknown; longitude?: unknown; codigoIbge?: unknown; ... 55 more ...; ccirRawDat...' is not assignable to type 'SQL<unknown> | CamposEspecificos | Placeholder<string, any> | null | undefined'.
+          Type '{ [x: string]: [any, ...any[]]; origemAtivo?: unknown; ofertanteNome?: unknown; ofertanteTelefone?: unknown; ofertanteEmail?: unknown; ofertanteObservacoes?: unknown; exclusividadeAte?: unknown; exclusividadeEmpresa?: unknown; latitude?: unknown; longitude?: unknown; codigoIbge?: unknown; ... 55 more ...; ccirRawDat...' is not assignable to type 'SQL<unknown> | CamposEspecificos | Placeholder<string, any> | null | undefined'.
+            Type '{ [x: string]: [any, ...any[]]; origemAtivo?: unknown; ofertanteNome?: unknown; ofertanteTelefone?: unknown; ofertanteEmail?: unknown; ofertanteObservacoes?: unknown; exclusividadeAte?: unknown; exclusividadeEmpresa?: unknown; latitude?: unknown; longitude?: unknown; codigoIbge?: unknown; ... 55 more ...; ccirRawDat...' is missing the following properties from type 'SQL<unknown>': queryChunks, _, shouldInlineParams, append, and 8 more.
+  Overload 2 of 2, '(values: { title: string | SQL<unknown> | Placeholder<string, any>; type: string | SQL<unknown> | Placeholder<string, any>; id?: number | SQL<unknown> | Placeholder<string, any> | undefined; ... 35 more ...; fotos?: unknown; }[]): PgInsertBase<...>', gave the following error.
+    Argument of type '{ title: string; type: string; location?: string | null | undefined; description?: string | null | undefined; orgId?: number | null | undefined; tags?: Json | undefined; municipio?: string | ... 1 more ... | undefined; ... 29 more ...; fotos?: Json | undefined; }' is not assignable to parameter of type '{ title: string | SQL<unknown> | Placeholder<string, any>; type: string | SQL<unknown> | Placeholder<string, any>; id?: number | SQL<unknown> | Placeholder<string, any> | undefined; ... 35 more ...; fotos?: unknown; }[]'.
+      Type '{ title: string; type: string; location?: string | null | undefined; description?: string | null | undefined; orgId?: number | null | undefined; tags?: Json | undefined; municipio?: string | ... 1 more ... | undefined; ... 29 more ...; fotos?: Json | undefined; }' is missing the following properties from type '{ title: string | SQL<unknown> | Placeholder<string, any>; type: string | SQL<unknown> | Placeholder<string, any>; id?: number | SQL<unknown> | Placeholder<string, any> | undefined; ... 35 more ...; fotos?: unknown; }[]': length, pop, push, concat, and 35 more.

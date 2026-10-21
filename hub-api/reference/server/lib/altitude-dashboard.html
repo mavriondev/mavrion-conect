@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SICARIOn - Altitude Worker</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    .container { max-width: 900px; margin: 0 auto; padding: 2rem; }
+    h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem; color: #f8fafc; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-bottom: 2rem; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; }
+    .card-title { font-size: 0.875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 1rem; }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; }
+    .stat { background: #0f172a; border-radius: 8px; padding: 1rem; }
+    .stat-label { font-size: 0.75rem; color: #64748b; margin-bottom: 0.25rem; }
+    .stat-value { font-size: 1.5rem; font-weight: 700; color: #f8fafc; }
+    .stat-value.running { color: #22c55e; }
+    .stat-value.stopped { color: #ef4444; }
+    .stat-value.idle { color: #eab308; }
+    .stat-value.completed { color: #3b82f6; }
+    .progress-bar { width: 100%; height: 24px; background: #0f172a; border-radius: 12px; overflow: hidden; margin: 1rem 0; position: relative; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, #22c55e, #16a34a); border-radius: 12px; transition: width 0.5s ease; min-width: 2px; }
+    .progress-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 0.75rem; font-weight: 600; color: #f8fafc; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+    .btn-group { display: flex; gap: 0.75rem; margin-top: 1rem; }
+    .btn { padding: 0.625rem 1.5rem; border: none; border-radius: 8px; font-size: 0.875rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-start { background: #22c55e; color: #fff; }
+    .btn-start:hover:not(:disabled) { background: #16a34a; }
+    .btn-stop { background: #ef4444; color: #fff; }
+    .btn-stop:hover:not(:disabled) { background: #dc2626; }
+    .btn-refresh { background: #334155; color: #e2e8f0; }
+    .btn-refresh:hover { background: #475569; }
+    .log { background: #0f172a; border-radius: 8px; padding: 1rem; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; max-height: 200px; overflow-y: auto; color: #94a3b8; line-height: 1.8; }
+    .log-entry { border-bottom: 1px solid #1e293b; padding: 0.25rem 0; }
+    .log-time { color: #64748b; }
+    .log-ok { color: #22c55e; }
+    .log-err { color: #ef4444; }
+    .auth-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #0f172a; display: flex; align-items: center; justify-content: center; z-index: 100; }
+    .auth-box { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 2rem; width: 400px; }
+    .auth-box h2 { margin-bottom: 1rem; font-size: 1.25rem; }
+    .auth-box input { width: 100%; padding: 0.625rem 1rem; background: #0f172a; border: 1px solid #475569; border-radius: 8px; color: #f8fafc; font-size: 0.875rem; margin-bottom: 1rem; outline: none; }
+    .auth-box input:focus { border-color: #22c55e; }
+    .auth-box .btn { width: 100%; }
+    .auto-refresh { display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; color: #64748b; }
+    .auto-refresh input { accent-color: #22c55e; }
+    .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
+    .badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 99px; font-size: 0.75rem; font-weight: 600; }
+    .badge-running { background: #052e16; color: #22c55e; border: 1px solid #166534; }
+    .badge-idle { background: #422006; color: #eab308; border: 1px solid #854d0e; }
+    .badge-stopped { background: #450a0a; color: #ef4444; border: 1px solid #991b1b; }
+    .badge-completed { background: #0c1a3d; color: #3b82f6; border: 1px solid #1d4ed8; }
+    .badge-error { background: #450a0a; color: #ef4444; border: 1px solid #991b1b; }
+  </style>
+</head>
+<body>
+  <div class="auth-overlay" id="authOverlay">
+    <div class="auth-box">
+      <h2>SICARIOn - Altitude Worker</h2>
+      <p style="color:#94a3b8; font-size:0.875rem; margin-bottom:1rem;">Informe a API Key para acessar o painel.</p>
+      <input type="password" id="apiKeyInput" placeholder="API Key" />
+      <button class="btn btn-start" onclick="authenticate()" style="width:100%">Entrar</button>
+    </div>
+  </div>
+
+  <div class="container" id="mainContent" style="display:none">
+    <div class="header-row">
+      <div>
+        <h1>Altitude Worker</h1>
+        <p class="subtitle">Populacao de altitude para imoveis SICAR via Open-Elevation API</p>
+      </div>
+      <span class="badge badge-idle" id="statusBadge">--</span>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Progresso Geral</div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+        <div class="progress-text" id="progressText">0%</div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat">
+          <div class="stat-label">Processados</div>
+          <div class="stat-value" id="statProcessed">--</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Pendentes</div>
+          <div class="stat-value" id="statPending">--</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Erros</div>
+          <div class="stat-value" id="statErrors">--</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Total</div>
+          <div class="stat-value" id="statTotal">--</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Worker</div>
+      <div class="stats-grid">
+        <div class="stat">
+          <div class="stat-label">Status</div>
+          <div class="stat-value" id="workerStatus">--</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Velocidade</div>
+          <div class="stat-value" id="workerRate">--</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">ETA</div>
+          <div class="stat-value" id="workerEta">--</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Iniciado em</div>
+          <div class="stat-value" id="workerStarted" style="font-size:0.875rem">--</div>
+        </div>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem;">
+        <div class="btn-group">
+          <button class="btn btn-start" id="btnStart" onclick="startWorker()">Iniciar</button>
+          <button class="btn btn-stop" id="btnStop" onclick="stopWorker()">Parar</button>
+          <button class="btn btn-refresh" onclick="fetchStatus()">Atualizar</button>
+        </div>
+        <label class="auto-refresh">
+          <input type="checkbox" id="autoRefresh" checked onchange="toggleAutoRefresh()" />
+          Auto-refresh (10s)
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Log de Atividade</div>
+      <div class="log" id="logArea">
+        <div class="log-entry"><span class="log-time">--</span> Aguardando dados...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let apiKey = localStorage.getItem('sicarion_api_key') || '';
+    let refreshInterval = null;
+    const logEntries = [];
+
+    if (apiKey) {
+      document.getElementById('authOverlay').style.display = 'none';
+      document.getElementById('mainContent').style.display = 'block';
+      fetchStatus();
+      startAutoRefresh();
+    }
+
+    function authenticate() {
+      apiKey = document.getElementById('apiKeyInput').value.trim();
+      if (!apiKey) return;
+      localStorage.setItem('sicarion_api_key', apiKey);
+      document.getElementById('authOverlay').style.display = 'none';
+      document.getElementById('mainContent').style.display = 'block';
+      fetchStatus();
+      startAutoRefresh();
+    }
+
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/sicar/altitude/status', {
+          headers: { 'X-API-Key': apiKey }
+        });
+        if (res.status === 401 || res.status === 403) {
+          localStorage.removeItem('sicarion_api_key');
+          document.getElementById('authOverlay').style.display = 'flex';
+          document.getElementById('mainContent').style.display = 'none';
+          return;
+        }
+        const data = await res.json();
+        updateUI(data);
+      } catch (e) {
+        addLog('Erro ao buscar status: ' + e.message, 'err');
+      }
+    }
+
+    function updateUI(data) {
+      const w = data.worker;
+      const db = data.database;
+      const total = db.completed + db.pending;
+      const pct = total > 0 ? ((db.completed / total) * 100) : 0;
+
+      document.getElementById('progressFill').style.width = pct.toFixed(2) + '%';
+      document.getElementById('progressText').textContent = pct.toFixed(3) + '%';
+      document.getElementById('statProcessed').textContent = db.completed.toLocaleString('pt-BR');
+      document.getElementById('statPending').textContent = db.pending.toLocaleString('pt-BR');
+      document.getElementById('statErrors').textContent = db.errors.toLocaleString('pt-BR');
+      document.getElementById('statTotal').textContent = total.toLocaleString('pt-BR');
+
+      const statusEl = document.getElementById('workerStatus');
+      statusEl.textContent = w.status.charAt(0).toUpperCase() + w.status.slice(1);
+      statusEl.className = 'stat-value ' + w.status;
+
+      document.getElementById('workerRate').textContent = w.rate > 0 ? w.rate + '/min' : '--';
+      document.getElementById('workerEta').textContent = w.eta || '--';
+      document.getElementById('workerStarted').textContent = w.startedAt
+        ? new Date(w.startedAt).toLocaleString('pt-BR')
+        : '--';
+
+      const badge = document.getElementById('statusBadge');
+      badge.textContent = w.status.toUpperCase();
+      badge.className = 'badge badge-' + w.status;
+
+      document.getElementById('btnStart').disabled = w.isRunning;
+      document.getElementById('btnStop').disabled = !w.isRunning;
+
+      if (db.errors > 0) {
+        document.getElementById('statErrors').style.color = '#ef4444';
+      }
+    }
+
+    async function startWorker() {
+      try {
+        const res = await fetch('/api/sicar/altitude/start', {
+          method: 'POST',
+          headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+          body: '{}'
+        });
+        const data = await res.json();
+        addLog(data.message, 'ok');
+        setTimeout(fetchStatus, 1000);
+      } catch (e) {
+        addLog('Erro: ' + e.message, 'err');
+      }
+    }
+
+    async function stopWorker() {
+      try {
+        const res = await fetch('/api/sicar/altitude/stop', {
+          method: 'POST',
+          headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+          body: '{}'
+        });
+        const data = await res.json();
+        addLog(data.message, 'ok');
+        setTimeout(fetchStatus, 1000);
+      } catch (e) {
+        addLog('Erro: ' + e.message, 'err');
+      }
+    }
+
+    function addLog(msg, type) {
+      const time = new Date().toLocaleTimeString('pt-BR');
+      logEntries.unshift({ time, msg, type });
+      if (logEntries.length > 50) logEntries.pop();
+      const logArea = document.getElementById('logArea');
+      logArea.innerHTML = logEntries.map(e =>
+        `<div class="log-entry"><span class="log-time">${e.time}</span> <span class="log-${e.type || ''}">${e.msg}</span></div>`
+      ).join('');
+    }
+
+    function startAutoRefresh() {
+      if (refreshInterval) clearInterval(refreshInterval);
+      refreshInterval = setInterval(fetchStatus, 10000);
+    }
+
+    function toggleAutoRefresh() {
+      if (document.getElementById('autoRefresh').checked) {
+        startAutoRefresh();
+      } else {
+        clearInterval(refreshInterval);
+        refreshInterval = null;
+      }
+    }
+
+    document.getElementById('apiKeyInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') authenticate();
+    });
+  </script>
+</body>
+</html>

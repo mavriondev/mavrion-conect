@@ -1,0 +1,4 @@
+requests>=2.28
+beautifulsoup4>=4.12
+phonenumbers>=8.13
+duckduckgo-search>=4.0

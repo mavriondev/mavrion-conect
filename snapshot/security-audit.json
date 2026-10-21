@@ -1,0 +1,126 @@
+{
+  "scanner": "Gitleaks 8.18.2",
+  "unresolved_findings": 0,
+  "reviewed_false_positives": [
+    {
+      "file": "dist/public/assets/html2canvas.esm-DXEQVQnt.js",
+      "line": 1,
+      "rule": "aws-access-token",
+      "literalLength": 52888,
+      "classification": "false positive inside embedded vendor base64 data",
+      "literalSha256": "2a00285184a835209c8590fa5611e7fb9665593eb6ff1023669af8f45c1099c3"
+    },
+    {
+      "file": "dist/public/assets/html2canvas.esm-DXEQVQnt.js",
+      "line": 1,
+      "rule": "aws-access-token",
+      "literalLength": 26156,
+      "classification": "false positive inside embedded vendor base64 data",
+      "literalSha256": "81599cbbb36cbd25d1ac24a72a63ab501fdb9d9910df2d452e32116b3cb6421a"
+    },
+    {
+      "file": "hub-api/dist/index.cjs",
+      "line": 265,
+      "rule": "aws-access-token",
+      "literalLength": 79084,
+      "classification": "false positive inside embedded vendor base64 data",
+      "literalSha256": "3e69d1fa7c6fba3777f3abf716a31d6821b760ecc286b3c2a917cecd8a5ccf3d"
+    },
+    {
+      "file": "hub-api/dist/index.cjs",
+      "line": 265,
+      "rule": "aws-access-token",
+      "literalLength": 79084,
+      "classification": "false positive inside embedded vendor base64 data",
+      "literalSha256": "3e69d1fa7c6fba3777f3abf716a31d6821b760ecc286b3c2a917cecd8a5ccf3d"
+    },
+    {
+      "file": "hub-api/dist/index.cjs",
+      "line": 265,
+      "rule": "aws-access-token",
+      "literalLength": 79084,
+      "classification": "false positive inside embedded vendor base64 data",
+      "literalSha256": "3e69d1fa7c6fba3777f3abf716a31d6821b760ecc286b3c2a917cecd8a5ccf3d"
+    },
+    {
+      "file": "hub-api/dist/index.cjs",
+      "line": 265,
+      "rule": "aws-access-token",
+      "literalLength": 79084,
+      "classification": "false positive inside embedded vendor base64 data",
+      "literalSha256": "3e69d1fa7c6fba3777f3abf716a31d6821b760ecc286b3c2a917cecd8a5ccf3d"
+    },
+    {
+      "file": "hub-api/dist/index.cjs",
+      "line": 265,
+      "rule": "aws-access-token",
+      "literalLength": 79084,
+      "classification": "false positive inside embedded vendor base64 data",
+      "literalSha256": "3e69d1fa7c6fba3777f3abf716a31d6821b760ecc286b3c2a917cecd8a5ccf3d"
+    },
+    {
+      "file": "hub-api/dist/index.cjs",
+      "line": 265,
+      "rule": "aws-access-token",
+      "literalLength": 79084,
+      "classification": "false positive inside embedded vendor base64 data",
+      "literalSha256": "3e69d1fa7c6fba3777f3abf716a31d6821b760ecc286b3c2a917cecd8a5ccf3d"
+    },
+    {
+      "file": "hub-api/src/index.cjs",
+      "line": 91840,
+      "rule": "aws-access-token",
+      "literalLength": 79084,
+      "classification": "false positive inside embedded vendor base64 data",
+      "literalSha256": "3e69d1fa7c6fba3777f3abf716a31d6821b760ecc286b3c2a917cecd8a5ccf3d"
+    },
+    {
+      "file": "hub-api/src/index.cjs",
+      "line": 91840,
+      "rule": "aws-access-token",
+      "literalLength": 79084,
+      "classification": "false positive inside embedded vendor base64 data",
+      "literalSha256": "3e69d1fa7c6fba3777f3abf716a31d6821b760ecc286b3c2a917cecd8a5ccf3d"
+    },
+    {
+      "file": "hub-api/src/index.cjs",
+      "line": 91840,
+      "rule": "aws-access-token",
+      "literalLength": 79084,
+      "classification": "false positive inside embedded vendor base64 data",
+      "literalSha256": "3e69d1fa7c6fba3777f3abf716a31d6821b760ecc286b3c2a917cecd8a5ccf3d"
+    },
+    {
+      "file": "hub-api/src/index.cjs",
+      "line": 91840,
+      "rule": "aws-access-token",
+      "literalLength": 79084,
+      "classification": "false positive inside embedded vendor base64 data",
+      "literalSha256": "3e69d1fa7c6fba3777f3abf716a31d6821b760ecc286b3c2a917cecd8a5ccf3d"
+    },
+    {
+      "file": "hub-api/src/index.cjs",
+      "line": 91840,
+      "rule": "aws-access-token",
+      "literalLength": 79084,
+      "classification": "false positive inside embedded vendor base64 data",
+      "literalSha256": "3e69d1fa7c6fba3777f3abf716a31d6821b760ecc286b3c2a917cecd8a5ccf3d"
+    },
+    {
+      "file": "hub-api/src/index.cjs",
+      "line": 91840,
+      "rule": "aws-access-token",
+      "literalLength": 79084,
+      "classification": "false positive inside embedded vendor base64 data",
+      "literalSha256": "3e69d1fa7c6fba3777f3abf716a31d6821b760ecc286b3c2a917cecd8a5ccf3d"
+    }
+  ],
+  "additional_checks": [
+    "AST string-literal inspection",
+    "Exact comparison against configured secrets without exporting environment values",
+    "Final absence check for detected credential values",
+    "Explicit allowlist; no customer-data directories, dumps or operational documents",
+    "Visual inspection of included illustrative images"
+  ],
+  "limitations": "Current published tree only; not a dependency/vulnerability audit. Rewriting controlled Git references cannot remove every cached, forked, cloned or pull-request copy. Previously exposed credentials still require revocation/rotation. Automated and manual checks cannot prove absence of every unknown secret."
+}
