@@ -189,13 +189,6 @@ export async function getOrCreateEmpresaFolder(empresaId: number, nome: string):
   return getOrCreateFolder(nomePasta, empresas);
 }
 
-export async function getOrCreateDealFolder(dealId: number, titulo: string): Promise<string> {
-  const rootId = await getRootFolderId();
-  const deals = await getOrCreateFolder("Deals", rootId);
-  const nomePasta = `Deal-${dealId} — ${titulo.slice(0, 60)}`;
-  return getOrCreateFolder(nomePasta, deals);
-}
-
 export async function uploadArquivo(params: {
   buffer: Buffer;
   originalName: string;
@@ -329,6 +322,88 @@ export async function listarArquivos(folderId: string): Promise<Array<{
   return (data.files || []) as any[];
 }
 
+// ---------------------------------------------------------------------------
+// Resolução de posse: a estrutura de pastas é gerada pelo próprio servidor
+// (Ativos/<...> — ID{n}, Empresas/<...> — ID{n}), então
+// o vínculo arquivo→entidade pode ser resolvido a partir dela — nunca a partir
+// de rótulos fornecidos pelo cliente.
+
+export type EntidadeArquivo = { tipo: "ativo" | "empresa"; id: number };
+
+function interpretarNomePasta(nome: string | null | undefined, categoria: string): EntidadeArquivo | null {
+  if (!nome) return null;
+  const m = nome.match(/ID(\d+)\s*$/);
+  if (!m) return null;
+  if (categoria === "Ativos") return { tipo: "ativo", id: Number(m[1]) };
+  if (categoria === "Empresas") return { tipo: "empresa", id: Number(m[1]) };
+  return null; // categoria desconhecida: ambíguo — nega por segurança
+}
+
+// Para o modo local: resolve a entidade dona a partir do caminho relativo dentro de uploads/
+export function parseEntidadeDeCaminho(relativePath: string): EntidadeArquivo | null {
+  const segs = relativePath.split(/[/\\]/).filter(Boolean);
+  if (segs.length < 3) return null; // esperado: <Categoria>/<Pasta da entidade>/<arquivo>
+  return interpretarNomePasta(segs[1], segs[0]);
+}
+
+// Resolve a entidade dona de um arquivo pelo fileId, em qualquer modo de armazenamento.
+export async function resolverEntidadeArquivo(fileId: string): Promise<EntidadeArquivo | null> {
+  await initMode();
+
+  if (mode === "local") {
+    const find = (dir: string, rel: string): string | null => {
+      if (!fs.existsSync(dir)) return null;
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const fullPath = path.join(dir, entry.name);
+        const relPath = rel ? path.join(rel, entry.name) : entry.name;
+        if (entry.isDirectory()) {
+          const found = find(fullPath, relPath);
+          if (found) return found;
+        } else if (entry.name === `${fileId}.meta.json`) {
+          return relPath;
+        }
+      }
+      return null;
+    };
+    const relMeta = find(UPLOADS_DIR, "");
+    return relMeta ? parseEntidadeDeCaminho(relMeta) : null;
+  }
+
+  try {
+    if (mode === "googleapis") {
+      const drive = driveClient!;
+      const meta = await drive.files.get({ fileId, fields: "parents" });
+      const parentId = meta.data.parents?.[0];
+      if (!parentId) return null;
+      const parent = await drive.files.get({ fileId: parentId, fields: "name,parents" });
+      let categoria = "";
+      const avoId = parent.data.parents?.[0];
+      if (avoId) {
+        try { categoria = (await drive.files.get({ fileId: avoId, fields: "name" })).data.name || ""; } catch { }
+      }
+      return interpretarNomePasta(parent.data.name, categoria);
+    }
+
+    const metaRes = await replitConnectors.proxy("google-drive", `/drive/v3/files/${fileId}?fields=parents`, { method: "GET" });
+    const meta = await parseReplitBody(metaRes);
+    const parentId = meta.parents?.[0];
+    if (!parentId) return null;
+    const pRes = await replitConnectors.proxy("google-drive", `/drive/v3/files/${parentId}?fields=name,parents`, { method: "GET" });
+    const p = await parseReplitBody(pRes);
+    let categoria = "";
+    const avoId = p.parents?.[0];
+    if (avoId) {
+      try {
+        const aRes = await replitConnectors.proxy("google-drive", `/drive/v3/files/${avoId}?fields=name`, { method: "GET" });
+        categoria = (await parseReplitBody(aRes)).name || "";
+      } catch { }
+    }
+    return interpretarNomePasta(p.name, categoria);
+  } catch {
+    return null;
+  }
+}
+
 export async function deletarArquivo(fileId: string): Promise<void> {
   await initMode();
 
@@ -361,6 +436,80 @@ export async function deletarArquivo(fileId: string): Promise<void> {
   }
 
   await replitConnectors.proxy("google-drive", `/drive/v3/files/${fileId}`, { method: "DELETE" });
+}
+
+export async function baixarArquivo(fileId: string): Promise<{ buffer: Buffer; name: string; mimeType: string } | null> {
+  await initMode();
+
+  if (mode === "local") {
+    const findFile = (dir: string): { buffer: Buffer; name: string; mimeType: string } | null => {
+      if (!fs.existsSync(dir)) return null;
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          const found = findFile(fullPath);
+          if (found) return found;
+        } else if (entry.name === `${fileId}.meta.json`) {
+          try {
+            const meta = JSON.parse(fs.readFileSync(fullPath, "utf-8"));
+            const filePath = path.join(dir, meta.storedName);
+            if (!fs.existsSync(filePath)) return null;
+            return {
+              buffer: fs.readFileSync(filePath),
+              name: meta.name,
+              mimeType: meta.mimeType || "application/octet-stream",
+            };
+          } catch {
+            return null;
+          }
+        }
+      }
+      return null;
+    };
+    return findFile(UPLOADS_DIR);
+  }
+
+  if (mode === "googleapis") {
+    const drive = driveClient!;
+    const metaRes = await drive.files.get({ fileId, fields: "id,name,mimeType" });
+    const contentRes = await drive.files.get(
+      { fileId, alt: "media" },
+      { responseType: "arraybuffer" }
+    );
+    return {
+      buffer: Buffer.from(contentRes.data as ArrayBuffer),
+      name: metaRes.data.name || fileId,
+      mimeType: metaRes.data.mimeType || "application/octet-stream",
+    };
+  }
+
+  const metaRes = await replitConnectors.proxy("google-drive", `/drive/v3/files/${fileId}?fields=id,name,mimeType`, { method: "GET" });
+  const meta = await parseReplitBody(metaRes);
+  const contentRes = await replitConnectors.proxy("google-drive", `/drive/v3/files/${fileId}?alt=media`, { method: "GET" });
+  let raw = contentRes.body;
+  let buffer: Buffer;
+  if (raw && typeof raw === "object" && typeof raw.getReader === "function") {
+    const reader = raw.getReader();
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+    buffer = Buffer.concat(chunks);
+  } else if (raw && typeof raw === "object" && typeof raw.arrayBuffer === "function") {
+    buffer = Buffer.from(await raw.arrayBuffer());
+  } else if (Buffer.isBuffer(raw)) {
+    buffer = raw;
+  } else {
+    buffer = Buffer.from(String(raw), "binary");
+  }
+  return {
+    buffer,
+    name: meta.name || fileId,
+    mimeType: meta.mimeType || "application/octet-stream",
+  };
 }
 
 export async function testDriveConnection(): Promise<boolean> {

@@ -4,14 +4,10 @@ import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import {
-  Shield, Loader2, Search, AlertTriangle, CheckCircle2, MapPin,
-  TreePine, Building2, FileText, DollarSign, ChevronDown, ChevronUp,
-  RefreshCw, AlertCircle, Landmark, Scale, TrendingUp, Map as MapIcon,
-} from "lucide-react";
+import { Shield, Loader2, AlertTriangle, CheckCircle2, MapPin, TreePine, DollarSign, ChevronDown, ChevronUp, RefreshCw, AlertCircle, Landmark, Scale, Map as MapIcon } from "lucide-react";
+import { EnrichmentProgressBar } from "@/components/enrichment-progress-bar";
 
 interface DueDiligenceFundiariaProps {
   assetId: number;
@@ -59,7 +55,25 @@ function StatusBadge({ status }: { status: string }) {
 
 function DueDiligenceMap({ geoLayers, assetId }: { geoLayers: any; assetId: number }) {
   const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<any>(null);
+  const boundsRef = useRef<any>(null);
   const [mapReady, setMapReady] = useState(false);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const ro = new ResizeObserver(() => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.invalidateSize();
+        if (boundsRef.current) {
+          setTimeout(() => {
+            try { mapInstanceRef.current?.fitBounds(boundsRef.current, { padding: [30, 30] }); } catch {}
+          }, 100);
+        }
+      }
+    });
+    ro.observe(mapRef.current);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,7 +111,7 @@ function DueDiligenceMap({ geoLayers, assetId }: { geoLayers: any; assetId: numb
           }).addTo(mapInstance).bindPopup("<b>Polígono do Ativo (geom armazenada)</b>");
         } else if (!geoLayers?.sigefPolygon?.geometry) {
           try {
-            const res = await fetch(`/api/matching/assets/${assetId}/geometry`, {
+            const res = await fetch(`/api/assets/${assetId}/geometry`, {
               credentials: 'include',
             });
             if (res.ok) {
@@ -166,6 +180,7 @@ function DueDiligenceMap({ geoLayers, assetId }: { geoLayers: any; assetId: numb
           }).addTo(mapInstance).bindPopup("<b>Interseção CAR × INCRA</b>");
         }
 
+        mapInstanceRef.current = mapInstance;
         setMapReady(true);
         setTimeout(() => {
           if (!cancelled && mapInstance) {
@@ -175,7 +190,10 @@ function DueDiligenceMap({ geoLayers, assetId }: { geoLayers: any; assetId: numb
               for (let i = 1; i < allBounds.length; i++) {
                 if (allBounds[i] && allBounds[i].isValid()) combined = combined.extend(allBounds[i]);
               }
-              if (combined && combined.isValid()) mapInstance.fitBounds(combined, { padding: [30, 30] });
+              if (combined && combined.isValid()) {
+                boundsRef.current = combined;
+                mapInstance.fitBounds(combined, { padding: [30, 30] });
+              }
             }
           }
         }, 200);
@@ -184,7 +202,7 @@ function DueDiligenceMap({ geoLayers, assetId }: { geoLayers: any; assetId: numb
       }
     })();
 
-    return () => { cancelled = true; if (mapInstance) mapInstance.remove(); };
+    return () => { cancelled = true; mapInstanceRef.current = null; boundsRef.current = null; if (mapInstance) mapInstance.remove(); };
   }, [geoLayers, assetId]);
 
   return (
@@ -207,6 +225,12 @@ function DueDiligenceMap({ geoLayers, assetId }: { geoLayers: any; assetId: numb
           className="rounded-lg overflow-hidden"
           style={{ height: "350px", display: mapReady ? "block" : "none" }}
         />
+        {mapReady && !geoLayers?.sigefPolygon?.geometry && !geoLayers?.assetPolygon?.geometry && (
+          <div className="flex items-center gap-2 mt-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs" data-testid="alert-sem-poligono">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>Polígono do imóvel não disponível — o mapa exibe apenas a localização aproximada (ponto). Para exibir o perímetro, cadastre a geometria do ativo ou aguarde a certificação SIGEF/INCRA.</span>
+          </div>
+        )}
         <div className="flex flex-wrap gap-3 mt-2 text-[10px]">
           <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-green-500 inline-block" /> Ativo</span>
           <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-red-500 inline-block" /> PRODES</span>
@@ -233,6 +257,22 @@ export default function DueDiligenceFundiaria({
   const qc = useQueryClient();
   const [data, setData] = useState<any>(existingData || null);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const autoStartedRef = useRef(false);
+  const prevAssetIdRef = useRef(assetId);
+
+  useEffect(() => {
+    if (prevAssetIdRef.current !== assetId) {
+      prevAssetIdRef.current = assetId;
+      setData(existingData || null);
+      autoStartedRef.current = false;
+    }
+  }, [assetId, existingData]);
+
+  useEffect(() => {
+    if (existingData && !data) {
+      setData(existingData);
+    }
+  }, [existingData]);
 
   const toggleSection = (key: string) => {
     setExpandedSections(prev => ({ ...prev, [key]: !prev[key] }));
@@ -257,13 +297,20 @@ export default function DueDiligenceFundiaria({
     },
     onSuccess: (result) => {
       setData(result);
-      qc.invalidateQueries({ queryKey: ["/api/matching/assets", assetId] });
+      qc.invalidateQueries({ queryKey: ["/api/assets", String(assetId)] });
       toast({ title: "Due diligence fundiária concluída" });
     },
     onError: (err: any) => {
       toast({ title: "Erro na due diligence", description: err.message, variant: "destructive" });
     },
   });
+
+  useEffect(() => {
+    if (!data && codigoIncra && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      executarMutation.mutate();
+    }
+  }, [codigoIncra, data]);
 
   if (!codigoIncra) {
     return (
@@ -281,30 +328,39 @@ export default function DueDiligenceFundiaria({
     );
   }
 
+  if (!data && executarMutation.isPending) {
+    return (
+      <EnrichmentProgressBar
+        message="Executando Due Diligence Fundiária..."
+        icon={<Shield className="w-4 h-4" />}
+      />
+    );
+  }
+
   if (!data) {
     return (
       <Card>
         <CardContent className="p-6 text-center space-y-3">
           <Shield className="w-10 h-10 mx-auto text-muted-foreground opacity-30" />
           <p className="text-sm font-medium" data-testid="text-dd-disponivel">
-            Due Diligence Fundiária Disponível
+            Due Diligence Fundiária
           </p>
+          {executarMutation.isError && (
+            <p className="text-sm text-destructive" data-testid="text-dd-erro">
+              {executarMutation.error instanceof Error ? executarMutation.error.message : "Erro na consulta"}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
             Código INCRA: <span className="font-mono font-medium">{codigoIncra}</span>
           </p>
-          <p className="text-xs text-muted-foreground">
-            Consulta PRODES histórico, sobreposições (TI/Quilombola/UC), comparativo CAR vs INCRA,
-            SICOR hipotecas e ITR/VTN
-          </p>
           <Button
             size="sm"
+            variant="outline"
             disabled={executarMutation.isPending}
             onClick={() => executarMutation.mutate()}
             data-testid="button-executar-dd"
           >
-            {executarMutation.isPending
-              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Executando...</>
-              : <><Search className="w-3.5 h-3.5" /> Executar Due Diligence</>}
+            <RefreshCw className="w-3.5 h-3.5 mr-1" /> Tentar novamente
           </Button>
         </CardContent>
       </Card>
@@ -318,13 +374,13 @@ export default function DueDiligenceFundiaria({
     return { text: "text-red-600", bg: "bg-red-50 border-red-200", label: "Risco elevado" };
   };
 
-  const sc = scoreColor(data.scoreRiscoFundiario);
-  const prodes = data.prodes;
-  const sobreposicoes = data.sobreposicoes;
-  const carVsIncra = data.carVsIncra;
-  const sicor = data.sicor;
-  const itrVtn = data.itrVtn;
-  const statusMap = data.status || {};
+  const sc = scoreColor(data?.scoreRiscoFundiario ?? 0);
+  const prodes = data?.prodes;
+  const sobreposicoes = data?.sobreposicoes;
+  const carVsIncra = data?.carVsIncra;
+  const sicor = data?.sicor;
+  const itrVtn = data?.itrVtn;
+  const statusMap = data?.status || {};
 
   return (
     <div className="space-y-4">
@@ -332,13 +388,13 @@ export default function DueDiligenceFundiaria({
         <CardContent className="p-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2 flex-wrap">
             <p className="text-sm font-medium">Due Diligence Fundiária</p>
-            {data.consultadoEm && (
+            {data?.consultadoEm && (
               <Badge className="text-xs bg-blue-100 text-blue-700 border-blue-200" data-testid="badge-dd-data">
                 {new Date(data.consultadoEm).toLocaleDateString("pt-BR")}
               </Badge>
             )}
             <Badge variant="outline" className="text-xs font-mono" data-testid="badge-dd-incra">
-              INCRA: {data.codigoIncra}
+              INCRA: {data?.codigoIncra}
             </Badge>
           </div>
           <Button
@@ -359,13 +415,13 @@ export default function DueDiligenceFundiaria({
           <div className="flex items-center gap-4">
             <div className="shrink-0">
               <div className={cn("w-16 h-16 rounded-full flex items-center justify-center border-4",
-                data.scoreRiscoFundiario >= 80 ? "border-green-300 bg-green-50" :
-                data.scoreRiscoFundiario >= 60 ? "border-yellow-300 bg-yellow-50" :
-                data.scoreRiscoFundiario >= 40 ? "border-orange-300 bg-orange-50" :
+                (data?.scoreRiscoFundiario ?? 0) >= 80 ? "border-green-300 bg-green-50" :
+                (data?.scoreRiscoFundiario ?? 0) >= 60 ? "border-yellow-300 bg-yellow-50" :
+                (data?.scoreRiscoFundiario ?? 0) >= 40 ? "border-orange-300 bg-orange-50" :
                 "border-red-300 bg-red-50"
               )}>
                 <span className={cn("text-xl font-bold", sc.text)} data-testid="text-score-dd">
-                  {data.scoreRiscoFundiario}
+                  {data?.scoreRiscoFundiario ?? 0}
                 </span>
               </div>
             </div>
@@ -374,7 +430,7 @@ export default function DueDiligenceFundiaria({
                 <p className={cn("text-lg font-bold", sc.text)} data-testid="text-risco-label">{sc.label}</p>
               </div>
               <div className="grid grid-cols-5 gap-2">
-                {data.scoreBreakdown && Object.entries(data.scoreBreakdown).map(([key, val]) => (
+                {data?.scoreBreakdown && Object.entries(data.scoreBreakdown).map(([key, val]) => (
                   <ScoreGauge key={key} score={val as number} label={
                     key === 'ambiental' ? 'Ambiental' :
                     key === 'juridico' ? 'Jurídico' :
@@ -397,7 +453,7 @@ export default function DueDiligenceFundiaria({
         </CardContent>
       </Card>
 
-      {data.geoLayers && (
+      {data?.geoLayers && (
         <DueDiligenceMap geoLayers={data.geoLayers} assetId={assetId} />
       )}
 
@@ -702,14 +758,15 @@ export default function DueDiligenceFundiaria({
               </>
             ) : (
               <div className="text-center py-4 space-y-1">
-                <p className="text-xs text-muted-foreground" data-testid="text-sicor-indisponivel">
+                <AlertCircle className="w-5 h-5 text-muted-foreground mx-auto mb-1" />
+                <p className="text-xs text-muted-foreground font-medium" data-testid="text-sicor-indisponivel">
                   {cpfCnpj ? "Consulta SICOR por titular indisponível" : "CPF/CNPJ não informado"}
                 </p>
-                {cpfCnpj && data?.status?.sicor === "indisponivel" && (
-                  <p className="text-[10px] text-muted-foreground">
-                    Requer convênio BCB ou chave de API (SICOR_API_KEY)
-                  </p>
-                )}
+                <p className="text-[10px] text-muted-foreground">
+                  {cpfCnpj
+                    ? "A API pública do BCB/SICOR não permite consulta por CPF/CNPJ. Dados individuais requerem convênio com o Banco Central."
+                    : "Informe o CPF ou CNPJ do proprietário para consultar operações de crédito rural."}
+                </p>
               </div>
             )}
           </CardContent>
@@ -756,10 +813,13 @@ export default function DueDiligenceFundiaria({
                       )}
                     </>
                   ) : (
-                    <div className="bg-muted/40 rounded-lg p-3 text-center">
+                    <div className="bg-muted/40 rounded-lg p-3 text-center space-y-1">
                       <AlertCircle className="w-6 h-6 text-muted-foreground mx-auto mb-1" />
-                      <p className="text-xs text-muted-foreground" data-testid="text-vtn-nd">
-                        VTN não disponível
+                      <p className="text-xs text-muted-foreground font-medium" data-testid="text-vtn-nd">
+                        VTN não disponível via API pública
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        O Valor da Terra Nua por propriedade é consultável apenas via CAFIR/Receita Federal com certificado digital (e-CPF/e-CNPJ).
                       </p>
                     </div>
                   )}

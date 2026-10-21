@@ -2,7 +2,7 @@ import type { Response } from "express";
 
 export interface Notification {
   id: string;
-  type: "deal_due" | "new_inquiry" | "new_match" | "lead_stale" | "connector_error" | "deal_stage";
+  type: "deal_due" | "new_inquiry" | "new_match" | "lead_stale" | "connector_error" | "deal_stage" | "sigef_health";
   title: string;
   message: string;
   link?: string;

@@ -52,7 +52,7 @@ export const CNAE_TREE = [
       { code: "07", label: "Extração de minerais metálicos", subclasses: [
         { id: 710301, label: "Extração de minério de ferro" },
         { id: 721401, label: "Extração de minério de alumínio" },
-        { id: 722201, label: "Extração de minério de estanho" },
+        { id: 722701, label: "Extração de minério de estanho" },
         { id: 723303, label: "Extração de minério de ouro" },
         { id: 729403, label: "Extração de gemas (pedras preciosas)" },
       ]},

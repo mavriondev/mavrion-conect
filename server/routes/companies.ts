@@ -2,15 +2,15 @@ import type { Express } from "express";
 import type { IStorage } from "../storage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { api } from "@shared/routes";
-import { companies, leads, contacts, deals, proposals, contracts, norionOperations, norionCafRegistros, assets, investorProfiles, matchSuggestions, dealComments, portalInquiries } from "@shared/schema";
+import { companies, leads, contacts, deals, proposals, contracts, norionOperations, norionCafRegistros, assets, investorProfiles, matchSuggestions, dealComments, portalInquiries, companyBuyerProfiles, companyVisitLog, companyRejectionLog } from "@shared/schema";
 import { eq, and, desc, inArray, or, isNull, sql } from "drizzle-orm";
-import { spawn } from "child_process";
 import path from "path";
 import { getCached, setCached } from "../cache";
 import { audit } from "../audit";
 import { waterfallEnrich } from "../enrichment/waterfall";
 import { getOrgId } from "../lib/tenant";
 import { consultarCertidoes } from "../lib/certidoes";
+import { companyProspectionScope, discardCompanyRecord } from "../lib/company-prospecting";
 
 const cnpjaHeaders = () => ({
   "Authorization": process.env.CNPJA_API_KEY || "",
@@ -51,24 +51,16 @@ function mapCnpjaOffice(data: any, cleanCnpj: string) {
 }
 
 export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodePgDatabase<any>) {
-  app.get(api.crm.companies.list.path, async (req, res) => {
+  app.get(api.companies.list.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     const companiesList = await storage.getCompanies();
     res.json(companiesList);
   });
 
-  app.get("/api/companies/with-leads", async (req, res) => {
+  app.get("/api/companies/catalogo", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
-      const allCompanies = await db.select().from(companies).orderBy(desc(companies.createdAt));
-      const allLeads = await db.select().from(leads);
-      const leadsByCompany = new Map<number, typeof allLeads[0]>();
-      for (const lead of allLeads) {
-        if (lead.companyId && !leadsByCompany.has(lead.companyId)) {
-          leadsByCompany.set(lead.companyId, lead);
-        }
-      }
-
+      const allCompanies = await db.select().from(companies).where(eq(companies.orgId, getOrgId(req))).orderBy(desc(companies.createdAt));
       const linkedAssets = await db
         .select({ linkedCompanyId: assets.linkedCompanyId, assetType: assets.type })
         .from(assets)
@@ -88,19 +80,13 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
         emails: (c.emails as string[]) || [],
         cnaeSecundarios: (c.cnaeSecundarios as string[]) || [],
         address: (c.address as Record<string, string>) || {},
-        lead: leadsByCompany.has(c.id)
-          ? (() => {
-              const l = leadsByCompany.get(c.id)!;
-              return { id: l.id, status: l.status, score: l.score ?? 0, source: l.source };
-            })()
-          : null,
         ownedAssets: assetCountByCompany.has(c.id)
           ? { count: assetCountByCompany.get(c.id)!.count, types: Array.from(assetCountByCompany.get(c.id)!.types) }
           : null,
       }));
       res.json(result);
     } catch (err) {
-      console.error("Companies with leads error:", err);
+      console.error("Companies catalog error:", err);
       res.status(500).json({ message: "Falha ao buscar empresas" });
     }
   });
@@ -129,7 +115,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
           const [created] = await db.insert(companies).values({
             legalName: legalName || "Empresa " + formatted,
             cnpj: formatted,
-            orgId: getOrgId(),
+            orgId: getOrgId(req),
           }).returning();
           companyId = created.id;
         }
@@ -144,7 +130,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
         } else {
           const [created] = await db.insert(companies).values({
             legalName,
-            orgId: getOrgId(),
+            orgId: getOrgId(req),
           }).returning();
           companyId = created.id;
         }
@@ -159,7 +145,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
 
       if (companyId) {
         const [comp] = await db.select().from(companies).where(
-          and(eq(companies.id, companyId), or(eq(companies.orgId, getOrgId()), isNull(companies.orgId)))
+          and(eq(companies.id, companyId), or(eq(companies.orgId, getOrgId(req)), isNull(companies.orgId)))
         );
         if (comp?.cnpj && (!comp.cnaePrincipal || !comp.porte)) {
           const cleanCnpj = comp.cnpj.replace(/\D/g, "");
@@ -192,7 +178,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
               }
               if (Object.keys(updateData).length > 0) {
                 await db.update(companies).set(updateData).where(
-                  and(eq(companies.id, companyId!), or(eq(companies.orgId, getOrgId()), isNull(companies.orgId)))
+                  and(eq(companies.id, companyId!), or(eq(companies.orgId, getOrgId(req)), isNull(companies.orgId)))
                 );
                 console.log(`[find-or-create] Auto-enriched company ${companyId} with CNPJA data (${Object.keys(updateData).join(", ")})`);
               }
@@ -243,48 +229,21 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
         }
       }
 
-      const [lead] = await db.select().from(leads).where(and(eq(leads.companyId, companyId), eq(leads.orgId, company.orgId))).limit(1);
 
-      const companyDeals = await db.select().from(deals).where(and(eq(deals.companyId, companyId), eq(deals.orgId, company.orgId)));
 
-      res.json({ company: { ...company, lead: lead || null }, socios, deals: companyDeals });
+      res.json({ company, socios });
     } catch (err) {
       console.error("Relationships error:", err);
       res.status(500).json({ message: "Falha ao buscar relacionamentos" });
     }
   });
 
-  app.post("/api/companies/:id/lead", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
-    try {
-      const companyId = Number(req.params.id);
-      const allowedSources = ["manual", "ma_radar", "portal", "prospeccao", "caf", "anm", "matching"];
-      const rawSource = (req.body?.source as string) || "manual";
-      const source = allowedSources.includes(rawSource) ? rawSource : "manual";
-      const existingLead = await db.select().from(leads).where(eq(leads.companyId, companyId));
-      if (existingLead.length > 0) {
-        return res.status(409).json({ message: "Esta empresa já possui um lead", lead: existingLead[0] });
-      }
-      const [lead] = await db.insert(leads).values({
-        orgId: getOrgId(),
-        companyId,
-        status: "new",
-        score: 50,
-        source,
-        scoreBreakdownJson: { source: `${source}_from_company` },
-      } as any).returning();
-      res.status(201).json(lead);
-    } catch (err) {
-      console.error("Create lead from company error:", err);
-      res.status(500).json({ message: "Falha ao criar lead" });
-    }
-  });
 
-  app.post(api.crm.companies.create.path, async (req, res) => {
+  app.post(api.companies.create.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
-      const input = api.crm.companies.create.input.parse(req.body);
-      const data = await storage.createCompany({ ...input, orgId: getOrgId() });
+      const input = api.companies.create.input.parse(req.body);
+      const data = await storage.createCompany({ ...input, orgId: getOrgId(req) });
       res.status(201).json(data);
     } catch (err) {
       const { z } = await import("zod");
@@ -326,7 +285,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
         try {
           const companyId = Number(req.params.id);
           const [company] = await db.select().from(companies)
-            .where(and(eq(companies.id, companyId), or(eq(companies.orgId, getOrgId()), isNull(companies.orgId))));
+            .where(and(eq(companies.id, companyId), or(eq(companies.orgId, getOrgId(req)), isNull(companies.orgId))));
           if (!company) return res.status(404).json({ message: "Empresa não encontrada" });
 
           const result = await waterfallEnrich({
@@ -474,13 +433,6 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
 
           await db.update(companies).set(updateData as any).where(eq(companies.id, companyId));
 
-          if (result.phones.length || result.emails.length) {
-            const leadRows = await db.select().from(leads).where(eq(leads.companyId, companyId));
-            const lead = leadRows[0];
-            if (lead && lead.status === "new") {
-              await db.update(leads).set({ status: "in_progress" }).where(eq(leads.id, lead.id));
-            }
-          }
 
           const [updated] = await db.select().from(companies).where(eq(companies.id, companyId));
           const user = req.user as any;
@@ -510,7 +462,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
     try {
       const companyId = Number(req.params.id);
       const [company] = await db.select().from(companies)
-        .where(and(eq(companies.id, companyId), or(eq(companies.orgId, getOrgId()), isNull(companies.orgId))));
+        .where(and(eq(companies.id, companyId), or(eq(companies.orgId, getOrgId(req)), isNull(companies.orgId))));
       if (!company) return res.status(404).json({ message: "Empresa não encontrada" });
       if (!company.cnpj) return res.status(400).json({ message: "Empresa sem CNPJ — não é possível consultar dados financeiros" });
 
@@ -556,7 +508,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
     }
   });
 
-  app.patch("/api/crm/companies/:id", async (req, res) => {
+  app.patch("/api/companies/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const companyId = Number(req.params.id);
@@ -571,7 +523,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
       if (Object.keys(updates).length === 0) return res.status(400).json({ message: "Nenhum campo válido para atualizar" });
       const [updated] = await db.update(companies)
         .set(updates)
-        .where(and(eq(companies.id, companyId), or(eq(companies.orgId, getOrgId()), isNull(companies.orgId))))
+        .where(and(eq(companies.id, companyId), or(eq(companies.orgId, getOrgId(req)), isNull(companies.orgId))))
         .returning();
       if (!updated) return res.status(404).json({ message: "Empresa não encontrada" });
       const user = req.user as any;
@@ -583,7 +535,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
       });
       res.json(updated);
     } catch (err: any) {
-      console.error("[PATCH /api/crm/companies/:id]", err.message || err);
+      console.error("[PATCH /api/companies/:id]", err.message || err);
       res.status(500).json({ message: "Erro ao atualizar empresa" });
     }
   });
@@ -596,7 +548,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
       if (!enrichmentData || typeof enrichmentData !== "object") return res.status(400).json({ message: "enrichmentData inválido" });
       const [updated] = await db.update(companies)
         .set({ enrichmentData } as any)
-        .where(and(eq(companies.id, companyId), or(eq(companies.orgId, getOrgId()), isNull(companies.orgId))))
+        .where(and(eq(companies.id, companyId), or(eq(companies.orgId, getOrgId(req)), isNull(companies.orgId))))
         .returning();
       if (!updated) return res.status(404).json({ message: "Empresa não encontrada" });
       const user = req.user as any;
@@ -648,7 +600,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
       };
       const [updated] = await db.update(companies)
         .set({ verifiedContacts: verifiedData } as any)
-        .where(and(eq(companies.id, companyId), eq(companies.orgId, getOrgId())))
+        .where(and(eq(companies.id, companyId), eq(companies.orgId, getOrgId(req))))
         .returning();
       if (!updated) return res.status(404).json({ message: "Empresa não encontrada" });
       await audit({
@@ -668,7 +620,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
       if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
       const companyId = Number(req.params.id);
       const user = req.user as any;
-      const [row] = await db.select().from(companies).where(and(eq(companies.id, companyId), eq(companies.orgId, getOrgId()))).limit(1);
+      const [row] = await db.select().from(companies).where(and(eq(companies.id, companyId), eq(companies.orgId, getOrgId(req)))).limit(1);
       if (!row) return res.status(404).json({ message: "Empresa não encontrada" });
       res.json({ verifiedContacts: (row as any).verifiedContacts || {} });
     } catch (err) {
@@ -737,15 +689,6 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
 
       if (existing.length > 0) {
         company = existing[0];
-        const currentEnrichment = (company.enrichmentData as any) || {};
-        if (!currentEnrichment.buyerType) {
-          await db.update(companies)
-            .set({
-              enrichmentData: { ...currentEnrichment, buyerType: "estrategico", importedAsInvestor: true, investorImportedAt: new Date().toISOString() },
-            } as any)
-            .where(eq(companies.id, company.id));
-          company = { ...company, enrichmentData: { ...currentEnrichment, buyerType: "estrategico", importedAsInvestor: true, investorImportedAt: new Date().toISOString() } };
-        }
       } else {
         [company] = await db.insert(companies).values({
           orgId: getOrgId(req),
@@ -759,58 +702,11 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
           emails,
           address: data.address || {},
           notes: `Situação: ${data.status?.text || "?"} | ${data.company?.nature?.text || ""}`,
-          enrichmentData: { buyerType: "estrategico", importedAsInvestor: true, investorImportedAt: new Date().toISOString() },
+          enrichmentData: { importedAt: new Date().toISOString() },
         } as any).returning();
       }
 
-      const existingLead = await db.select().from(leads).where(eq(leads.companyId, company.id)).limit(1);
-      if (existingLead.length > 0) {
-        const existingProfile = await db.select().from(investorProfiles)
-          .where(and(eq(investorProfiles.companyId, company.id), eq(investorProfiles.orgId, getOrgId(req))))
-          .limit(1);
-        let investorProfile = existingProfile[0] || null;
-        if (!investorProfile) {
-          const regionFromAddress = data.address?.state || null;
-          [investorProfile] = await db.insert(investorProfiles).values({
-            orgId: getOrgId(req),
-            companyId: company.id,
-            name: tradeName || legalName,
-            assetTypes: [],
-            regionsOfInterest: regionFromAddress ? [regionFromAddress] : [],
-            buyerType: "estrategico",
-            cnaeInteresse: cnaePrincipal ? [cnaePrincipal] : [],
-          } as any).returning();
-        }
-        return res.status(200).json({ company, lead: existingLead[0], investorProfile, alreadyImported: true });
-      }
-
-      const [lead] = await db.insert(leads).values({
-        orgId: getOrgId(req),
-        companyId: company.id,
-        status: "new",
-        score: 50,
-        source: "cnpja.com",
-        scoreBreakdownJson: { source: "cnpja_import", cnae: cnaePrincipal },
-      } as any).returning();
-
-      const existingProfile = await db.select().from(investorProfiles)
-        .where(and(eq(investorProfiles.companyId, company.id), eq(investorProfiles.orgId, getOrgId(req))))
-        .limit(1);
-      let investorProfile = existingProfile[0] || null;
-      if (!investorProfile) {
-        const regionFromAddress = data.address?.state || null;
-        [investorProfile] = await db.insert(investorProfiles).values({
-          orgId: getOrgId(req),
-          companyId: company.id,
-          name: tradeName || legalName,
-          assetTypes: [],
-          regionsOfInterest: regionFromAddress ? [regionFromAddress] : [],
-          buyerType: "estrategico",
-          cnaeInteresse: cnaePrincipal ? [cnaePrincipal] : [],
-        } as any).returning();
-      }
-
-      res.status(201).json({ company, lead, investorProfile });
+      res.status(201).json({ company });
     } catch (err) {
       console.error("CNPJ import error:", err);
       res.status(500).json({ message: "Falha ao importar CNPJ" });
@@ -822,11 +718,15 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
     const { cnpj } = req.params;
     const cleanCnpj = cnpj.replace(/\D/g, "");
     try {
+      const orgId = getOrgId(req);
       let company;
-      const existing = await db.select().from(companies).where(eq(companies.cnpj, cleanCnpj));
+      const existing = await db.select().from(companies).where(companyProspectionScope(orgId, cleanCnpj));
       if (existing.length > 0) {
         company = existing[0];
       } else {
+        // CNPJ é único: não reutilizar nem modificar um cadastro de outro tenant.
+        const [elsewhere] = await db.select({ id: companies.id }).from(companies).where(eq(companies.cnpj, cleanCnpj));
+        if (elsewhere) return res.status(404).json({ message: "Empresa não encontrada" });
         let data = await getCached<any>("cnpja", cleanCnpj);
         if (!data) {
           const response = await fetch(`https://api.cnpja.com/office/${cleanCnpj}?strategy=CACHE_IF_FRESH&maxAge=30`, { headers: cnpjaHeaders() });
@@ -835,7 +735,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
           await setCached("cnpja", cleanCnpj, data);
         }
         [company] = await db.insert(companies).values({
-          orgId: getOrgId(),
+          orgId: getOrgId(req),
           legalName: data.company?.name || "Empresa sem nome",
           tradeName: data.alias || null,
           cnpj: cleanCnpj,
@@ -848,15 +748,8 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
           notes: `Situação: ${data.status?.text || "?"} | ${data.company?.nature?.text || ""}`,
         } as any).returning();
       }
-      const existingLead = await db.select().from(leads).where(eq(leads.companyId, company.id));
-      if (existingLead.length > 0) {
-        await db.update(leads).set({ status: "disqualified" } as any).where(eq(leads.companyId, company.id));
-      } else {
-        await db.insert(leads).values({
-          orgId: getOrgId(), companyId: company.id, status: "disqualified",
-          score: 0, source: "manual_disqualify",
-        } as any);
-      }
+      const discarded = await discardCompanyRecord(db, orgId, cleanCnpj);
+      if (!discarded) return res.status(404).json({ message: "Empresa não encontrada" });
       res.status(201).json({ success: true });
     } catch (err) {
       console.error("Disqualify error:", err);
@@ -870,7 +763,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
       const id = Number(req.params.id);
       if (!id) return res.status(400).json({ message: "ID inválido" });
 
-      const orgId = getOrgId();
+      const orgId = getOrgId(req);
       const [existing] = await db.select({ id: companies.id }).from(companies).where(and(eq(companies.id, id), eq(companies.orgId, orgId)));
       if (!existing) return res.status(404).json({ message: "Empresa não encontrada" });
 
@@ -883,7 +776,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
       if (companyDeals.length > 0) {
         const dealIds = companyDeals.map(d => d.id);
         await db.delete(dealComments).where(inArray(dealComments.dealId, dealIds));
-        await sql`DELETE FROM deal_activities WHERE deal_id = ANY(${dealIds})`.execute(db);
+        await db.execute(sql`DELETE FROM deal_activities WHERE deal_id = ANY(${dealIds})`);
         await db.update(matchSuggestions).set({ status: "new", dealId: null } as any).where(inArray(matchSuggestions.dealId, dealIds));
         await db.update(portalInquiries).set({ dealId: null } as any).where(inArray(portalInquiries.dealId, dealIds));
       }
@@ -894,6 +787,9 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
       await db.delete(deals).where(eq(deals.companyId, id));
       await db.delete(norionOperations).where(eq(norionOperations.companyId, id));
       await db.delete(norionCafRegistros).where(eq(norionCafRegistros.companyId, id));
+      await db.delete(companyBuyerProfiles).where(eq(companyBuyerProfiles.companyId, id));
+      await db.delete(companyVisitLog).where(eq(companyVisitLog.companyId, id));
+      await db.delete(companyRejectionLog).where(eq(companyRejectionLog.companyId, id));
       await db.update(assets).set({ linkedCompanyId: null } as any).where(eq(assets.linkedCompanyId, id));
       await db.update(assets).set({ exclusividadeEmpresaId: null } as any).where(eq(assets.exclusividadeEmpresaId, id));
       await db.delete(companies).where(eq(companies.id, id));
@@ -915,7 +811,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
       const numIds = ids.map(Number).filter(Boolean);
       if (numIds.length === 0) return res.status(400).json({ message: "IDs inválidos" });
 
-      const orgId = getOrgId();
+      const orgId = getOrgId(req);
       const ownedCompanies = await db.select({ id: companies.id }).from(companies).where(and(inArray(companies.id, numIds), eq(companies.orgId, orgId)));
       const ownedIds = ownedCompanies.map(c => c.id);
       if (ownedIds.length === 0) return res.status(404).json({ message: "Nenhuma empresa encontrada" });
@@ -929,7 +825,7 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
       if (batchDeals.length > 0) {
         const dealIds = batchDeals.map(d => d.id);
         await db.delete(dealComments).where(inArray(dealComments.dealId, dealIds));
-        await sql`DELETE FROM deal_activities WHERE deal_id = ANY(${dealIds})`.execute(db);
+        await db.execute(sql`DELETE FROM deal_activities WHERE deal_id = ANY(${dealIds})`);
         await db.update(matchSuggestions).set({ status: "new", dealId: null } as any).where(inArray(matchSuggestions.dealId, dealIds));
         await db.update(portalInquiries).set({ dealId: null } as any).where(inArray(portalInquiries.dealId, dealIds));
       }
@@ -940,6 +836,9 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
       await db.delete(deals).where(inArray(deals.companyId, ownedIds));
       await db.delete(norionOperations).where(inArray(norionOperations.companyId, ownedIds));
       await db.delete(norionCafRegistros).where(inArray(norionCafRegistros.companyId, ownedIds));
+      await db.delete(companyBuyerProfiles).where(inArray(companyBuyerProfiles.companyId, ownedIds));
+      await db.delete(companyVisitLog).where(inArray(companyVisitLog.companyId, ownedIds));
+      await db.delete(companyRejectionLog).where(inArray(companyRejectionLog.companyId, ownedIds));
       await db.update(assets).set({ linkedCompanyId: null } as any).where(inArray(assets.linkedCompanyId, ownedIds));
       await db.update(assets).set({ exclusividadeEmpresaId: null } as any).where(inArray(assets.exclusividadeEmpresaId, ownedIds));
       await db.delete(companies).where(inArray(companies.id, ownedIds));
@@ -949,38 +848,6 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
     } catch (err) {
       console.error("Batch delete companies error:", err);
       res.status(500).json({ message: "Falha ao excluir empresas em lote" });
-    }
-  });
-
-  app.post("/api/companies/:id/toggle-investor", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
-    try {
-      const orgId = getOrgId(req);
-      const companyId = Number(req.params.id);
-      const [company] = await db.select().from(companies).where(and(eq(companies.id, companyId), eq(companies.orgId, orgId)));
-      if (!company) return res.status(404).json({ message: "Empresa não encontrada" });
-
-      const existing = await db.select().from(investorProfiles).where(eq(investorProfiles.companyId, companyId));
-      if (existing.length > 0) {
-        for (const inv of existing) {
-          await db.delete(matchSuggestions).where(eq(matchSuggestions.investorProfileId, inv.id));
-        }
-        await db.delete(investorProfiles).where(eq(investorProfiles.companyId, companyId));
-        res.json({ isInvestor: false });
-      } else {
-        const [created] = await db.insert(investorProfiles).values({
-          orgId: company.orgId,
-          companyId,
-          name: company.tradeName || company.legalName,
-          assetTypes: [],
-          regionsOfInterest: [],
-          buyerType: "estrategico",
-        } as any).returning();
-        res.json({ isInvestor: true, investorId: created.id });
-      }
-    } catch (err) {
-      console.error("Toggle investor error:", err);
-      res.status(500).json({ message: "Falha ao alternar investidor" });
     }
   });
 
@@ -1005,7 +872,8 @@ export function registerCompanyRoutes(app: Express, storage: IStorage, db: NodeP
 
       res.json(certidoes);
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      console.error(`[Certidões] Erro inesperado ao consultar certidões para empresa ${company.id}:`, err);
+      res.status(500).json({ message: err.message || "Erro inesperado ao consultar certidões" });
     }
   });
 }

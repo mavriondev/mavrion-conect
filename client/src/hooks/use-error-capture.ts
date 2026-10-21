@@ -61,7 +61,9 @@ export function useErrorCapture() {
         const response = await originalFetch.apply(this, args);
 
         if (url.startsWith("/api/")) {
-          if (response.status >= 400) {
+          const isExpected404 =
+            response.status === 404 && response.headers.get("X-Expected-404") === "1";
+          if (response.status >= 400 && !isExpected404) {
             const key = `${method}:${url}:${response.status}`;
             if (shouldReport(key)) {
               let errorText = "";

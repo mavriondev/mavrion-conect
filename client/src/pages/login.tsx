@@ -43,7 +43,7 @@ export default function LoginPage() {
   };
 
   const features = [
-    { icon: BarChart3, text: "CRM dual-pipeline com matching inteligente" },
+    { icon: BarChart3, text: "Pesquisa e relatórios técnicos de jazidas" },
     { icon: Globe2, text: "Prospecção rural, minerária e M&A integrada" },
     { icon: Shield, text: "Due diligence automatizada e compliance" },
     { icon: TrendingUp, text: "Inteligência agro com dados SoilGrids e Embrapa" },
@@ -79,7 +79,7 @@ export default function LoginPage() {
               </h1>
               <p className="text-base text-slate-300/90 leading-relaxed max-w-md">
                 Plataforma completa de deal origination B2B — prospecção de terras, minas e negócios,
-                CRM inteligente, matching automatizado e análise de ativos com dados geoespaciais.
+                pesquisa de jazidas e análise de ativos com dados geoespaciais.
               </p>
             </div>
 
@@ -113,7 +113,7 @@ export default function LoginPage() {
         </div>
       </div>
 
-      <div className="flex-1 flex items-center justify-center bg-[#fafbfc] dark:bg-[#0a0f0d] px-6 py-12 relative">
+      <div className="flex-1 flex items-center justify-center bg-[#f8f8f6] dark:bg-[#0c0e14] px-6 py-12 relative">
         <div className="absolute inset-0 -z-10 overflow-hidden">
           <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full bg-emerald-500/5 blur-3xl" />
           <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full bg-teal-500/5 blur-3xl" />
@@ -182,7 +182,7 @@ export default function LoginPage() {
             <Button
               type="submit"
               data-testid="button-login"
-              className="w-full h-11 text-base font-semibold bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-600/20 hover:shadow-emerald-700/30 transition-all"
+              className="w-full h-12 text-base font-semibold bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-lg shadow-emerald-600/25 hover:shadow-emerald-700/30 transition-all duration-200"
               disabled={isLoggingIn}
             >
               {isLoggingIn ? (

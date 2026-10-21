@@ -4,9 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
-import {
-  Building2, MapPin, Briefcase, AlertCircle, Download, Loader2, Filter, XCircle, ExternalLink, ChevronDown, Users
-} from "lucide-react";
+import { Building2, MapPin, Briefcase, AlertCircle, Loader2, Filter, XCircle, ExternalLink, ChevronDown, Users } from "lucide-react";
 
 interface SearchResult {
   taxId: string;
@@ -75,7 +73,7 @@ export default function ResultsTable({
             <span className="font-medium text-foreground">{searchMeta.count.toLocaleString("pt-BR")}</span> empresas encontradas
             {searchResults && searchResults.filter(r => r.alreadySaved || r.savedCompanyId).length > 0 && (
               <span className="ml-1 text-muted-foreground">
-                ({searchResults.filter(r => r.alreadySaved || r.savedCompanyId).length} já no CRM)
+                ({searchResults.filter(r => r.alreadySaved || r.savedCompanyId).length} já cadastradas)
               </span>
             )}
           </span>

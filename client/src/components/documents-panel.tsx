@@ -11,11 +11,12 @@ import {
 import {
   Upload, FileText, ExternalLink, Trash2, Loader2,
   File, Image, FileSpreadsheet, FileType,
+  Sparkles, ScanText, AlertTriangle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
-type DocumentoTipo = "ativo" | "empresa" | "deal";
+type DocumentoTipo = "ativo" | "empresa";
 
 interface DocumentsPanelProps {
   tipo: DocumentoTipo;
@@ -23,7 +24,6 @@ interface DocumentsPanelProps {
   ativoTipo?: string;
   ativoTitulo?: string;
   empresaNome?: string;
-  dealTitulo?: string;
 }
 
 function iconeArquivo(mimeType: string) {
@@ -47,7 +47,7 @@ function formatNomeArquivo(nome: string): string {
 }
 
 export default function DocumentsPanel({
-  tipo, entityId, ativoTipo, ativoTitulo, empresaNome, dealTitulo,
+  tipo, entityId, ativoTipo, ativoTitulo, empresaNome,
 }: DocumentsPanelProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -66,9 +66,6 @@ export default function DocumentsPanel({
   } else if (tipo === "empresa") {
     endpoint = `/api/documents/empresa/${entityId}`;
     queryParams.set("nome", empresaNome || "");
-  } else {
-    endpoint = `/api/documents/deal/${entityId}`;
-    queryParams.set("titulo", dealTitulo || "");
   }
 
   const queryKey = [`docs-${tipo}-${entityId}`];
@@ -76,51 +73,126 @@ export default function DocumentsPanel({
   const { data, isLoading, error } = useQuery({
     queryKey,
     queryFn: () => apiRequest("GET", `${endpoint}?${queryParams}`).then(r => r.json()),
-    enabled: !!(tipo === "ativo" ? ativoTitulo : tipo === "empresa" ? empresaNome : dealTitulo),
+    enabled: !!(tipo === "ativo" ? ativoTitulo : empresaNome),
   });
 
   const arquivos: any[] = data?.arquivos || [];
+
+  // Status de leitura pela IA (apenas para documentos de ativo)
+  const textosQueryKey = [`docs-ativo-textos-${entityId}`];
+  const { data: textosData } = useQuery({
+    queryKey: textosQueryKey,
+    queryFn: () => apiRequest("GET", `/api/documents/ativo/${entityId}/textos`).then(r => r.json()),
+    enabled: tipo === "ativo",
+    refetchInterval: (query) => {
+      const t = (query.state.data as any)?.textos || [];
+      return t.some((x: any) => x.status === "processando") ? 4000 : false;
+    },
+  });
+  const textosPorArquivo: Record<string, any> = {};
+  for (const t of (textosData?.textos || [])) {
+    textosPorArquivo[t.fileId] = t;
+  }
+
+  const [reprocessando, setReprocessando] = useState<string | null>(null);
+
+  const handleReprocessar = async (fileId: string) => {
+    setReprocessando(fileId);
+    try {
+      const res = await fetch(`/api/documents/ativo/${entityId}/extrair/${fileId}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        // tipo/titulo permitem ao servidor validar que o arquivo pertence à pasta deste ativo
+        body: JSON.stringify({ tipo: ativoTipo || "", titulo: ativoTitulo || "" }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as any));
+        throw new Error(err.message || "Erro ao iniciar leitura");
+      }
+      toast({ title: "Leitura pela IA iniciada", description: "O documento está sendo processado." });
+      queryClient.invalidateQueries({ queryKey: textosQueryKey });
+    } catch (err: any) {
+      toast({ title: "Erro ao ler documento", description: err.message, variant: "destructive" });
+    } finally {
+      setReprocessando(null);
+    }
+  };
 
   const handleUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setUploading(true);
 
-    for (const file of Array.from(files)) {
+    if (tipo === "ativo") {
+      // Upload múltiplo em uma única requisição
       try {
         const formData = new FormData();
-        formData.append("arquivo", file);
-        if (tipo === "ativo") {
-          formData.append("tipo", ativoTipo || "");
-          formData.append("titulo", ativoTitulo || "");
-        } else if (tipo === "empresa") {
-          formData.append("nome", empresaNome || "");
-        } else {
-          formData.append("titulo", dealTitulo || "");
+        for (const file of Array.from(files)) {
+          formData.append("arquivos", file);
         }
+        formData.append("tipo", ativoTipo || "");
+        formData.append("titulo", ativoTitulo || "");
 
         const response = await fetch(endpoint, {
           method: "POST",
           body: formData,
           credentials: "include",
         });
-
-        if (!response.ok) {
-          const err = await response.json();
-          throw new Error(err.message || "Erro no upload");
+        const dataRes = await response.json().catch(() => ({} as any));
+        if (!response.ok && !dataRes?.resultados) {
+          throw new Error(dataRes.message || "Erro no upload");
         }
-
-        toast({ title: `✓ ${file.name} enviado com sucesso!` });
+        const resultados: any[] = dataRes.resultados || [];
+        const ok = resultados.filter(r => r.success);
+        const falhas = resultados.filter(r => !r.success);
+        if (ok.length > 0) {
+          toast({
+            title: `✓ ${ok.length} arquivo${ok.length !== 1 ? "s" : ""} enviado${ok.length !== 1 ? "s" : ""}!`,
+            description: "A IA está lendo o conteúdo dos documentos.",
+          });
+        }
+        for (const f of falhas) {
+          toast({ title: `Erro ao enviar ${f.originalName}`, description: f.error, variant: "destructive" });
+        }
       } catch (err: any) {
-        toast({
-          title: `Erro ao enviar ${file.name}`,
-          description: err.message,
-          variant: "destructive",
-        });
+        toast({ title: "Erro no upload", description: err.message, variant: "destructive" });
+      }
+    } else {
+      for (const file of Array.from(files)) {
+        try {
+          const formData = new FormData();
+          formData.append("arquivo", file);
+          if (tipo === "empresa") {
+            formData.append("nome", empresaNome || "");
+          } else {
+            formData.append("titulo", ativoTitulo || "");
+          }
+
+          const response = await fetch(endpoint, {
+            method: "POST",
+            body: formData,
+            credentials: "include",
+          });
+
+          if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.message || "Erro no upload");
+          }
+
+          toast({ title: `✓ ${file.name} enviado com sucesso!` });
+        } catch (err: any) {
+          toast({
+            title: `Erro ao enviar ${file.name}`,
+            description: err.message,
+            variant: "destructive",
+          });
+        }
       }
     }
 
     setUploading(false);
     queryClient.invalidateQueries({ queryKey });
+    if (tipo === "ativo") queryClient.invalidateQueries({ queryKey: textosQueryKey });
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -178,6 +250,7 @@ export default function DocumentsPanel({
             <p className="text-sm font-medium">Clique ou arraste arquivos aqui</p>
             <p className="text-xs text-muted-foreground">
               PDF, imagem, Word, Excel — máximo 50MB por arquivo
+              {tipo === "ativo" ? " · vários de uma vez · conteúdo lido pela IA" : ""}
             </p>
           </div>
         )}
@@ -223,9 +296,58 @@ export default function DocumentsPanel({
                     <Badge variant="outline" className="text-[10px] px-1 py-0">
                       {arquivo.webViewLink?.startsWith("/api/") ? "Local" : "Drive"}
                     </Badge>
+                    {tipo === "ativo" && (() => {
+                      const leitura = textosPorArquivo[arquivo.id];
+                      if (!leitura) return null;
+                      if (leitura.status === "processando") {
+                        return (
+                          <Badge variant="outline" className="text-[10px] px-1 py-0 gap-1 text-blue-600 border-blue-300" data-testid={`badge-ia-processando-${arquivo.id}`}>
+                            <Loader2 className="w-2.5 h-2.5 animate-spin" /> Processando
+                          </Badge>
+                        );
+                      }
+                      if (leitura.status === "concluido") {
+                        return (
+                          <Badge variant="outline" className="text-[10px] px-1 py-0 gap-1 text-emerald-700 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30" data-testid={`badge-ia-lido-${arquivo.id}`} title={`Texto extraído (${leitura.metodo === "visao" || leitura.metodo === "visao_pdf" ? "leitura por visão IA" : "extração direta"}, ${leitura.textoChars} caracteres)`}>
+                            <Sparkles className="w-2.5 h-2.5" /> Lido pela IA
+                          </Badge>
+                        );
+                      }
+                      if (leitura.status === "sem_texto") {
+                        return (
+                          <Badge variant="outline" className="text-[10px] px-1 py-0 gap-1 text-muted-foreground" data-testid={`badge-ia-sem-texto-${arquivo.id}`} title={leitura.erro || "Nenhum texto extraível"}>
+                            Sem texto extraível
+                          </Badge>
+                        );
+                      }
+                      return (
+                        <Badge variant="outline" className="text-[10px] px-1 py-0 gap-1 text-amber-700 border-amber-300" data-testid={`badge-ia-erro-${arquivo.id}`} title={leitura.erro || "Erro na leitura"}>
+                          <AlertTriangle className="w-2.5 h-2.5" /> Erro na leitura
+                        </Badge>
+                      );
+                    })()}
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  {tipo === "ativo" && (() => {
+                    const leitura = textosPorArquivo[arquivo.id];
+                    const podeReprocessar = !leitura || leitura.status === "erro" || leitura.status === "sem_texto";
+                    if (!podeReprocessar) return null;
+                    return (
+                      <Button
+                        size="sm" variant="ghost" className="h-7 px-1.5 text-xs gap-1"
+                        onClick={() => handleReprocessar(arquivo.id)}
+                        disabled={reprocessando === arquivo.id}
+                        title="Ler conteúdo com IA"
+                        data-testid={`button-ler-ia-${arquivo.id}`}
+                      >
+                        {reprocessando === arquivo.id
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <ScanText className="w-3.5 h-3.5" />}
+                        <span className="hidden sm:inline">Ler com IA</span>
+                      </Button>
+                    );
+                  })()}
                   <Button
                     size="sm" variant="ghost" className="h-7 w-7 p-0"
                     onClick={() => window.open(arquivo.webViewLink, "_blank")}

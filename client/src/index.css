@@ -8,38 +8,36 @@
   --font-sans: 'Inter', sans-serif;
   --font-display: 'Outfit', sans-serif;
 
-  /* Mavrion Conect — Modern Emerald Green Theme */
-  --background: 150 18% 97%;
-  --foreground: 155 40% 10%;
+  --background: 40 6% 96%;
+  --foreground: 220 20% 14%;
 
   --card: 0 0% 100%;
-  --card-foreground: 155 40% 10%;
+  --card-foreground: 220 20% 14%;
 
   --popover: 0 0% 100%;
-  --popover-foreground: 155 40% 10%;
+  --popover-foreground: 220 20% 14%;
 
   --primary: 142 72% 38%;
   --primary-foreground: 0 0% 100%;
 
-  --secondary: 145 20% 94%;
-  --secondary-foreground: 155 40% 14%;
+  --secondary: 40 8% 93%;
+  --secondary-foreground: 220 20% 18%;
 
-  --muted: 148 16% 93%;
-  --muted-foreground: 155 12% 48%;
+  --muted: 40 6% 92%;
+  --muted-foreground: 220 8% 50%;
 
-  --accent: 145 20% 93%;
-  --accent-foreground: 155 40% 14%;
+  --accent: 40 8% 93%;
+  --accent-foreground: 220 20% 18%;
 
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
 
-  --border: 148 14% 88%;
-  --input: 148 14% 88%;
+  --border: 30 8% 88%;
+  --input: 30 8% 86%;
   --ring: 142 72% 38%;
 
-  --radius: 0.75rem;
+  --radius: 1rem;
 
-  /* Sidebar — Dark Forest Green */
   --sidebar-background: 155 55% 8%;
   --sidebar-foreground: 145 30% 94%;
   --sidebar-primary: 142 68% 44%;
@@ -49,7 +47,6 @@
   --sidebar-border: 155 45% 13%;
   --sidebar-ring: 142 68% 44%;
 
-  /* Charts */
   --chart-1: 142 72% 38%;
   --chart-2: 162 68% 38%;
   --chart-3: 198 72% 42%;
@@ -58,32 +55,32 @@
 }
 
 .dark {
-  --background: 155 40% 4%;
-  --foreground: 145 30% 95%;
+  --background: 220 18% 7%;
+  --foreground: 220 12% 93%;
 
-  --card: 155 40% 6%;
-  --card-foreground: 145 30% 95%;
+  --card: 220 18% 10%;
+  --card-foreground: 220 12% 93%;
 
-  --popover: 155 40% 6%;
-  --popover-foreground: 145 30% 95%;
+  --popover: 220 18% 10%;
+  --popover-foreground: 220 12% 93%;
 
   --primary: 142 68% 48%;
   --primary-foreground: 0 0% 100%;
 
-  --secondary: 155 30% 14%;
-  --secondary-foreground: 145 30% 95%;
+  --secondary: 220 16% 16%;
+  --secondary-foreground: 220 12% 93%;
 
-  --muted: 155 30% 14%;
-  --muted-foreground: 150 16% 58%;
+  --muted: 220 16% 16%;
+  --muted-foreground: 220 8% 58%;
 
-  --accent: 155 30% 14%;
-  --accent-foreground: 145 30% 95%;
+  --accent: 220 16% 16%;
+  --accent-foreground: 220 12% 93%;
 
   --destructive: 0 63% 31%;
   --destructive-foreground: 0 0% 100%;
 
-  --border: 155 28% 15%;
-  --input: 155 28% 15%;
+  --border: 220 14% 18%;
+  --input: 220 14% 18%;
   --ring: 142 68% 48%;
 
   --sidebar-background: 155 55% 5%;
@@ -118,7 +115,7 @@
 
 @layer utilities {
   .glass-panel {
-    @apply bg-card/80 backdrop-blur-md border border-border shadow-sm;
+    @apply bg-card/70 backdrop-blur-xl border border-white/20 dark:border-white/[0.06] shadow-lg;
   }
 
   .sidebar-link {
@@ -135,24 +132,60 @@
   .text-balance {
     text-wrap: balance;
   }
+
+  .hover-lift,
+  .hover-elevate {
+    @apply transition-all duration-200 ease-out;
+  }
+  .hover-lift:hover,
+  .hover-elevate:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px -5px rgba(0,0,0,0.08), 0 4px 10px -4px rgba(0,0,0,0.04);
+  }
+
+  .active-elevate-2:active {
+    transform: translateY(0);
+    box-shadow: none;
+  }
+
+  .card-premium {
+    @apply rounded-2xl border border-border/40 bg-card shadow-sm hover:shadow-md transition-all duration-200;
+  }
+
+  .section-gap {
+    @apply space-y-6;
+  }
 }
 
-/* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  @apply bg-muted-foreground/20 rounded-full;
+  @apply bg-muted-foreground/15 rounded-full;
 }
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-muted-foreground/30;
+  @apply bg-muted-foreground/25;
 }
 
-/* Tiptap editor */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.35s ease-out both;
+}
+
 .ProseMirror {
   outline: none;
 }

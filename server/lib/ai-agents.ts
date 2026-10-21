@@ -1,7 +1,14 @@
+import { buildDossieDigest } from "./dossie-digest";
 import OpenAI from "openai";
 import { db } from "../db";
-import { assets, companies, companyBuyerProfiles, deals, errorReports, leads, pipelineStages } from "@shared/schema";
+import { assets, companies, errorReports } from "@shared/schema";
 import { eq, and, gte, lte, ilike, sql, desc } from "drizzle-orm";
+import {
+  anexarVigenciaCalculada,
+  contextoVigenciaMinerariaParaPrompt,
+  omitirTrechosDeVigenciaParaIa,
+  obterVigenciaCalculada,
+} from "./vigencia-alvara";
 
 let _openai: OpenAI | null = null;
 function getOpenAI(): OpenAI {
@@ -10,8 +17,57 @@ function getOpenAI(): OpenAI {
   }
   return _openai;
 }
-const MODEL_MINI = "gpt-4o-mini";
-const MODEL_FULL = "gpt-4o";
+const MODEL_MINI = "gpt-5.4-mini";
+const MODEL_FULL = "gpt-5.4";
+
+/**
+ * Monta a seção "DOCUMENTOS ANEXADOS" para injeção em prompts de IA,
+ * reutilizando os textos extraídos dos anexos do ativo (mesmo orçamento da Due Diligence).
+ */
+export async function buildDocsAnexadosSection(
+  assetId: number,
+  orgId: number,
+  opcoes: { omitirTrechosVigencia?: boolean } = {},
+): Promise<{ secao: string; docsConsiderados: string[] }> {
+  const { getTextosParaIA } = await import("./document-extract");
+  const docsAnexados = await getTextosParaIA(assetId, orgId).catch(() => [] as Array<{ fileName: string; texto: string }>);
+
+  const DOC_CHAR_BUDGET_TOTAL = 45_000;
+  const DOC_CHAR_PER_DOC = 12_000;
+  let budgetRestante = DOC_CHAR_BUDGET_TOTAL;
+  const docsSections: string[] = [];
+  const docsConsiderados: string[] = [];
+  for (const doc of docsAnexados) {
+    if (budgetRestante <= 500) break;
+    const limite = Math.min(DOC_CHAR_PER_DOC, budgetRestante);
+    const textoSeguro = opcoes.omitirTrechosVigencia
+      ? omitirTrechosDeVigenciaParaIa(doc.texto)
+      : doc.texto;
+    const trecho = textoSeguro.length > limite
+      ? textoSeguro.slice(0, limite) + "\n[... conteúdo truncado ...]"
+      : textoSeguro;
+    budgetRestante -= trecho.length;
+    docsConsiderados.push(doc.fileName);
+    docsSections.push(`--- DOCUMENTO: ${doc.fileName} ---\n${trecho}`);
+  }
+
+  const secao = docsSections.length > 0
+    ? `
+═══════════════════════════════════════
+DOCUMENTOS ANEXADOS (CONTEÚDO LIDO PELA IA)
+═══════════════════════════════════════
+Os documentos abaixo foram anexados ao ativo e o texto deles foi extraído. USE este conteúdo na análise:
+- Considere datas, números de processo, publicações (ex.: DOU), valores e condições encontrados nos textos ao avaliar alertas, riscos e o parecer.
+- Cite o nome do arquivo quando um documento fundamentar uma conclusão.
+- Se um documento anexado contradisser ou complementar os dados cadastrais, aponte isso explicitamente.
+${opcoes.omitirTrechosVigencia ? "- Trechos capazes de induzir recálculo da vigência foram omitidos. Para validade/vencimento do alvará, use somente a VIGÊNCIA CANÔNICA." : ""}
+
+${docsSections.join("\n\n")}
+`
+    : "";
+
+  return { secao, docsConsiderados };
+}
 
 function safeNum(v: any): string {
   if (v === null || v === undefined) return "N/D";
@@ -44,13 +100,11 @@ export async function analyzeAsset(assetId: number, orgId: number): Promise<stri
     `SELECT situacao, valor_credito, nome_programa, safra FROM norion_caf_registros WHERE asset_id = ${Number(assetId)} ORDER BY safra DESC LIMIT 10`
   )).then(r => r.rows).catch(() => []);
 
-  const investors = await db.select().from(companyBuyerProfiles).where(eq(companyBuyerProfiles.orgId, orgId)).limit(20);
-
-  const investorSummary = investors.map(inv => {
-    const types = (inv.preferredTypes as string[]) || [];
-    const regions = (inv.portfolioRegions as string[]) || [];
-    return `- ID ${inv.companyId}: tipos=${types.join(",")}, regiões=${regions.join(",")}, área=${safeNum(inv.minAreaHa)}-${safeNum(inv.maxAreaHa)}ha, preço/ha=${safeNum(inv.minPricePerHa)}-${safeNum(inv.maxPricePerHa)}, geoScore mín=${safeNum(inv.minGeoScore)}`;
-  }).join("\n");
+  const { secao: secaoDocumentosAnexados } = await buildDocsAnexadosSection(
+    assetId,
+    orgId,
+    { omitirTrechosVigencia: ativo.type === "MINA" || !!ativo.anmProcesso || !!campos.processoAnm },
+  );
 
   const cafSection = cafRows.length > 0
     ? `CAF / PRONAF (${cafRows.length} registros):\n${(cafRows as any[]).map((r: any) => `- ${r.nome_programa || "Programa"}: ${r.situacao || "N/D"}, Crédito: ${r.valor_credito ? formatBRL(r.valor_credito) : "N/D"}, Safra: ${r.safra || "N/D"}`).join("\n")}`
@@ -61,7 +115,7 @@ export async function analyzeAsset(assetId: number, orgId: number): Promise<stri
     : "CAR: Não cadastrado";
 
   const anmSection = ativo.anmProcesso
-    ? `ANM/MINERAÇÃO:\n- Processo: ${ativo.anmProcesso}\n- Substância: ${attr.anmSubstancia || "N/D"}\n- Fase: ${attr.anmFase || "N/D"}\n- Último evento: ${attr.anmUltimoEvento || "N/D"}`
+    ? `ANM/MINERAÇÃO:\n- Processo: ${ativo.anmProcesso}\n- Substância: ${attr.anmSubstancia || "N/D"}\n- Fase: ${attr.anmFase || "N/D"}`
     : "";
 
   const docsAvailable: string[] = [];
@@ -72,6 +126,15 @@ export async function analyzeAsset(assetId: number, orgId: number): Promise<stri
   if (docs.geo) docsAvailable.push("Georreferenciamento");
   if (docs.laudo) docsAvailable.push("Laudo Avaliação");
   if (Array.isArray(docs.certidoes) && docs.certidoes.length > 0) docsAvailable.push(`${docs.certidoes.length} certidões`);
+
+  const dossieMineracao = buildDossieDigest(campos, [
+    "fundiaria", "certidoes", "cfem", "barragens", "logistica",
+    "tah", "restricoes", "sondagem", "geoquimica",
+  ]);
+  const ativoComVigencia = anexarVigenciaCalculada(ativo);
+  const vigenciaMineraria = ativo.type === "MINA" || !!ativo.anmProcesso || !!campos.processoAnm
+    ? contextoVigenciaMinerariaParaPrompt(obterVigenciaCalculada(ativoComVigencia))
+    : "";
 
   const prompt = `Você é um analista sênior de originação de deals em ativos rurais, minerários e M&A no Brasil.
 Você trabalha para um fundo de investimento. Analise este ativo de forma completa, usando TODOS os dados fornecidos — não invente dados.
@@ -97,8 +160,8 @@ GEOESPACIAL:
 - Declividade média: ${safeNum(ativo.geoDeclivityMed)}%
 - Água: ${ativo.geoTemRio ? "Rio próximo" : "Sem rio"}${ativo.geoTemLago ? ", Lago próximo" : ""} (dist: ${safeNum(ativo.geoDistAguaM)}m)
 - Energia: ${ativo.geoTemEnergia ? "Rede elétrica próxima" : "Sem rede"} (dist: ${safeNum(ativo.geoDistEnergiaM)}m)
-- Rodovia: dist. ${safeNum(ativo.geoDistRodoviaM)}m
-- Sede municipal: dist. ${safeNum(ativo.geoDistSedeM)}m
+- Rodovia: dist. ${safeNum((ativo as any).geoDistRodoviaM)}m
+- Sede municipal: dist. ${safeNum((ativo as any).geoDistSedeM)}m
 
 ${embrapa ? `DADOS EMBRAPA/SOLO:
 - Score Agro: ${safeNum(embrapa.scoreAgro)}/100
@@ -123,19 +186,21 @@ ${carSection}
 
 ${anmSection}
 
+${vigenciaMineraria}
+
+${dossieMineracao}
+
 ${cafSection}
 
 DOCUMENTAÇÃO DISPONÍVEL: ${docsAvailable.length > 0 ? docsAvailable.join(", ") : "Nenhuma documentação anexada"}
-
+${secaoDocumentosAnexados}
 ${ctx ? `PRODUÇÃO REGIONAL (${ctx.municipio}):
 - Culturas principais: ${(ctx.culturas || []).slice(0, 8).map((c: any) => `${c.nome}: ${safeNum(c.areaColhida)}ha colhidos, produção ${safeNum(c.quantidade)} ton, ${formatBRL(c.valorProducao)} mil`).join("; ")}
 - Total área colhida no município: ${safeNum(ctx.totalAreaColhida)} ha
 - Total valor produção: ${formatBRL(ctx.totalValorProducao)} mil` : "PRODUÇÃO REGIONAL: Não disponível"}
 
 ═══════════════════════════════════════
-PERFIS DE COMPRADORES (${investors.length})
-═══════════════════════════════════════
-${investorSummary || "Nenhum cadastrado"}
+
 
 ═══════════════════════════════════════
 INSTRUÇÃO DE ANÁLISE
@@ -152,8 +217,8 @@ Compare área do ativo com produção municipal. Analise acesso a água, energia
 ## 3. Risco Ambiental & Regularização (peso 20%)
 Embargos Ibama, desmatamento MapBiomas, bioma, situação do CAR, sobreposições com TI/UC. CAF/PRONAF pode indicar uso agrícola legítimo. Documentação disponível vs. necessária para due diligence.
 
-## 4. Risco Financeiro & Precificação (peso 20%)
-Preço/ha pedido vs. referências regionais. Cenários de valorização. Se há CAF/PRONAF, analise o histórico de crédito como indicador de produtividade. Liquidez do ativo.
+## 4. Risco Financeiro (peso 20%)
+Se há CAF/PRONAF, analise o histórico de crédito como indicador de produtividade. Liquidez do ativo. NÃO inclua estimativas de valor, preços de mercado, cotações, comparáveis de preço ou qualquer sugestão de valoração.
 
 ## 5. Compatibilidade com Compradores (peso 15%)
 Quais perfis são mais compatíveis (por tipo, região, faixa de preço, área). Estime % de aderência para os top 3.
@@ -164,7 +229,7 @@ Quais perfis são mais compatíveis (por tipo, região, faixa de preço, área).
 | Potencial Produtivo | X |
 | Contexto Regional | X |
 | Risco Ambiental | X (invertido: 10=sem risco) |
-| Risco Financeiro | X (invertido: 10=preço justo) |
+| Risco Financeiro | X (invertido: 10=baixo risco) |
 | Compatibilidade | X |
 | **Média Ponderada** | **X.X** |
 
@@ -175,7 +240,7 @@ Quais perfis são mais compatíveis (por tipo, região, faixa de preço, área).
     model: MODEL_FULL,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.3,
-    max_tokens: 3500,
+    max_completion_tokens: 3500,
   });
 
   return response.choices[0].message.content || "Análise não disponível";
@@ -188,10 +253,6 @@ Quais perfis são mais compatíveis (por tipo, região, faixa de preço, área).
 export async function summarizeCompany(companyId: number, orgId: number): Promise<string> {
   const [empresa] = await db.select().from(companies).where(and(eq(companies.id, companyId), eq(companies.orgId, orgId)));
   if (!empresa) throw new Error("Empresa não encontrada");
-
-  const [buyerProfile] = await db.select().from(companyBuyerProfiles).where(eq(companyBuyerProfiles.companyId, companyId));
-
-  const companyDeals = await db.select().from(deals).where(and(eq(deals.companyId, companyId), eq(deals.orgId, orgId)));
 
   const availableAssets = await db.select({
     id: assets.id,
@@ -227,22 +288,6 @@ export async function summarizeCompany(companyId: number, orgId: number): Promis
     .map((r: any) => `- "${r.title}": ${r.snippet || ""}`.slice(0, 200))
     .join("\n");
 
-  const dealsSummary = companyDeals.length > 0
-    ? companyDeals.map(d => `- "${d.title}" | Estágio: ${d.stageId} | Valor: ${formatBRL(d.amountEstimate)} | Prob: ${d.probability || "N/D"}%`).join("\n")
-    : "Nenhum deal registrado";
-
-  const buyerInfo = buyerProfile
-    ? `- Total deals: ${safeNum(buyerProfile.totalDeals)}
-- Área preferida: ${safeNum(buyerProfile.minAreaHa)}-${safeNum(buyerProfile.maxAreaHa)} ha (média: ${safeNum(buyerProfile.avgAreaHa)})
-- Preço/ha: ${safeNum(buyerProfile.minPricePerHa)}-${safeNum(buyerProfile.maxPricePerHa)} (média: ${safeNum(buyerProfile.avgPricePerHa)})
-- Tipos preferidos: ${((buyerProfile.preferredTypes as string[]) || []).join(", ") || "N/D"}
-- Culturas preferidas: ${((buyerProfile.preferredCultures as string[]) || []).join(", ") || "N/D"}
-- Regiões: ${((buyerProfile.portfolioRegions as string[]) || []).join(", ") || "N/D"}
-- Tempo médio decisão: ${safeNum(buyerProfile.avgDecisionDays)} dias
-- Visitas (30d): ${safeNum(buyerProfile.visitsLast30Days)} | Aceites: ${safeNum(buyerProfile.acceptancesLast30Days)} | Rejeições: ${safeNum(buyerProfile.rejectionsLast30Days)}
-- Docs: completos=${buyerProfile.requiresCompleteDocs ? "exige" : "não exige"}, pendentes=${buyerProfile.acceptsPendingDocs ? "aceita" : "não aceita"}`
-    : "Perfil de comprador não cadastrado";
-
   const assetsList = availableAssets.slice(0, 10).map(a =>
     `- #${a.id} ${a.type} "${a.title}" | ${a.municipio}/${a.estado} | ${safeNum(a.areaHa)}ha | ${formatBRL(a.priceAsking)} | Score: ${safeNum(a.geoScore)}`
   ).join("\n");
@@ -266,11 +311,7 @@ ${contactInfo || "Nenhum contato disponível"}
 INFORMAÇÕES ENCONTRADAS NA WEB:
 ${searchSnippets || "Nenhuma informação web disponível"}
 
-PERFIL DE COMPRADOR:
-${buyerInfo}
 
-DEALS NO CRM (${companyDeals.length}):
-${dealsSummary}
 
 ATIVOS DISPONÍVEIS (${availableAssets.length} ativos):
 ${assetsList}
@@ -287,7 +328,7 @@ E-mails, telefones, redes sociais, website. Se não há dados, diga "Não dispon
 Informações coletadas de fontes públicas sobre a empresa.
 
 ## Histórico de Negociações
-Quantidade de deals no CRM, valores, tipos de ativo de interesse. Se zero, diga "Nenhuma negociação registrada".
+Descreva somente os dados cadastrais e financeiros disponíveis; não presuma histórico de negociações.
 
 ## Padrão de Compra
 Tamanho preferido, preço, cultura, velocidade de decisão.
@@ -300,14 +341,13 @@ Com base na atividade recente (visitas, aceites, rejeições):
 ## Top 5 Ativos Compatíveis
 Liste os mais compatíveis dos ativos disponíveis, com motivo. Se não é possível determinar compatibilidade, explique por quê.
 
-## Recomendação
-Estratégia de abordagem e próximos passos.`;
+NÃO inclua seções de recomendação, estratégia de abordagem ou próximos passos.`;
 
   const response = await getOpenAI().chat.completions.create({
     model: MODEL_FULL,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.3,
-    max_tokens: 2500,
+    max_completion_tokens: 2500,
   });
 
   return response.choices[0].message.content || "Resumo não disponível";
@@ -350,7 +390,7 @@ Regras:
     model: MODEL_MINI,
     messages: [{ role: "user", content: filterPrompt }],
     temperature: 0.1,
-    max_tokens: 300,
+    max_completion_tokens: 300,
   });
 
   const filterText = (filterResponse.choices[0].message.content || "{}").trim();
@@ -407,7 +447,7 @@ Gere insights em 5-8 linhas:
     model: MODEL_MINI,
     messages: [{ role: "user", content: insightPrompt }],
     temperature: 0.4,
-    max_tokens: 300,
+    max_completion_tokens: 300,
   });
 
   return {
@@ -416,145 +456,6 @@ Gere insights em 5-8 linhas:
     resultados,
     insights: insightResponse.choices[0].message.content || "",
   };
-}
-
-// ═══════════════════════════════════════════════════════════
-// 4. RELATÓRIO PERSONALIZADO (ATIVO + COMPRADOR)
-// ═══════════════════════════════════════════════════════════
-
-export async function generateReport(assetId: number, companyId: number, orgId: number): Promise<string> {
-  const [ativo] = await db.select().from(assets).where(and(eq(assets.id, assetId), eq(assets.orgId, orgId)));
-  const [empresa] = await db.select().from(companies).where(and(eq(companies.id, companyId), eq(companies.orgId, orgId)));
-  if (!ativo) throw new Error("Ativo não encontrado");
-  if (!empresa) throw new Error("Empresa não encontrada");
-
-  const [buyerProfile] = await db.select().from(companyBuyerProfiles).where(eq(companyBuyerProfiles.companyId, companyId));
-  const companyDeals = await db.select().from(deals).where(and(eq(deals.companyId, companyId), eq(deals.orgId, orgId)));
-
-  const campos = ativo.camposEspecificos ?? {};
-  const ctx = campos.contextoRegional || null;
-  const embrapa = campos.embrapa || campos.enrichmentAgro || null;
-  const enriquecimento = campos.enriquecimentoCompleto || {};
-  const mapbiomas = enriquecimento.mapbiomas || null;
-  const ndvi = campos.ndvi || null;
-  const docs = (ativo.documentosJson || {}) as any;
-  const attr = (ativo.attributesJson || {}) as any;
-
-  const cafRows = await db.execute(sql.raw(
-    `SELECT situacao, valor_credito, nome_programa, safra FROM norion_caf_registros WHERE asset_id = ${Number(assetId)} ORDER BY safra DESC LIMIT 5`
-  )).then(r => r.rows).catch(() => []);
-
-  const precoHa = ativo.areaHa && ativo.priceAsking ? formatBRL(Math.round(Number(ativo.priceAsking) / Number(ativo.areaHa))) : "N/D";
-
-  const docsAvailable: string[] = [];
-  if (docs.matricula) docsAvailable.push("Matrícula");
-  if (docs.ccir) docsAvailable.push("CCIR");
-  if (docs.itr) docsAvailable.push("ITR");
-  if (docs.car) docsAvailable.push("CAR doc");
-  if (docs.geo) docsAvailable.push("Georreferenciamento");
-  if (docs.laudo) docsAvailable.push("Laudo Avaliação");
-  if (Array.isArray(docs.certidoes) && docs.certidoes.length > 0) docsAvailable.push(`${docs.certidoes.length} certidões`);
-
-  const dealsSummary = companyDeals.slice(0, 5).map(d =>
-    `- "${d.title}" | Valor: ${formatBRL(d.amountEstimate)} | Prob: ${d.probability || "N/D"}%`
-  ).join("\n") || "Nenhum deal anterior";
-
-  const enrichment = (empresa.enrichmentData || {}) as any;
-  const merged = enrichment.merged || enrichment.search || {};
-
-  const prompt = `Você é um deal originator sênior especializado em ativos rurais, minerários e M&A no Brasil.
-Gere um relatório de apresentação de oportunidade para enviar à empresa compradora.
-Seja persuasivo mas fundamentado em dados. NUNCA invente dados.
-
-═══════════════════════════════════════
-ATIVO
-═══════════════════════════════════════
-- Tipo: ${ativo.type} | Título: ${ativo.title}
-- Descrição: ${ativo.description || "N/D"}
-- Local: ${ativo.municipio || "N/D"}, ${ativo.estado || "N/D"}
-- Área total: ${safeNum(ativo.areaHa)} ha (útil: ${safeNum(ativo.areaUtil)} ha)
-- Preço: ${formatBRL(ativo.priceAsking)} (${precoHa}/ha)
-- Geo Score: ${safeNum(ativo.geoScore)}/100
-- Altitude média: ${safeNum(ativo.geoAltMed)}m | Declividade: ${safeNum(ativo.geoDeclivityMed)}%
-- Água: ${ativo.geoTemRio ? "Rio" : ""}${ativo.geoTemLago ? " Lago" : ""} (${safeNum(ativo.geoDistAguaM)}m) | Energia: ${ativo.geoTemEnergia ? "Sim" : "Não"} (${safeNum(ativo.geoDistEnergiaM)}m)
-- CAR: ${ativo.carCodImovel || "N/D"}${attr.carSobreposicaoTI ? " ⚠️ Sobrep. TI" : ""}${attr.carSobreposicaoUC ? " ⚠️ Sobrep. UC" : ""}
-${ativo.anmProcesso ? `- ANM: ${ativo.anmProcesso} | ${attr.anmSubstancia || "N/D"} | ${attr.anmFase || "N/D"}` : ""}
-${embrapa ? `- Solo: Score ${safeNum(embrapa.scoreAgro)}/100 | Aptidão: ${embrapa.aptidao || "N/D"} | pH: ${safeNum(embrapa.pH)}` : ""}
-${ndvi ? `- NDVI: ${safeNum(ndvi.valor)} (${ndvi.classificacao || "N/D"})` : ""}
-${mapbiomas ? `- MapBiomas: ${mapbiomas.usoAtual || "N/D"} | Bioma: ${mapbiomas.bioma || "N/D"} | Alertas desmat.: ${safeNum(mapbiomas.alertasDesmatamento)}` : ""}
-${campos.temEmbargoIbama !== undefined ? `- IBAMA: ${campos.temEmbargoIbama ? "⚠️ COM EMBARGO" : "✅ Sem embargo"}` : ""}
-${cafRows.length > 0 ? `- CAF/PRONAF: ${cafRows.length} registros — ${(cafRows as any[]).map((r: any) => `${r.nome_programa}: ${r.situacao}, ${r.safra}`).join("; ")}` : ""}
-- Documentação: ${docsAvailable.length > 0 ? docsAvailable.join(", ") : "Sem docs anexados"}
-
-${ctx ? `PRODUÇÃO REGIONAL (${ctx.municipio}):
-${(ctx.culturas || []).slice(0, 6).map((c: any) => `- ${c.nome}: ${safeNum(c.areaColhida)}ha, ${formatBRL(c.valorProducao)} mil`).join("\n")}
-- VBP Total: ${formatBRL(ctx.totalValorProducao)} mil` : ""}
-
-═══════════════════════════════════════
-EMPRESA COMPRADORA
-═══════════════════════════════════════
-- ${empresa.legalName} (${empresa.tradeName || "sem fantasia"})
-- CNPJ: ${empresa.cnpj || "N/D"} | Porte: ${empresa.porte || "N/D"}
-- CNAE: ${empresa.cnaePrincipal || "N/D"}
-- Capital Social: ${formatBRL((empresa as any).shareCapital)}
-- Perfil Norion: ${(empresa as any).norionProfile || "N/D"}
-${merged.website ? `- Website: ${merged.website}` : ""}
-${buyerProfile ? `PERFIL DE COMPRADOR:
-- Área preferida: ${safeNum(buyerProfile.minAreaHa)}-${safeNum(buyerProfile.maxAreaHa)} ha
-- Preço/ha: ${safeNum(buyerProfile.minPricePerHa)}-${safeNum(buyerProfile.maxPricePerHa)}
-- Tipos: ${((buyerProfile.preferredTypes as string[]) || []).join(", ") || "N/D"}
-- Culturas: ${((buyerProfile.preferredCultures as string[]) || []).join(", ") || "N/D"}
-- Regiões: ${((buyerProfile.portfolioRegions as string[]) || []).join(", ") || "N/D"}
-- GeoScore mínimo: ${safeNum(buyerProfile.minGeoScore)}
-- Docs completos: ${buyerProfile.requiresCompleteDocs ? "exige" : "flexível"}` : "Sem perfil de comprador"}
-
-HISTÓRICO DE DEALS (${companyDeals.length}):
-${dealsSummary}
-
-═══════════════════════════════════════
-FORMATO DO RELATÓRIO
-═══════════════════════════════════════
-
-## Resumo Executivo
-2-3 linhas: por que este ativo é relevante para esta empresa. Destaque o fit principal.
-
-## Compatibilidade Detalhada
-Analise cada dimensão: área, tipo, região, preço/ha, culturas, GeoScore. Compare com o perfil do comprador.
-
-## Potencial de Retorno
-Baseado em dados regionais (produção, VBP), aptidão do solo, NDVI. Estime cenários: conservador, realista, otimista.
-
-## Situação Ambiental & Regularização
-CAR, embargos Ibama, MapBiomas, sobreposições TI/UC. CAF/PRONAF como evidência de uso legal. Documentação disponível vs. necessária.
-
-## Análise de Risco
-Riscos ambientais, documentais, financeiros, jurídicos. Bandeiras vermelhas. Se há ANM, analise conflito mineração vs. uso agrícola.
-
-## Comparativo com Negociações Anteriores
-Como este ativo se compara em área, preço, região e tipo com deals passados.
-
-## Estratégia de Abordagem
-- Curto prazo (1 semana): ações imediatas
-- Médio prazo (2-4 semanas): negociação e due diligence
-
-## Score de Compatibilidade
-| Dimensão | Score |
-|---|---|
-| Área | X/10 |
-| Localização | X/10 |
-| Preço | X/10 |
-| Qualidade (solo/geo) | X/10 |
-| Regularização | X/10 |
-| **Total** | **X.X/10** |`;
-
-  const response = await getOpenAI().chat.completions.create({
-    model: MODEL_FULL,
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0.4,
-    max_tokens: 3500,
-  });
-
-  return response.choices[0].message.content || "Relatório não disponível";
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -606,105 +507,10 @@ O que a equipe técnica deveria investigar/corrigir.`;
     model: MODEL_MINI,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.3,
-    max_tokens: 800,
+    max_completion_tokens: 800,
   });
 
   return response.choices[0].message.content || "Diagnóstico não disponível";
-}
-
-// ═══════════════════════════════════════════════════════════
-// 6. LEAD SCORER (qualificação inteligente de leads)
-// ═══════════════════════════════════════════════════════════
-
-export async function scoreLeadAI(leadId: number, orgId: number): Promise<{ score: number; justificativa: string; ativoRecomendado: number | null }> {
-  const [lead] = await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.orgId, orgId)));
-  if (!lead) throw new Error("Lead não encontrado");
-
-  const [empresa] = lead.companyId
-    ? await db.select().from(companies).where(eq(companies.id, lead.companyId))
-    : [null];
-
-  const [buyerProfile] = lead.companyId
-    ? await db.select().from(companyBuyerProfiles).where(eq(companyBuyerProfiles.companyId, lead.companyId))
-    : [null];
-
-  const availableAssets = await db.select({
-    id: assets.id,
-    type: assets.type,
-    title: assets.title,
-    municipio: assets.municipio,
-    estado: assets.estado,
-    areaHa: assets.areaHa,
-    priceAsking: assets.priceAsking,
-    geoScore: assets.geoScore,
-  }).from(assets).where(and(eq(assets.orgId, orgId), eq(assets.statusAtivo, "ativo"))).limit(30);
-
-  const enrichment = empresa ? (empresa.enrichmentData || {}) as any : {};
-  const address = empresa ? (empresa.address || {}) as any : {};
-
-  const assetsList = availableAssets.slice(0, 15).map(a =>
-    `- #${a.id} ${a.type} "${a.title}" | ${a.municipio}/${a.estado} | ${safeNum(a.areaHa)}ha | ${formatBRL(a.priceAsking)} | GeoScore: ${safeNum(a.geoScore)}`
-  ).join("\n");
-
-  const prompt = `Você é um analista sênior especializado em deal origination de ativos rurais e M&A no Brasil.
-Qualifique este lead de 0 a 100 e recomende o melhor ativo disponível.
-
-LEAD:
-- Status: ${lead.status}
-- Fonte: ${lead.source || "N/D"}
-- Notas: ${lead.notes || "N/D"}
-
-EMPRESA VINCULADA:
-- Nome: ${empresa?.legalName || "N/D"}
-- CNPJ: ${empresa?.cnpj || "N/D"}
-- Porte: ${empresa?.porte || "N/D"}
-- CNAE: ${empresa?.cnaePrincipal || "N/D"}
-- Capital Social: ${formatBRL(enrichment.capitalSocial)}
-- Localização: ${address.city || "N/D"}, ${address.state || "N/D"}
-- Norion Profile: ${(empresa as any)?.norionProfile || "N/D"}
-
-PERFIL DE COMPRADOR:
-${buyerProfile ? `- Tipos: ${((buyerProfile.preferredTypes as string[]) || []).join(", ") || "N/D"}
-- Área: ${safeNum(buyerProfile.minAreaHa)}-${safeNum(buyerProfile.maxAreaHa)} ha
-- Preço/ha: ${safeNum(buyerProfile.minPricePerHa)}-${safeNum(buyerProfile.maxPricePerHa)}
-- Regiões: ${((buyerProfile.portfolioRegions as string[]) || []).join(", ") || "N/D"}
-- Total deals: ${safeNum(buyerProfile.totalDeals)}` : "Sem perfil de comprador"}
-
-ATIVOS DISPONÍVEIS (${availableAssets.length}):
-${assetsList}
-
-Retorne APENAS um JSON válido:
-{
-  "score": <number 0-100>,
-  "justificativa": "<3-5 linhas explicando o score>",
-  "ativoRecomendadoId": <id do ativo mais compatível ou null>
-}
-
-Critérios de score:
-- 80-100: empresa com porte adequado, CNAE compatível, perfil comprador ativo, match regional
-- 50-79: parcialmente compatível, precisa nurturing
-- 20-49: baixa compatibilidade, mas vale manter
-- 0-19: sem fit aparente`;
-
-  const response = await getOpenAI().chat.completions.create({
-    model: MODEL_FULL,
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0.3,
-    max_tokens: 400,
-  });
-
-  const text = (response.choices[0].message.content || "{}").trim();
-  try {
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : "{}");
-    return {
-      score: Math.min(100, Math.max(0, Number(parsed.score) || 0)),
-      justificativa: parsed.justificativa || "Sem justificativa disponível",
-      ativoRecomendado: parsed.ativoRecomendadoId || null,
-    };
-  } catch {
-    return { score: 50, justificativa: text.slice(0, 500), ativoRecomendado: null };
-  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -757,6 +563,16 @@ export async function pricingAdvisor(assetId: number, orgId: number): Promise<st
 
   const docsCount = [docs.matricula, docs.ccir, docs.itr, docs.car, docs.geo, docs.laudo].filter(Boolean).length;
 
+  const { secao: secaoDocumentosAnexados } = await buildDocsAnexadosSection(
+    assetId,
+    orgId,
+    { omitirTrechosVigencia: ativo.type === "MINA" || !!ativo.anmProcesso || !!campos.processoAnm },
+  );
+  const ativoComVigencia = anexarVigenciaCalculada(ativo);
+  const vigenciaMineraria = ativo.type === "MINA" || !!ativo.anmProcesso || !!campos.processoAnm
+    ? contextoVigenciaMinerariaParaPrompt(obterVigenciaCalculada(ativoComVigencia))
+    : "";
+
   const prompt = `Você é um avaliador sênior de ativos rurais, minerários e M&A no Brasil, com experiência em precificação para fundos de investimento.
 Analise o preço deste ativo usando TODOS os dados disponíveis. Seja objetivo e transparente.
 
@@ -771,16 +587,17 @@ ATIVO ANALISADO
 - GeoScore: ${safeNum(ativo.geoScore)}/100
 - Altitude: ${safeNum(ativo.geoAltMed)}m | Declividade: ${safeNum(ativo.geoDeclivityMed)}%
 - Água: ${ativo.geoTemRio ? "Rio" : "Sem rio"} (${safeNum(ativo.geoDistAguaM)}m) | Energia: ${ativo.geoTemEnergia ? "Sim" : "Não"} (${safeNum(ativo.geoDistEnergiaM)}m)
-- Rodovia: ${safeNum(ativo.geoDistRodoviaM)}m | Sede: ${safeNum(ativo.geoDistSedeM)}m
+- Rodovia: ${safeNum((ativo as any).geoDistRodoviaM)}m | Sede: ${safeNum((ativo as any).geoDistSedeM)}m
 - CAR: ${ativo.carCodImovel || "N/D"}${attr.carSobreposicaoTI ? " ⚠️ TI" : ""}${attr.carSobreposicaoUC ? " ⚠️ UC" : ""}
 ${ativo.anmProcesso ? `- ANM: ${ativo.anmProcesso} | ${attr.anmSubstancia || "N/D"} | ${attr.anmFase || "N/D"}` : ""}
+${vigenciaMineraria}
 ${embrapa ? `- Solo: Score ${safeNum(embrapa.scoreAgro)}/100 | Aptidão: ${embrapa.aptidao || "N/D"} | pH: ${safeNum(embrapa.pH)}` : ""}
 ${ndvi ? `- NDVI: ${safeNum(ndvi.valor)} (${ndvi.classificacao || "N/D"})` : ""}
 ${mapbiomas ? `- MapBiomas: ${mapbiomas.usoAtual || "N/D"} | Bioma: ${mapbiomas.bioma || "N/D"} | Alertas: ${safeNum(mapbiomas.alertasDesmatamento)}` : ""}
 ${campos.temEmbargoIbama !== undefined ? `- IBAMA: ${campos.temEmbargoIbama ? "⚠️ COM EMBARGO" : "✅ Sem embargo"}` : ""}
 ${cafRows.length > 0 ? `- CAF/PRONAF: ${cafRows.length} registros (crédito total: ${formatBRL((cafRows as any[]).reduce((s: number, r: any) => s + (Number(r.valor_credito) || 0), 0))})` : ""}
 - Documentação: ${docsCount}/6 docs principais disponíveis
-
+${secaoDocumentosAnexados}
 ${ctx ? `PRODUÇÃO REGIONAL (${ctx.municipio}):
 ${(ctx.culturas || []).slice(0, 6).map((c: any) => `- ${c.nome}: ${safeNum(c.areaColhida)}ha, ${formatBRL(c.valorProducao)} mil, rend. ${c.quantidade && c.areaColhida ? (Number(c.quantidade) / Number(c.areaColhida)).toFixed(1) : "N/D"} ton/ha`).join("\n")}
 - VBP total: ${formatBRL(ctx.totalValorProducao)} mil` : "Sem dados regionais IBGE PAM"}
@@ -823,7 +640,7 @@ Preço inicial sugerido para oferta, preço-alvo, e preço máximo aceitável.`;
     model: MODEL_FULL,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.3,
-    max_tokens: 2500,
+    max_completion_tokens: 2500,
   });
 
   return response.choices[0].message.content || "Análise de preço não disponível";
@@ -900,488 +717,622 @@ Os erros estão aumentando, diminuindo ou estáveis?`;
     model: MODEL_MINI,
     messages: [{ role: "user", content: prompt }],
     temperature: 0.3,
-    max_tokens: 1200,
+    max_completion_tokens: 1200,
   });
 
   return response.choices[0].message.content || "Monitoramento não disponível";
 }
 
-// ═══════════════════════════════════════════════════════════
-// 9. PIPELINE INTELLIGENCE (briefing executivo)
-// ═══════════════════════════════════════════════════════════
-
-export async function pipelineIntelligence(orgId: number): Promise<string> {
-  const allDeals = await db.select().from(deals).where(eq(deals.orgId, orgId));
-  const stages = await db.select().from(pipelineStages).where(eq(pipelineStages.orgId, orgId));
-
-  if (allDeals.length === 0) return "Nenhum deal no pipeline. Comece adicionando oportunidades ao CRM.";
-
-  const stageMap = new Map(stages.map(s => [s.id, s.name]));
-
-  const dealsByStage = new Map<string, typeof allDeals>();
-  allDeals.forEach(d => {
-    const stageName = stageMap.get(d.stageId!) || `Estágio ${d.stageId}`;
-    if (!dealsByStage.has(stageName)) dealsByStage.set(stageName, []);
-    dealsByStage.get(stageName)!.push(d);
-  });
-
-  const now = new Date();
-  const stalledDeals = allDeals.filter(d => {
-    if (!d.createdAt) return false;
-    const daysInStage = (now.getTime() - new Date(d.createdAt).getTime()) / (1000 * 60 * 60 * 24);
-    return daysInStage > 7;
-  });
-
-  const totalValue = allDeals.reduce((sum, d) => sum + (Number(d.amountEstimate) || 0), 0);
-  const weightedValue = allDeals.reduce((sum, d) => sum + (Number(d.amountEstimate) || 0) * ((d.probability || 0) / 100), 0);
-
-  const stagesSummary = [...dealsByStage.entries()].map(([stage, stageDeals]) => {
-    const stageValue = stageDeals.reduce((s, d) => s + (Number(d.amountEstimate) || 0), 0);
-    return `- ${stage}: ${stageDeals.length} deals | Valor: ${formatBRL(stageValue)}`;
-  }).join("\n");
-
-  const stalledSummary = stalledDeals.slice(0, 10).map(d => {
-    const days = d.createdAt ? Math.floor((now.getTime() - new Date(d.createdAt).getTime()) / (1000 * 60 * 60 * 24)) : 0;
-    return `- "${d.title}" | ${stageMap.get(d.stageId!) || "?"} | ${days} dias | ${formatBRL(d.amountEstimate)}`;
-  }).join("\n");
-
-  const byPriority = { urgent: 0, high: 0, medium: 0, low: 0 };
-  allDeals.forEach(d => {
-    const p = d.priority as keyof typeof byPriority;
-    if (p in byPriority) byPriority[p]++;
-  });
-
-  const prompt = `Você é um diretor comercial analisando o pipeline de negócios de uma empresa de deal origination (ativos rurais e M&A).
-Gere um briefing executivo claro e acionável.
-
-PIPELINE:
-- Total de deals: ${allDeals.length}
-- Valor total: ${formatBRL(totalValue)}
-- Valor ponderado (probabilidade): ${formatBRL(weightedValue)}
-- Prioridade: Urgente=${byPriority.urgent}, Alta=${byPriority.high}, Média=${byPriority.medium}, Baixa=${byPriority.low}
-
-DEALS POR ESTÁGIO:
-${stagesSummary}
-
-DEALS PARADOS (>7 dias no mesmo estágio): ${stalledDeals.length}
-${stalledSummary || "Nenhum deal parado"}
-
-Gere o briefing neste formato:
-
-## Saúde do Pipeline
-🟢 Saudável | 🟡 Atenção | 🔴 Crítico
-
-## Resumo Executivo
-3-4 linhas sobre o estado atual do pipeline.
-
-## Funil de Conversão
-Análise do fluxo entre estágios. Onde estão os gargalos?
-
-## Deals Prioritários
-Top 5 deals que precisam de atenção imediata e por quê.
-
-## Receita Projetada
-Estimativa de receita com base nos deals atuais e probabilidades.
-
-## Recomendações
-3-5 ações concretas para melhorar o pipeline.`;
-
-  const response = await getOpenAI().chat.completions.create({
-    model: MODEL_FULL,
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0.3,
-    max_tokens: 1500,
-  });
-
-  return response.choices[0].message.content || "Briefing não disponível";
+export interface DeepIntelResult {
+  proprietarios: Array<{
+    nome: string;
+    cpfCnpj?: string;
+    papel: string;
+    fonte: string;
+    confianca: string;
+  }>;
+  contatos: Array<{
+    tipo: string;
+    valor: string;
+    pessoa?: string;
+    fonte: string;
+    confianca: string;
+    aviso?: string;
+  }>;
+  processos: Array<{
+    tipo: string;
+    numero?: string;
+    descricao: string;
+    status: string;
+    fonte: string;
+  }>;
+  restricoes: Array<{
+    tipo: string;
+    descricao: string;
+    severidade: string;
+    fonte: string;
+  }>;
+  historicoPropriedade: Array<{
+    evento: string;
+    data?: string;
+    detalhes: string;
+    fonte: string;
+  }>;
+  resumoInvestigacao: string;
+  recomendacaoAbordagem: string;
+  fontesPesquisadas: string[];
+  analyzedAt: string;
+  insumosHash?: string;
 }
 
-// ═══════════════════════════════════════════════════════════
-// 10. DUE DILIGENCE DOCUMENTAL (checklist de documentos)
-// ═══════════════════════════════════════════════════════════
-
-export async function dueDiligenceCheck(assetId: number, orgId: number): Promise<string> {
+export async function deepIntelligenceAnalysis(assetId: number, orgId: number): Promise<DeepIntelResult> {
   const [ativo] = await db.select().from(assets).where(and(eq(assets.id, assetId), eq(assets.orgId, orgId)));
   if (!ativo) throw new Error("Ativo não encontrado");
 
-  const campos = ativo.camposEspecificos ?? {};
-  const docs = (ativo.documentosJson || {}) as any;
-  const enriquecimento = campos.enriquecimentoCompleto || {};
-  const attr = (ativo.attributesJson || {}) as any;
-  const embrapa = campos.embrapa || campos.enrichmentAgro || null;
-  const mapbiomas = enriquecimento.mapbiomas || null;
-  const ndvi = campos.ndvi || null;
+  const campos = (ativo.camposEspecificos ?? {}) as Record<string, any>;
+  const attr = (ativo.attributesJson || {}) as Record<string, any>;
+  const docs = (ativo.documentosJson || {}) as Record<string, any>;
+  const enriq = campos.enriquecimentoCompleto || {};
+
+  const cafProdutores = campos.cafProdutores || campos.cafData?.produtores || [];
+  const cafData = campos.cafData || {};
+  const sicorData = campos.sicorData || {};
+  const agro = campos.agro || campos.embrapa || campos.enrichmentAgro || {};
+  const ambiental = campos.ambiental || {};
+  const mapbiomas = ambiental.mapbiomas || enriq.mapbiomas || {};
+  const deter = ambiental.deter || {};
+  const ndvi = campos.ndvi || agro.ndviSatveg || {};
+  const sicarFields: Record<string, any> = {};
+  for (const k of Object.keys(campos)) {
+    if (k.startsWith("sicar")) sicarFields[k] = campos[k];
+  }
 
   const cafRows = await db.execute(sql.raw(
-    `SELECT situacao, valor_credito, nome_programa, safra FROM norion_caf_registros WHERE asset_id = ${Number(assetId)} ORDER BY safra DESC LIMIT 5`
+    `SELECT situacao, valor_credito, nome_programa, safra, nome_beneficiario FROM norion_caf_registros WHERE asset_id = ${Number(assetId)} ORDER BY safra DESC LIMIT 15`
   )).then(r => r.rows).catch(() => []);
 
-  const existingData: string[] = [];
-  if (campos.car || campos.carData || enriquecimento.sicar) existingData.push("CAR/SICAR");
-  if (campos.cafData || campos.caf || enriquecimento.caf) existingData.push("CAF");
-  if (campos.anm || enriquecimento.anm) existingData.push("ANM (Mineração)");
-  if (campos.embrapa || campos.enrichmentAgro) existingData.push("Embrapa/Aptidão");
-  if (campos.ndvi) existingData.push("NDVI Satellite");
-  if (campos.contextoRegional) existingData.push("IBGE PAM Regional");
-  if (campos.temEmbargoIbama !== undefined) existingData.push("IBAMA");
-  if (enriquecimento.mapbiomas) existingData.push("MapBiomas");
-  if (docs.certidoes && Array.isArray(docs.certidoes) && docs.certidoes.length > 0) existingData.push(`Certidões (${docs.certidoes.length})`);
-  if (docs.laudo) existingData.push("Laudo de Avaliação");
-  if (docs.ccir) existingData.push("CCIR");
-  if (docs.itr) existingData.push("ITR");
-  if (docs.car) existingData.push("CAR (doc)");
-  if (docs.matricula) existingData.push("Matrícula");
-  if (docs.geo) existingData.push("Georreferenciamento");
+  const sections: string[] = [];
 
-  const prompt = `Você é um advogado especialista em due diligence de ativos rurais, minerários e M&A no Brasil, assessorando um fundo de investimento.
-Analise a documentação e dados disponíveis para este ativo. Gere um checklist completo e acionável.
-
-═══════════════════════════════════════
-ATIVO
-═══════════════════════════════════════
+  sections.push(`IDENTIFICAÇÃO DO ATIVO:
+- ID: ${ativo.id}
 - Tipo: ${ativo.type}
 - Título: ${ativo.title}
 - Descrição: ${ativo.description || "N/D"}
-- Local: ${ativo.municipio || "N/D"}, ${ativo.estado || "N/D"}
+- Localização: ${ativo.municipio || "N/D"}, ${ativo.estado || "N/D"}
+- Coordenadas: ${campos.latitude || "N/D"}, ${campos.longitude || "N/D"}
 - Área total: ${safeNum(ativo.areaHa)} ha (útil: ${safeNum(ativo.areaUtil)} ha)
-- Preço: ${formatBRL(ativo.priceAsking)}
+- Preço pedido: ${formatBRL(ativo.priceAsking)}${ativo.areaHa && ativo.priceAsking ? ` (${formatBRL(Math.round(Number(ativo.priceAsking) / Number(ativo.areaHa)))}/ha)` : ""}
+- Status: ${ativo.statusAtivo || "ativo"}
 - Matrícula: ${ativo.matricula || "N/D"}
-- CAR: ${ativo.carCodImovel || "N/D"}${attr.carSobreposicaoTI ? " ⚠️ SOBREPOSIÇÃO COM TERRA INDÍGENA" : ""}${attr.carSobreposicaoUC ? " ⚠️ SOBREPOSIÇÃO COM UC" : ""}
-${ativo.anmProcesso ? `- ANM Processo: ${ativo.anmProcesso} | Substância: ${attr.anmSubstancia || "N/D"} | Fase: ${attr.anmFase || "N/D"} | Último evento: ${attr.anmUltimoEvento || "N/D"}` : ""}
-${embrapa ? `- Solo/Aptidão: Score ${safeNum(embrapa.scoreAgro)}/100 | ${embrapa.aptidao || "N/D"}` : ""}
-${ndvi ? `- NDVI: ${safeNum(ndvi.valor)} (${ndvi.classificacao || "N/D"})` : ""}
-${mapbiomas ? `- MapBiomas: ${mapbiomas.usoAtual || "N/D"} | Bioma: ${mapbiomas.bioma || "N/D"} | Alertas desmatamento: ${safeNum(mapbiomas.alertasDesmatamento)} | Área desmatada: ${safeNum(mapbiomas.areaDesmatadaHa)} ha` : ""}
-${campos.temEmbargoIbama !== undefined ? `- IBAMA: ${campos.temEmbargoIbama ? "⚠️ COM EMBARGO ATIVO" : "✅ Sem embargo"}` : "- IBAMA: Não consultado"}
-${cafRows.length > 0 ? `- CAF/PRONAF: ${cafRows.length} registros — ${(cafRows as any[]).map((r: any) => `${r.nome_programa}: ${r.situacao} (${r.safra})`).join("; ")}` : "- CAF/PRONAF: Sem registros"}
-- GeoScore: ${safeNum(ativo.geoScore)}/100
-- Água: ${ativo.geoTemRio ? "Rio próximo" : "Sem rio"} (${safeNum(ativo.geoDistAguaM)}m)
-- Status docs: ${ativo.docsStatus || "N/D"}
+- CAR: ${ativo.carCodImovel || "N/D"}
+- Processo ANM: ${ativo.anmProcesso || "N/D"}
+- Código IBGE: ${campos.codigoIbge || "N/D"}`);
 
-═══════════════════════════════════════
-DADOS/DOCUMENTOS DISPONÍVEIS
-═══════════════════════════════════════
-${existingData.length > 0 ? existingData.map(d => `✅ ${d}`).join("\n") : "❌ Nenhum documento disponível"}
-
-═══════════════════════════════════════
-ANÁLISE SOLICITADA
-═══════════════════════════════════════
-
-## Índice de Prontidão
-XX% — proporção de documentos obrigatórios disponíveis. Classifique: 🟢 Pronto (>80%) | 🟡 Parcial (50-80%) | 🔴 Insuficiente (<50%).
-
-## Checklist Documental Obrigatório
-Para cada documento obrigatório para o tipo "${ativo.type}":
-| Status | Documento | Importância | Observação |
-|---|---|---|---|
-| ✅/❌ | Nome | CRÍTICO/IMPORTANTE | Risco se ausente ou como obter |
-
-Considere: Matrícula atualizada, CCIR, ITR (últimos 5 anos), CAR, Georreferenciamento (SIGEF/INCRA), ART do georreferenciamento, Certidão negativa de ônus, Certidão de inteiro teor, Laudo de avaliação.
-${ativo.type === "MINA" ? "Para MINA: Licença ambiental, Portaria de lavra ANM, PCA/PRAD, EIA/RIMA, Outorga de água." : ""}
-${ativo.type === "NEGOCIO" ? "Para NEGÓCIO/M&A: Balanço patrimonial, DRE, contrato social, certidões negativas (federal, estadual, municipal, trabalhista)." : ""}
-
-## Documentos Complementares
-Documentos que agregam valor na negociação.
-
-## Alertas Críticos
-${attr.carSobreposicaoTI ? "⚠️ SOBREPOSIÇÃO COM TERRA INDÍGENA detectada no CAR — risco jurídico grave." : ""}
-${attr.carSobreposicaoUC ? "⚠️ SOBREPOSIÇÃO COM UNIDADE DE CONSERVAÇÃO detectada — verificar tipo de UC e restrições." : ""}
-${campos.temEmbargoIbama ? "⚠️ EMBARGO IBAMA ATIVO — verificar tipo, área embargada e possibilidade de regularização." : ""}
-${mapbiomas && Number(mapbiomas.alertasDesmatamento) > 0 ? `⚠️ ${mapbiomas.alertasDesmatamento} alertas de desmatamento detectados no MapBiomas.` : ""}
-Analise cada alerta com impacto jurídico e financeiro.
-
-## Riscos Jurídicos & Financeiros
-Riscos identificados com base nos documentos ausentes e alertas. Classifique cada risco: ALTO/MÉDIO/BAIXO.
-
-## Plano de Ação Due Diligence
-Sequência recomendada com prioridade, prazo estimado e responsável (comprador/vendedor/cartório/órgão público).
-
-## Custo Estimado
-Estimativa realista dos custos para completar a documentação (em R$).
-
-## Parecer Preliminar
-Recomendação: PROSSEGUIR / PROSSEGUIR COM RESSALVAS / NÃO PROSSEGUIR — com justificativa em 3 linhas.`;
-
-  const response = await getOpenAI().chat.completions.create({
-    model: MODEL_FULL,
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0.3,
-    max_tokens: 3500,
-  });
-
-  return response.choices[0].message.content || "Análise de due diligence não disponível";
-}
-
-export async function suggestInvestorProfile(companyData: {
-  legalName: string;
-  tradeName?: string | null;
-  cnpj?: string | null;
-  cnaePrincipal?: string | null;
-  cnaeSecundarios?: any;
-  porte?: string | null;
-  revenueEstimate?: number | null;
-  shareCapital?: number | null;
-  employeeCount?: string | null;
-  address?: any;
-  enrichmentData?: any;
-}): Promise<{
-  assetTypes: string[];
-  ticketMin: number | null;
-  ticketMax: number | null;
-  regionsOfInterest: string[];
-  buyerType: string;
-  reasoning: string;
-}> {
-  const addr = companyData.address || {};
-  const cnaesSec = Array.isArray(companyData.cnaeSecundarios)
-    ? companyData.cnaeSecundarios.map((c: any) => typeof c === "string" ? c : c.description || c.text || JSON.stringify(c)).join("; ")
-    : "";
-
-  const prompt = `Você é um analista de M&A e deal origination no Brasil.
-Com base nos dados reais desta empresa, sugira o perfil de investimento dela.
-
-EMPRESA:
-- Razão Social: ${companyData.legalName}
-- Nome Fantasia: ${companyData.tradeName || "N/D"}
-- CNPJ: ${companyData.cnpj || "N/D"}
-- CNAE Principal: ${companyData.cnaePrincipal || "N/D"}
-- CNAEs Secundários: ${cnaesSec || "N/D"}
-- Porte: ${companyData.porte || "N/D"}
-- Faturamento Estimado: ${companyData.revenueEstimate ? formatBRL(companyData.revenueEstimate) : "N/D"}
-- Capital Social: ${companyData.shareCapital ? formatBRL(companyData.shareCapital) : "N/D"}
-- Funcionários: ${companyData.employeeCount || "N/D"}
-- Endereço: ${addr.city || "N/D"}, ${addr.state || "N/D"}
-
-TIPOS DE ATIVO DISPONÍVEIS (use EXATAMENTE estes valores):
-- TERRA (terra/fazenda)
-- MINA (mineração)
-- NEGOCIO (negócio/M&A)
-- FII_CRI (FII/CRI)
-- DESENVOLVIMENTO (desenvolvimento imobiliário)
-- AGRO (agronegócio)
-- ENERGIA (energia renovável)
-
-REGIÕES: Use siglas de estados brasileiros (SP, MG, BA, MT, GO, etc.)
-
-REGRAS IMPORTANTES:
-- Baseie-se SOMENTE nos dados fornecidos. Não invente.
-- Se o CNAE indica atividade agropecuária, sugira TERRA e/ou AGRO.
-- Se indica indústria/comércio, sugira NEGOCIO.
-- Se não há dados suficientes para inferir, deixe o campo vazio.
-- Para ticket, baseie-se no capital social ou faturamento como referência. Se não há dados, retorne null.
-- Para regiões, baseie-se no estado do endereço e estados vizinhos relevantes para a atividade.
-- buyerType: "estrategico" se empresa operacional, "financeiro" se fundo/holding/investidor.
-
-Responda EXCLUSIVAMENTE em JSON válido, sem markdown:
-{
-  "assetTypes": ["TIPO1", "TIPO2"],
-  "ticketMin": 1000000,
-  "ticketMax": 50000000,
-  "regionsOfInterest": ["MG", "SP"],
-  "buyerType": "estrategico",
-  "reasoning": "Explicação curta em português de por que sugeriu esses valores"
-}`;
-
-  const response = await getOpenAI().chat.completions.create({
-    model: MODEL_FULL,
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0.2,
-    max_tokens: 500,
-  });
-
-  const raw = response.choices[0].message.content || "{}";
-  try {
-    const cleaned = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-    const parsed = JSON.parse(cleaned);
-    const validTypes = ["TERRA", "MINA", "NEGOCIO", "FII_CRI", "DESENVOLVIMENTO", "AGRO", "ENERGIA"];
-    const validStates = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
-    let tMin = typeof parsed.ticketMin === "number" && parsed.ticketMin > 0 ? parsed.ticketMin : null;
-    let tMax = typeof parsed.ticketMax === "number" && parsed.ticketMax > 0 ? parsed.ticketMax : null;
-    if (tMin && tMax && tMin > tMax) { const tmp = tMin; tMin = tMax; tMax = tmp; }
-    return {
-      assetTypes: Array.isArray(parsed.assetTypes) ? parsed.assetTypes.filter((t: string) => validTypes.includes(t)) : [],
-      ticketMin: tMin,
-      ticketMax: tMax,
-      regionsOfInterest: Array.isArray(parsed.regionsOfInterest) ? parsed.regionsOfInterest.filter((r: string) => validStates.includes(r)) : [],
-      buyerType: parsed.buyerType === "financeiro" ? "financeiro" : "estrategico",
-      reasoning: parsed.reasoning || "Sugestão baseada nos dados da empresa",
-    };
-  } catch {
-    return {
-      assetTypes: [],
-      ticketMin: null,
-      ticketMax: null,
-      regionsOfInterest: [],
-      buyerType: "estrategico",
-      reasoning: "Não foi possível gerar sugestão automática. Preencha manualmente.",
-    };
+  if (attr.carTitular) {
+    sections.push(`TITULAR DO CAR: ${attr.carTitular}`);
   }
-}
-
-
-export interface AIBuyerRanking {
-  taxId: string;
-  scoreIA: number;
-  justificativa: string;
-  sinergias: string[];
-  ressalvas: string[];
-  recomendado: boolean;
-}
-
-export async function aiRankBuyers(
-  assetData: {
-    id: number;
-    type: string;
-    name: string;
-    estado?: string | null;
-    location?: string | null;
-    areaHa?: number | null;
-    priceAsking?: number | null;
-    camposEspecificos?: any;
-    geoScore?: number | null;
-    docsStatus?: string | null;
-    attributesJson?: any;
-  },
-  candidates: Array<{
-    taxId: string;
-    legalName: string;
-    tradeName?: string | null;
-    cnaePrincipal?: string | null;
-    cnaeCode?: number | null;
-    porte?: string | null;
-    city?: string | null;
-    state?: string | null;
-    equity?: number | null;
-    founded?: string | null;
-    camada?: number;
-    intelligentScore?: number | null;
-    intelligentReason?: string | null;
-  }>
-): Promise<AIBuyerRanking[]> {
-  if (candidates.length === 0) return [];
-
-  const ce = assetData.camposEspecificos || {};
-  const iaEnrich = ce.iaEnrichment || {};
-  const attr = assetData.attributesJson || {};
-
-  const assetContext = [
-    `ATIVO: ${assetData.name} (ID ${assetData.id})`,
-    `Tipo: ${assetData.type}`,
-    assetData.location ? `Localização: ${assetData.location}` : null,
-    assetData.estado ? `Estado: ${assetData.estado}` : null,
-    assetData.areaHa ? `Área: ${assetData.areaHa} ha` : null,
-    assetData.priceAsking ? `Preço: R$ ${Number(assetData.priceAsking).toLocaleString("pt-BR")}` : null,
-    assetData.geoScore ? `GeoScore: ${assetData.geoScore}/100` : null,
-    assetData.docsStatus ? `Documentação: ${assetData.docsStatus}` : null,
-    ce.aptidaoAgricola ? `Aptidão agrícola: ${ce.aptidaoAgricola}` : null,
-    ce.culturas ? `Culturas: ${ce.culturas}` : null,
-    ce.substancia ? `Substância mineral: ${ce.substancia}` : null,
-    ce.contextoRegional ? `Contexto regional: ${JSON.stringify(ce.contextoRegional).slice(0, 300)}` : null,
-  ].filter(Boolean).join("\n");
-
-  const iaContext = iaEnrich && !iaEnrich._failReason ? [
-    iaEnrich.perfilIdealComprador ? `Perfil ideal comprador: ${JSON.stringify(iaEnrich.perfilIdealComprador).slice(0, 400)}` : null,
-    iaEnrich.scoreAtratividade ? `Score atratividade: ${iaEnrich.scoreAtratividade}/100` : null,
-    iaEnrich.riscosIdentificados?.length ? `Riscos: ${iaEnrich.riscosIdentificados.map((r: any) => `${r.tipo}(${r.severidade})`).join(", ")}` : null,
-    iaEnrich.ticketSugerido ? `Ticket sugerido: ${iaEnrich.ticketSugerido.minimo} - ${iaEnrich.ticketSugerido.maximo}` : null,
-    iaEnrich.comparaveisMercado ? `Comparáveis: ${JSON.stringify(iaEnrich.comparaveisMercado).slice(0, 300)}` : null,
-    iaEnrich.diferenciais?.length ? `Diferenciais: ${iaEnrich.diferenciais.join(", ")}` : null,
-  ].filter(Boolean).join("\n") : "";
-
-  const embrapaStr = ce.embrapa ? `Dados Embrapa: ${JSON.stringify(ce.embrapa).slice(0, 300)}` : "";
-  const ambientalStr = ce.analiseSobreposicoes ? `Sobreposições ambientais: ${JSON.stringify(ce.analiseSobreposicoes).slice(0, 200)}` : "";
-
-  const candidatesList = candidates.slice(0, 20).map((c, i) => {
-    return [
-      `[${i + 1}] CNPJ: ${c.taxId}`,
-      `Nome: ${c.tradeName || c.legalName}`,
-      c.cnaePrincipal ? `CNAE: ${c.cnaePrincipal}` : null,
-      c.porte ? `Porte: ${c.porte}` : null,
-      c.state ? `Estado: ${c.state}` : null,
-      c.city ? `Cidade: ${c.city}` : null,
-      c.equity ? `Capital social: R$ ${Number(c.equity).toLocaleString("pt-BR")}` : null,
-      c.founded ? `Fundada em: ${c.founded}` : null,
-      c.camada ? `Camada: ${c.camada === 1 ? "comprador direto" : c.camada === 2 ? "fundo/trading" : "relacionado"}` : null,
-      c.intelligentScore != null ? `Score algorítmico: ${c.intelligentScore}` : null,
-    ].filter(Boolean).join(" | ");
-  }).join("\n");
-
-  const prompt = `Você é um analista sênior de deal origination e M&A em uma plataforma de originação de negócios imobiliários, agro, mineração e empresas no Brasil.
-
-Analise cada empresa candidata abaixo e avalie sua compatibilidade como compradora/investidora para o ativo descrito.
-
-═══ DADOS DO ATIVO ═══
-${assetContext}
-${iaContext ? `\n═══ INTELIGÊNCIA IA DO ATIVO ═══\n${iaContext}` : ""}
-${embrapaStr ? `\n═══ DADOS EMBRAPA ═══\n${embrapaStr}` : ""}
-${ambientalStr ? `\n═══ ANÁLISE AMBIENTAL ═══\n${ambientalStr}` : ""}
-
-═══ EMPRESAS CANDIDATAS ═══
-${candidatesList}
-
-═══ INSTRUÇÕES ═══
-Para CADA empresa, avalie:
-1. Compatibilidade setorial (o CNAE e ramo da empresa fazem sentido para este tipo de ativo?)
-2. Capacidade financeira (porte, capital social, adequação ao ticket do ativo)
-3. Sinergia geográfica (proximidade ou interesse estratégico na região do ativo)
-4. Potencial estratégico (verticalização, expansão, diversificação que o ativo proporcionaria)
-5. Riscos ou ressalvas (empresa muito pequena, setor incompatível, região distante, etc.)
-
-Responda EXATAMENTE neste formato JSON (array):
-[
-  {
-    "taxId": "CNPJ da empresa",
-    "scoreIA": 0-100,
-    "justificativa": "2-3 frases em português explicando o racional",
-    "sinergias": ["sinergia 1", "sinergia 2"],
-    "ressalvas": ["ressalva 1"]
+  if (Object.keys(sicarFields).length > 0) {
+    sections.push(`DADOS SICAR:
+- UF: ${sicarFields.sicarUf || "N/D"}
+- Município: ${sicarFields.sicarMunicipio || "N/D"}
+- Área SICAR: ${sicarFields.sicarArea || "N/D"} ha
+- Tipo: ${sicarFields.sicarTipo || "N/D"}
+- Status: ${sicarFields.sicarStatus || "N/D"}
+- Condição: ${sicarFields.sicarCondicao || "N/D"}
+- Módulo Fiscal: ${sicarFields.sicarModuloFiscal || "N/D"}
+- Data Criação: ${sicarFields.sicarDataCriacao || "N/D"}
+- Data Atualização: ${sicarFields.sicarDataAtualizacao || "N/D"}
+- Fonte: ${sicarFields.sicarFonte || "N/D"}`);
   }
-]
 
-Regras:
-- Score 80-100: Match excelente, forte sinergia e capacidade
-- Score 60-79: Bom match, com pontos positivos claros
-- Score 40-59: Match razoável, vale investigar
-- Score 20-39: Match fraco, poucas sinergias
-- Score 0-19: Incompatível
-- Seja criterioso e diferenciado nos scores — evite dar o mesmo score para todos
-- Justificativas devem ser específicas, não genéricas
-- Ordene do maior para o menor score`;
+  if (cafProdutores.length > 0) {
+    const prodList = (cafProdutores as any[]).slice(0, 10).map((p: any) =>
+      `- Nome: ${p.nome || "N/D"} | CPF: ${p.cpfMascarado || "N/D"} | Situação: ${p.situacao || "N/D"} | Município: ${p.municipio || "N/D"} | Papel: ${p.grauParentesco || "N/D"} | Perfil: ${p.perfil || "N/D"} | PRONAF: ${p.enquadramentoPronaf ? "SIM" : "NÃO"} | Imóveis: ${p.numImoveis || "N/D"}`
+    ).join("\n");
+    sections.push(`PRODUTORES CAF VINCULADOS (${cafProdutores.length} pessoas):
+${prodList}`);
+  }
 
-  try {
-    const response = await getOpenAI().chat.completions.create({
-      model: MODEL_FULL,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.3,
-      max_tokens: 4000,
+  if (cafRows.length > 0) {
+    const cafList = (cafRows as any[]).map((r: any) =>
+      `- ${r.nome_programa || "Programa"}: ${r.situacao || "N/D"} | Crédito: ${r.valor_credito ? formatBRL(r.valor_credito) : "N/D"} | Safra: ${r.safra || "N/D"} | Beneficiário: ${r.nome_beneficiario || "N/D"}`
+    ).join("\n");
+    sections.push(`REGISTROS CAF/PRONAF (${cafRows.length}):
+${cafList}`);
+  }
+
+  if (sicorData.totalContratos > 0 || sicorData.totalValor > 0) {
+    const topProd = (sicorData.topProdutos || []).slice(0, 8).map((p: any) =>
+      `- ${p.produto}: ${p.contratos} contratos, Área: ${safeNum(p.area)} ha, Valor: ${formatBRL(p.valor)}`
+    ).join("\n");
+    sections.push(`CRÉDITO RURAL SICOR (município):
+- Total contratos: ${safeNum(sicorData.totalContratos)}
+- Total valor: ${formatBRL(sicorData.totalValor)}
+${topProd ? `Principais produtos:\n${topProd}` : ""}`);
+  }
+
+  if (agro.solo || agro.scoreAgro) {
+    const solo = agro.solo || {};
+    sections.push(`DADOS AGRONÔMICOS (Embrapa/Solo):
+- Score Agro: ${safeNum(agro.scoreAgro)}/100
+- pH: ${safeNum(solo.phh2o || agro.pH)}
+- Classe de solo: ${solo.soilClass || agro.tipoSolo || agro.classe || "N/D"}
+- Argila: ${safeNum(solo.clay)}%, Areia: ${safeNum(solo.sand)}%
+- CEC: ${safeNum(solo.cec)}
+- Carbono orgânico: ${safeNum(solo.soc || agro.carbono)}
+- Nitrogênio: ${safeNum(solo.nitrogen)}
+${agro.resumo ? `- Resumo: ${agro.resumo}` : ""}
+${agro.clima ? `- Clima: temp. ${safeNum(agro.clima.temperaturaMinMedia)}-${safeNum(agro.clima.temperaturaMaxMedia)}°C, precip. ${safeNum(agro.clima.precipitacaoMedia)} mm` : ""}`);
+  }
+
+  if (ndvi.valor || ndvi.value || ndvi.ndvi) {
+    sections.push(`VEGETAÇÃO (NDVI):
+- Valor: ${safeNum(ndvi.valor || ndvi.value || ndvi.ndvi)}
+- Classificação: ${ndvi.classificacao || ndvi.classification || "N/D"}
+- Data: ${ndvi.data || ndvi.date || "N/D"}`);
+  }
+
+  if (mapbiomas.usoAtual || mapbiomas.bioma) {
+    sections.push(`MAPBIOMAS:
+- Uso atual: ${mapbiomas.usoAtual || "N/D"}
+- Bioma: ${mapbiomas.bioma || "N/D"}
+- Alertas desmatamento: ${safeNum(mapbiomas.alertasDesmatamento)}
+- Área desmatada: ${safeNum(mapbiomas.areaDesmatadaHa)} ha`);
+  }
+
+  if (deter.totalAlertas !== undefined) {
+    sections.push(`DETER (INPE):
+- Total alertas: ${safeNum(deter.totalAlertas)}
+- Área desmatada: ${safeNum(deter.areaDesmatadaHa)} ha`);
+  }
+
+  if (campos.temEmbargoIbama !== undefined) {
+    sections.push(`IBAMA: ${campos.temEmbargoIbama ? "⚠️ COM EMBARGO ATIVO" : "✅ Sem embargo"}${campos.embargoIbama ? ` — ${JSON.stringify(campos.embargoIbama)}` : ""}`);
+  }
+
+  sections.push(`GEOESPACIAL:
+- Geo Score: ${safeNum(ativo.geoScore)}/100
+- Altitude: ${safeNum(ativo.geoAltMed)}m (min: ${safeNum(ativo.geoAltMin)}m, max: ${safeNum(ativo.geoAltMax)}m)
+- Declividade: ${safeNum(ativo.geoDeclivityMed || attr.geoDeclivMed)}%
+- Água: ${ativo.geoTemRio ? "Rio próximo" : "Sem rio"}${ativo.geoTemLago ? ", Lago" : ""} (dist: ${safeNum(ativo.geoDistAguaM || attr.geoDistAguaM)}m)
+- Energia: ${ativo.geoTemEnergia ? "Rede próxima" : "Sem rede"} (dist: ${safeNum(ativo.geoDistEnergiaM || attr.geoDistEnergiaM)}m)
+- Score Energia: ${attr.geoScoreEnergia || "N/D"}`);
+
+  if (attr.carSobreposicaoTI || attr.carSobreposicaoUC) {
+    sections.push(`⚠️ SOBREPOSIÇÕES:
+${attr.carSobreposicaoTI ? "- SOBREPOSIÇÃO COM TERRA INDÍGENA" : ""}
+${attr.carSobreposicaoUC ? "- SOBREPOSIÇÃO COM UNIDADE DE CONSERVAÇÃO" : ""}`);
+  }
+
+  const isMining = ativo.type === "MINA" || ativo.type === "MINERACAO" || ativo.type === "MINERIO" || ativo.type === "JAZIDA" || !!ativo.anmProcesso || !!campos.processoAnm;
+  const anmLive = campos.anmLiveData || {};
+  const anmFeatures = anmLive.features || [];
+
+  if (ativo.anmProcesso || isMining) {
+    const anmLines = [
+      `ANM/MINERAÇÃO:`,
+      `- Processo: ${ativo.anmProcesso || "N/D"}`,
+      `- Substância: ${attr.anmSubstancia || "N/D"}`,
+      `- Uso: ${attr.anmUso || "N/D"}`,
+      `- Fase: ${attr.anmFase || "N/D"}`,
+      `- Ano do processo: ${attr.anmAno || "N/D"}`,
+      `- Titular/Requerente: ${attr.anmNome || "N/D"}`,
+    ];
+
+    if (anmFeatures.length > 0) {
+      anmLines.push(`\nDADOS LIVE ANM (${anmFeatures.length} registros):`);
+      for (const f of anmFeatures.slice(0, 5)) {
+        anmLines.push(`- Processo: ${f.DSProcesso || f.PROCESSO || "N/D"} | Titular: ${f.NOME || "N/D"} | Substância: ${f.SUBS || "N/D"} | Fase: ${f.FASE || "N/D"} | Uso: ${f.USO || "N/D"} | Área: ${f.AREA_HA || "N/D"} ha | UF: ${f.UF || "N/D"}`);
+      }
+    }
+
+    if (campos.anmAnalise) {
+      anmLines.push(`\nANÁLISE ANM ANTERIOR (resumo): ${String(campos.anmAnalise).slice(0, 500)}`);
+    }
+
+    sections.push(anmLines.join("\n"));
+  }
+
+  const onboarding = campos.enrichment || {};
+  const onboardingLines: string[] = [];
+  const onboardingLabels: Record<string, string> = {
+    aptidaoUso: "Aptidão de uso",
+    topografia: "Topografia",
+    acessoPrincipal: "Acesso principal",
+    aguaDisponivel: "Água disponível",
+    energiaEletrica: "Energia elétrica",
+    benfeitorias: "Benfeitorias",
+    aceitaPermuta: "Aceita permuta",
+    situacaoDocumental: "Situação documental",
+    possuiReservaLegal: "Possui reserva legal",
+    observacoesQualitativas: "Observações qualitativas",
+    substanciaMineral: "Substância mineral",
+    faseExploracao: "Fase de exploração",
+    reservaEstimada: "Reserva estimada",
+    possuiLicencaAmbiental: "Possui licença ambiental",
+    tipoLavra: "Tipo de lavra",
+    infraestruturaLocal: "Infraestrutura local",
+    setorAtuacao: "Setor de atuação",
+    faturamentoAnual: "Faturamento anual",
+    ebitda: "EBITDA",
+    margemOperacional: "Margem operacional",
+    qtdFuncionarios: "Qtd funcionários",
+    motivoVenda: "Motivo da venda",
+    possuiPassivos: "Possui passivos",
+    tipoFundo: "Tipo de fundo",
+    rentabilidadeAnual: "Rentabilidade anual",
+    vacanciaMedia: "Vacância média",
+    qtdImoveis: "Qtd imóveis",
+    segmentoImoveis: "Segmento de imóveis",
+    dividendYield: "Dividend yield",
+  };
+  for (const [k, v] of Object.entries(onboarding)) {
+    if (v === null || v === undefined || v === "" || k === "enrichmentProgress") continue;
+    const label = onboardingLabels[k] || k;
+    onboardingLines.push(`- ${label}: ${typeof v === "boolean" ? (v ? "Sim" : "Não") : String(v)}`);
+  }
+  if (onboardingLines.length > 0) {
+    sections.push(`DADOS QUALITATIVOS (ONBOARDING - preenchidos pelo gestor):\n${onboardingLines.join("\n")}`);
+  }
+
+  if (campos.ccirProprietarios?.length > 0) {
+    const propList = (campos.ccirProprietarios as any[]).slice(0, 10).map((p: any) =>
+      `- ${p.nome || "N/D"} | CPF/CNPJ COMPLETO: ${p.cpfCnpj || "N/D"} | Participação: ${p.participacao || "N/D"}% | Município: ${p.municipio || "N/D"}`
+    ).join("\n");
+    sections.push(`PROPRIETÁRIOS CCIR/INCRA (${campos.ccirProprietarios.length}):\n${propList}
+- Área INCRA: ${safeNum(campos.ccirAreaTotalIncra)} ha
+- Módulos fiscais: ${safeNum(campos.ccirModulosFiscais)}
+- Classificação fundiária: ${campos.ccirClassificacaoFundiaria || "N/D"}
+- Código INCRA: ${campos.ccirCodigoIncra || "N/D"}`);
+
+    if (cafProdutores.length > 0) {
+      const crossMatches: string[] = [];
+      for (const ccir of (campos.ccirProprietarios as any[])) {
+        if (!ccir.cpfCnpj || !ccir.nome) continue;
+        const ccirDoc = (ccir.cpfCnpj || '').replace(/\D/g, '');
+        for (const caf of (cafProdutores as any[])) {
+          if (!caf.cpfMascarado || !caf.nome) continue;
+          const cafDocDigits = (caf.cpfMascarado || '').replace(/\D/g, '').replace(/\*/g, '');
+          const namesMatch = ccir.nome.toLowerCase().includes(caf.nome.toLowerCase().split(' ')[0]) ||
+            caf.nome.toLowerCase().includes(ccir.nome.toLowerCase().split(' ')[0]);
+          const digitsMatch = cafDocDigits.length >= 3 && ccirDoc.includes(cafDocDigits.substring(0, 3));
+          if (namesMatch || digitsMatch) {
+            crossMatches.push(`- CAF "${caf.nome}" (CPF parcial: ${caf.cpfMascarado}) ↔ CCIR "${ccir.nome}" (CPF completo: ${ccir.cpfCnpj}) — MESMA PESSOA PROVÁVEL`);
+          }
+        }
+      }
+      if (crossMatches.length > 0) {
+        sections.push(`CRUZAMENTO CAF × CCIR (identificação de mesma pessoa):\n${crossMatches.join("\n")}`);
+      }
+    }
+  }
+
+  if (campos.certidoesData) {
+    const cert = campos.certidoesData as any;
+    const certLines: string[] = [];
+    if (cert.pgfn) certLines.push(`- PGFN: ${cert.pgfn.temDebitoAtivo ? "⚠️ COM DÉBITO ATIVO" : "✅ Sem débito"} | Situação: ${cert.pgfn.situacao || "N/D"}`);
+    if (cert.cnj) certLines.push(`- CNJ: ${cert.cnj.totalProcessos || 0} processo(s) judiciais`);
+    if (cert.ceis) certLines.push(`- CEIS: ${cert.ceis.sancionado ? "⚠️ SANCIONADA" : "✅ Sem sanções"}`);
+    if (certLines.length > 0) {
+      sections.push(`CERTIDÕES CONSULTADAS:\n${certLines.join("\n")}`);
+    }
+  }
+
+  const dossieDeepIntel = buildDossieDigest(campos, ["fundiaria", "certidoes", "cfem", "barragens", "logistica", "tah", "restricoes", "sondagem", "geoquimica"]);
+  if (dossieDeepIntel) {
+    sections.push(dossieDeepIntel);
+  }
+
+  if (campos.cnpjaData) {
+    const cnpja = campos.cnpjaData as any;
+    const cnpjaLines = [
+      `- Razão Social: ${cnpja.company?.name || cnpja.razaoSocial || "N/D"}`,
+      `- CNPJ: ${cnpja.taxId || cnpja.cnpj || "N/D"}`,
+      `- Situação: ${cnpja.status?.text || cnpja.situacao || "N/D"}`,
+      `- Capital Social: ${cnpja.company?.equity ? formatBRL(cnpja.company.equity) : "N/D"}`,
+    ];
+    const socios = cnpja.company?.members || cnpja.socios || [];
+    if (socios.length > 0) {
+      cnpjaLines.push(`- Sócios (${socios.length}):`);
+      for (const s of socios.slice(0, 5)) {
+        cnpjaLines.push(`  · ${s.person?.name || s.nome || "N/D"} — ${s.role?.text || s.qualificacao || "N/D"}`);
+      }
+    }
+    sections.push(`DADOS EMPRESARIAIS (CNPJA):\n${cnpjaLines.join("\n")}`);
+  }
+
+  if (campos.cvmData) {
+    const cvm = campos.cvmData as any;
+    sections.push(`DADOS CVM/FUNDO:
+- Fundo: ${cvm.denominacaoSocial || cvm.nome || "N/D"}
+- Código CVM: ${cvm.codigoCvm || "N/D"}
+- Patrimônio líquido: ${cvm.patrimonioLiquido ? formatBRL(cvm.patrimonioLiquido) : "N/D"}
+- Cotistas: ${safeNum(cvm.numeroCotistas)}
+- Administrador: ${cvm.administrador || "N/D"}
+- Gestor: ${cvm.gestor || "N/D"}`);
+  }
+
+  if (campos.dueDiligenceFundiaria) {
+    const dd = campos.dueDiligenceFundiaria as any;
+    sections.push(`DUE DILIGENCE FUNDIÁRIA:
+- Status: ${dd.status || "N/D"}
+- Resumo: ${(dd.resumo || dd.analise || "").slice(0, 500)}`);
+  }
+
+  const docsAvailable: string[] = [];
+  if (docs.matricula) docsAvailable.push("Matrícula");
+  if (docs.ccir) docsAvailable.push("CCIR");
+  if (docs.itr) docsAvailable.push("ITR");
+  if (docs.car) docsAvailable.push("CAR doc");
+  if (docs.geo) docsAvailable.push("Georreferenciamento");
+  if (docs.laudo) docsAvailable.push("Laudo Avaliação");
+  if (Array.isArray(docs.certidoes) && docs.certidoes.length > 0) docsAvailable.push(`${docs.certidoes.length} certidões`);
+  sections.push(`DOCUMENTAÇÃO: ${docsAvailable.length > 0 ? docsAvailable.join(", ") : "Nenhuma anexada"}`);
+
+  const { secao: secaoDocumentosAnexados } = await buildDocsAnexadosSection(
+    assetId,
+    orgId,
+    { omitirTrechosVigencia: isMining },
+  );
+  if (secaoDocumentosAnexados) {
+    sections.push(secaoDocumentosAnexados.trim());
+  }
+
+  if (campos.iaAnalise) {
+    sections.push(`ANÁLISE IA ANTERIOR (resumo):
+${omitirTrechosDeVigenciaParaIa(String(campos.iaAnalise)).slice(0, 800)}`);
+  }
+
+  if (campos.iaEnrichment) {
+    const ie = campos.iaEnrichment;
+    sections.push(`ENRIQUECIMENTO IA ANTERIOR:
+- Resumo: ${omitirTrechosDeVigenciaParaIa(ie.resumoExecutivo || "").slice(0, 300)}
+- Ticket sugerido: ${ie.ticketSugerido?.minimo || "N/D"} - ${ie.ticketSugerido?.maximo || "N/D"}`);
+  }
+
+  if (isMining) {
+    const ativoComVigencia = anexarVigenciaCalculada({
+      ...ativo,
+      camposEspecificos: campos,
+      attributesJson: attr,
     });
-
-    const raw = response.choices[0].message.content || "[]";
-    const cleaned = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-    const parsed = JSON.parse(cleaned);
-
-    if (!Array.isArray(parsed)) return candidates.map(c => ({
-      taxId: c.taxId, scoreIA: 50, justificativa: "Análise não disponível",
-      sinergias: [], ressalvas: [], recomendado: false,
-    }));
-
-    const ranked: AIBuyerRanking[] = parsed.map((item: any) => ({
-      taxId: String(item.taxId || ""),
-      scoreIA: Math.max(0, Math.min(100, Number(item.scoreIA) || 50)),
-      justificativa: String(item.justificativa || ""),
-      sinergias: Array.isArray(item.sinergias) ? item.sinergias.map(String) : [],
-      ressalvas: Array.isArray(item.ressalvas) ? item.ressalvas.map(String) : [],
-      recomendado: false,
-    }));
-
-    ranked.sort((a, b) => b.scoreIA - a.scoreIA);
-    ranked.forEach((r, i) => { if (i < 3 && r.scoreIA >= 60) r.recomendado = true; });
-
-    return ranked;
-  } catch (err) {
-    console.error("aiRankBuyers error:", err);
-    return candidates.map(c => ({
-      taxId: c.taxId, scoreIA: 50, justificativa: "Erro na análise IA",
-      sinergias: [], ressalvas: [], recomendado: false,
-    }));
+    sections.push(contextoVigenciaMinerariaParaPrompt(obterVigenciaCalculada(ativoComVigencia)));
   }
+
+  const fullContext = sections.join("\n\n");
+
+  // Cache determinístico por hash dos insumos: mesmo input ⇒ mesma investigação.
+  // O hash usa só as seções de dados reais (insumos canônicos) — as seções
+  // derivadas de saídas de IA anteriores (iaAnalise/iaEnrichment, regravadas
+  // pela rota a cada análise) entram no prompt mas não no hash, senão o
+  // cache se auto-invalidaria a cada execução.
+  const { hashInsumos, secaoDataAtual: secaoData, validarContatosDeepIntel, insumosCanonicosDeepIntel } = await import("./ai-relatorio-determinismo");
+  const insumosHash = hashInsumos(insumosCanonicosDeepIntel(sections));
+  const cached = campos.iaDeepIntel;
+  if (cached && typeof cached === "object" && cached.analyzedAt && campos.iaDeepIntelHash === insumosHash) {
+    console.log(`[DeepIntel] Cache hit (hash dos insumos inalterado) para ativo ${assetId}`);
+    return { ...cached, insumosHash } as DeepIntelResult;
+  }
+
+  const miningInstructions = isMining ? `
+INSTRUÇÕES ESPECÍFICAS PARA ATIVO DE MINERAÇÃO/JAZIDA:
+
+Este é um ativo minerário. A investigação deve focar ESPECIALMENTE em:
+
+Para o TITULAR/REQUERENTE (empresa ou pessoa no campo NOME da ANM):
+- Pesquise o nome "${attr.anmNome || ""}" + CNPJ/CPF na web
+- Se for empresa: busque CNPJ na Receita Federal, quadro societário, capital social, situação cadastral
+- Se for pessoa física: busque CPF, processos, endereço, telefone
+- Pesquise no site da ANM (gov.br/anm) pelo processo ${ativo.anmProcesso || ""} para dados adicionais
+- Busque no Diário Oficial publicações referentes a este processo ANM
+- Pesquise sócios e representantes legais da empresa titular
+
+Para o PROCESSO MINERÁRIO:
+- Pesquise "${ativo.anmProcesso}" no sistema de processos da ANM
+- Verifique a fase atual (${attr.anmFase || ""}) e o que isso implica legalmente
+- Identifique se há outros processos minerários sobrepostos na mesma área
+- Verifique se há TAH (Termo de Ajustamento de Conduta) ou multas pendentes
+- Para vigência ou vencimento do alvará, cite SOMENTE a VIGÊNCIA CANÔNICA fornecida nos dados. Nunca recalcule a partir do histórico ou de pesquisa web
+- Se a fase é "DISPONIBILIDADE" ou "APTO PARA DISPONIBILIDADE", explique que o direito pode ser requerido por terceiros
+
+Para a SUBSTÂNCIA (${attr.anmSubstancia || ""}):
+- Demanda atual e projeções
+- Principais compradores/consumidores no Brasil
+
+` : "";
+
+  const ruralInstructions = !isMining ? `
+INSTRUÇÕES ESPECÍFICAS PARA ATIVO RURAL/TERRA:
+
+Faça uma investigação profunda usando pesquisa web. Para cada pessoa identificada nos dados CAF, SICAR, matrícula:
+- Pesquise o nome completo + município para encontrar dados públicos
+- Procure processos judiciais (TJ, JF, TST)
+- Verifique se há restrições ambientais, trabalhistas ou fiscais
+- Busque telefones e contatos em listas públicas, sites, redes sociais
+- Cruze informações de múltiplas bases
+
+Para o imóvel:
+- Pesquise o número de matrícula no cartório da região
+- Verifique leilões, hasta pública, execuções envolvendo o imóvel
+- Verifique zoneamento e restrições de uso
+` : "";
+
+  const prompt = `Você é um investigador sênior de inteligência patrimonial e deal origination no Brasil, trabalhando para um fundo de investimento ${isMining ? "em ativos minerários, direitos minerários e M&A no setor de mineração" : "imobiliário e de M&A"}.
+
+Sua missão é realizar uma INVESTIGAÇÃO COMPLETA sobre o ativo abaixo usando TODOS os dados enriquecidos disponíveis. Você deve cruzar informações de múltiplas fontes para identificar:
+1. Quem é o real ${isMining ? "titular dos direitos minerários, sócios e representantes" : "proprietário/posseiro e pessoas ligadas"}
+2. Telefones, e-mails e formas de contato de pessoas ligadas ao ativo
+3. Processos judiciais ou administrativos envolvendo ${isMining ? "o processo minerário, a empresa titular e os sócios" : "o imóvel ou proprietários"}
+4. Restrições, ônus, gravames ou impedimentos ${isMining ? "(incluindo multas ANM, TAHs, embargos ambientais)" : ""}
+5. Histórico ${isMining ? "do processo minerário e transações de cessão" : "de propriedade e transações"}
+
+Use ${isMining ? "o nome da empresa titular, processo ANM, CNPJ/CPF" : "os CPFs/CNPJs completos, nomes, números de matrícula, CAR, processos ANM"} e qualquer outro identificador para pesquisar na web informações públicas.
+
+${secaoData()}
+
+═══════════════════════════════════════
+DADOS COMPLETOS DO ATIVO
+═══════════════════════════════════════
+
+${fullContext}
+
+═══════════════════════════════════════
+INSTRUÇÃO DE INVESTIGAÇÃO
+═══════════════════════════════════════
+${miningInstructions}${ruralInstructions}
+═══════════════════════════════════════
+FORMATO DE RESPOSTA
+═══════════════════════════════════════
+
+Responda EXCLUSIVAMENTE com JSON válido:
+{
+  "proprietarios": [
+    {"nome": "Nome Completo", "cpfCnpj": "xxx.xxx.xxx-xx ou CNPJ", "papel": "${isMining ? "Titular/Sócio/Representante Legal/Geólogo Responsável" : "Proprietário/Posseiro/Cônjuge/Herdeiro"}", "fonte": "${isMining ? "ANM/Receita Federal/Junta Comercial/Pesquisa Web" : "CAF/SICAR/Matrícula/Pesquisa Web"}", "confianca": "alta/media/baixa"}
+  ],
+  "contatos": [
+    {"tipo": "telefone/email/whatsapp/instagram/facebook/site", "valor": "(xx) xxxxx-xxxx", "pessoa": "Nome", "fonte": "fonte", "confianca": "alta/media/baixa"}
+  ],
+  "processos": [
+    {"tipo": "${isMining ? "minerário/judicial/administrativo/ambiental/fiscal/trabalhista" : "judicial/administrativo/trabalhista/ambiental/fiscal"}", "numero": "nnn", "descricao": "desc", "status": "ativo/encerrado/em andamento", "fonte": "${isMining ? "ANM/IBAMA/TJ/JF/Diário Oficial" : "TJ/JF/IBAMA"}"}
+  ],
+  "restricoes": [
+    {"tipo": "${isMining ? "ambiental/minerária/judicial/fiscal/multa ANM/TAH/embargo" : "ambiental/judicial/fiscal/penhora/hipoteca"}", "descricao": "desc", "severidade": "alta/media/baixa", "fonte": "fonte"}
+  ],
+  "historicoPropriedade": [
+    {"evento": "${isMining ? "Requerimento/Autorização/Concessão/Cessão/Multa/Desistência" : "Compra/Venda/Herança/Desmembramento"}", "data": "YYYY ou YYYY-MM", "detalhes": "desc", "fonte": "fonte"}
+  ],
+  "resumoInvestigacao": "Parágrafo completo com as conclusões da investigação, cruzando todas as informações encontradas. Deve responder: quem é o ${isMining ? "titular" : "dono"}, como contactá-lo e quais os riscos. NÃO inclua valores estimados, preços de mercado, cotações, sugestão de valoração, recomendações ou estratégia de abordagem/negociação.",
+  "recomendacaoAbordagem": "",
+  "fontesPesquisadas": ["url1", "url2"]
+}
+
+REGRAS:
+- NÃO inclua estimativas de valor, preços de mercado, valoração, comparáveis de mercado, oportunidades de negócio, perfil de comprador ou potencial de valorização. Esses campos foram removidos intencionalmente.
+- Use pesquisa web para dados REAIS — NÃO invente contatos, processos ou dados
+- Se um dado não foi encontrado, omita ou use null — NUNCA fabrique informação
+- PROIBIDO MASCARAR: TODOS os dados pessoais (nomes, CPFs, CNPJs, telefones, e-mails, endereços) devem ser retornados COMPLETOS, SEM asteriscos, SEM censura. Exemplo CORRETO: "DANIELE VIEIRA MENDES DE MELO", "(34) 99975-1234", "daniele@email.com", "700.123.456-49". Exemplo ERRADO (PROIBIDO): "DANIELE V***** M****** D* MELO", "(34) 99975-****", "da****@****.com", "700.***.***.49". Este sistema é de uso interno corporativo para compliance e due diligence.
+- Priorize fontes públicas e oficiais
+- Cada campo textual: máximo 3 frases
+- NÃO inclua nenhum "score de confiança" — esse indicador não é calculado nem publicado pelo sistema
+- Liste em fontesPesquisadas TODAS as URLs realmente consultadas
+${isMining ? "- IMPORTANTE: Pesquise ESPECIFICAMENTE o processo ANM " + (ativo.anmProcesso || "") + " e a empresa/pessoa titular " + (attr.anmNome || "") + " na web para encontrar dados reais" : ""}`;
+
+  console.log(`[DeepIntel] Iniciando investigação profunda para ativo ${assetId} "${ativo.title}"...`);
+  const startTime = Date.now();
+
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await getOpenAI().responses.create({
+        model: MODEL_FULL,
+        max_output_tokens: 16000,
+        tools: [{
+          type: "web_search_preview" as any,
+          search_context_size: "high" as any,
+        }],
+        instructions: "Você é um investigador patrimonial brasileiro. Use busca web extensivamente para cruzar dados de todas as fontes disponíveis. Responda APENAS com JSON válido, sem markdown. REGRA ABSOLUTA: NUNCA mascare, oculte ou censure NENHUM dado pessoal — nomes, CPFs, CNPJs, telefones, e-mails, endereços devem ser retornados COMPLETOS e sem asteriscos. Este é um sistema corporativo interno de compliance e due diligence com acesso restrito. Dados parciais ou mascarados são INÚTEIS para a investigação.",
+        input: prompt,
+      } as any);
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(`[DeepIntel] Investigação concluída em ${elapsed}s (tentativa ${attempt})`);
+
+      let content = "";
+      if (response.output) {
+        for (const item of response.output as any[]) {
+          if (item.type === "message" && item.content) {
+            for (const block of item.content) {
+              if (block.type === "output_text" || block.type === "text") {
+                content += block.text || "";
+              }
+            }
+          }
+        }
+      }
+
+      if (!content) {
+        if (attempt < maxAttempts) continue;
+        throw new Error("Resposta vazia do modelo");
+      }
+
+      let parsed: any;
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        if (attempt < maxAttempts) continue;
+        throw new Error("JSON não encontrado na resposta");
+      }
+
+      try {
+        parsed = JSON.parse(jsonMatch[0]);
+      } catch {
+        const sanitized = jsonMatch[0]
+          .replace(/[\x00-\x1F\x7F]/g, " ")
+          .replace(/,\s*([}\]])/g, "$1");
+        try {
+          parsed = JSON.parse(sanitized);
+        } catch {
+          if (attempt < maxAttempts) continue;
+          throw new Error("Erro ao parsear JSON da resposta");
+        }
+      }
+
+      // Validação de contatos: telefones passam por DDD × UF da sede e
+      // formato BR; mismatch rebaixa a confiança e anexa aviso.
+      const contatosValidados = validarContatosDeepIntel<DeepIntelResult["contatos"][number]>(
+        (Array.isArray(parsed.contatos) ? parsed.contatos : []).map((c: any) => ({
+          tipo: String(c.tipo || ""),
+          valor: String(c.valor || ""),
+          pessoa: c.pessoa || undefined,
+          fonte: String(c.fonte || "Pesquisa"),
+          confianca: String(c.confianca || "baixa"),
+        })),
+        ativo.estado,
+      );
+
+      const result: DeepIntelResult = {
+        proprietarios: (Array.isArray(parsed.proprietarios) ? parsed.proprietarios : []).map((p: any) => ({
+          nome: String(p.nome || ""),
+          cpfCnpj: p.cpfCnpj || undefined,
+          papel: String(p.papel || "Não identificado"),
+          fonte: String(p.fonte || "Pesquisa"),
+          confianca: String(p.confianca || "baixa"),
+        })),
+        contatos: contatosValidados,
+        processos: (Array.isArray(parsed.processos) ? parsed.processos : []).map((p: any) => ({
+          tipo: String(p.tipo || ""),
+          numero: p.numero || undefined,
+          descricao: String(p.descricao || ""),
+          status: String(p.status || "desconhecido"),
+          fonte: String(p.fonte || ""),
+        })),
+        restricoes: (Array.isArray(parsed.restricoes) ? parsed.restricoes : []).map((r: any) => ({
+          tipo: String(r.tipo || ""),
+          descricao: String(r.descricao || ""),
+          severidade: String(r.severidade || "media"),
+          fonte: String(r.fonte || ""),
+        })),
+        historicoPropriedade: (Array.isArray(parsed.historicoPropriedade) ? parsed.historicoPropriedade : []).map((h: any) => ({
+          evento: String(h.evento || ""),
+          data: h.data || undefined,
+          detalhes: String(h.detalhes || ""),
+          fonte: String(h.fonte || ""),
+        })),
+        resumoInvestigacao: String(parsed.resumoInvestigacao || ""),
+        recomendacaoAbordagem: String(parsed.recomendacaoAbordagem || ""),
+        fontesPesquisadas: (Array.isArray(parsed.fontesPesquisadas) ? parsed.fontesPesquisadas : []).filter((s: any) => typeof s === "string"),
+        analyzedAt: new Date().toISOString(),
+        insumosHash,
+      };
+
+      // (Nenhum score de confiança é calculado sobre a investigação: saída de
+      // busca web é material T3/T4 — anexo do relatório, nunca corpo — e o
+      // único indicador do produto é o score de completude do dossiê.)
+      return result;
+    } catch (err: any) {
+      console.error(`[DeepIntel] Erro (tentativa ${attempt}):`, err.message);
+      if (attempt >= maxAttempts) throw err;
+    }
+  }
+
+  throw new Error("Falha na investigação após todas tentativas");
 }

@@ -1,4 +1,9 @@
 import OpenAI from "openai";
+import {
+  anexarVigenciaCalculada,
+  contextoVigenciaMinerariaParaPrompt,
+  obterVigenciaCalculada,
+} from "./vigencia-alvara";
 
 let _openai: OpenAI | null = null;
 function getOpenAI(): OpenAI {
@@ -47,14 +52,6 @@ export interface AIEnrichmentResult {
     sector?: string;
     mainActivities?: string[];
     foundedYear?: string;
-  };
-  matchingSignals: {
-    buyerPotential: string;
-    investmentCapacity?: string;
-    acquisitionHistory?: string;
-    expansionSignals?: string[];
-    riskFactors?: string[];
-    interestAreas?: string[];
   };
   competitiveIntel: {
     mainCompetitors?: string[];
@@ -195,7 +192,6 @@ Responda EXCLUSIVAMENTE com JSON válido neste formato:
   "website": {"url": "url do site oficial ou null", "seo": {"title": "título", "description": "meta desc", "keywords": "keywords"}, "tech": ["WordPress", "Google Analytics"]},
   "financialProfile": {"estimatedRevenue": "R$ XX milhões/ano", "revenueRange": "micro|pequena|media|grande", "employeeRange": "1-10|11-50|51-200|201-500|500+", "companySize": "MEI|ME|EPP|Médio|Grande", "sector": "setor", "mainActivities": ["atividade1"], "foundedYear": "ano"},
   "competitiveIntel": {"mainCompetitors": ["empresa1"], "marketPosition": "posição", "differentials": ["diferencial1"]},
-  "matchingSignals": {"buyerPotential": "alto|medio|baixo", "investmentCapacity": "texto", "acquisitionHistory": "texto ou null", "expansionSignals": ["sinal1"], "riskFactors": ["risco1"], "interestAreas": ["area1"]},
   "legalCompliance": {"certifications": ["ISO 9001"], "lawsuits": ["resumo ou null"], "environmentalIssues": ["issue ou null"], "debtSignals": ["sinal ou null"]},
   "businessIntel": ["fato relevante 1", "fato relevante 2"],
   "searchSources": ["url1", "url2"]
@@ -361,7 +357,6 @@ function normalizeResult(raw: any): AIEnrichmentResult {
     }));
 
   const fp = raw.financialProfile && typeof raw.financialProfile === "object" ? raw.financialProfile : {};
-  const ms = raw.matchingSignals && typeof raw.matchingSignals === "object" ? raw.matchingSignals : {};
   const ci = raw.competitiveIntel && typeof raw.competitiveIntel === "object" ? raw.competitiveIntel : {};
   const lc = raw.legalCompliance && typeof raw.legalCompliance === "object" ? raw.legalCompliance : {};
   const ws = raw.website && typeof raw.website === "object" ? raw.website : {};
@@ -390,14 +385,6 @@ function normalizeResult(raw: any): AIEnrichmentResult {
       sector: safeStr(fp.sector),
       mainActivities: safeArr(fp.mainActivities),
       foundedYear: safeStr(fp.foundedYear),
-    },
-    matchingSignals: {
-      buyerPotential: safeStr(ms.buyerPotential) || "baixo",
-      investmentCapacity: safeStr(ms.investmentCapacity),
-      acquisitionHistory: safeStr(ms.acquisitionHistory),
-      expansionSignals: safeArr(ms.expansionSignals),
-      riskFactors: safeArr(ms.riskFactors),
-      interestAreas: safeArr(ms.interestAreas),
     },
     competitiveIntel: {
       mainCompetitors: safeArr(ci.mainCompetitors),
@@ -467,9 +454,9 @@ async function fixJsonWithAI(brokenJson: string): Promise<any | null> {
     const openai = getOpenAI();
     const truncated = brokenJson.length > 12000 ? brokenJson.slice(0, 12000) + '...(truncated)' : brokenJson;
     const resp = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-5.4-mini",
       temperature: 0,
-      max_tokens: 16000,
+      max_completion_tokens: 16000,
       messages: [
         {
           role: "system",
@@ -567,7 +554,6 @@ function emptyResult(): AIEnrichmentResult & { _failReason?: string; _errorMessa
     socialMedia: {},
     website: {},
     financialProfile: {},
-    matchingSignals: { buyerPotential: "baixo" },
     competitiveIntel: {},
     legalCompliance: {},
     businessIntel: [],
@@ -577,16 +563,7 @@ function emptyResult(): AIEnrichmentResult & { _failReason?: string; _errorMessa
 }
 
 export interface AssetAIEnrichmentResult {
-  perfilIdealComprador: {
-    cnaesIdeais: string[];
-    porteIdeal: string;
-    faturamentoMinimo: string;
-    regioesInteresse: string[];
-    tipoInvestidor: string;
-    descricaoPerfil: string;
-  };
   potencialValorizacao: {
-    score: number;
     horizonte: string;
     fatores: string[];
     estimativa: string;
@@ -606,7 +583,6 @@ export interface AssetAIEnrichmentResult {
     maximo: string;
     justificativa: string;
   };
-  scoreAtratividade: number;
   resumoExecutivo: string;
   oportunidadesEspecificas: string[];
   searchSources: string[];
@@ -634,6 +610,10 @@ export async function aiEnrichAsset(params: {
 
   const loc = [municipio, estado, location].filter(Boolean).join(", ");
   const ce = camposEspecificos || {};
+  const ativoComVigencia = anexarVigenciaCalculada({ ...params, camposEspecificos: ce });
+  const vigenciaAlvara = type === "MINA" || !!ce.processoAnm
+    ? contextoVigenciaMinerariaParaPrompt(obterVigenciaCalculada(ativoComVigencia))
+    : "";
 
   const contextLines = [
     `Tipo: ${type}`,
@@ -644,6 +624,7 @@ export async function aiEnrichAsset(params: {
     ce.substancia ? `Substância mineral: ${ce.substancia}` : "",
     ce.processoAnm ? `Processo ANM: ${ce.processoAnm}` : "",
     ce.faseAnm ? `Fase ANM: ${ce.faseAnm}` : "",
+    vigenciaAlvara,
     ce.culturas ? `Culturas: ${ce.culturas}` : "",
     ce.aptidaoAgricola ? `Aptidão agrícola: ${ce.aptidaoAgricola}` : "",
     ce.faturamentoAnual ? `Faturamento anual: ${ce.faturamentoAnual}` : "",
@@ -655,7 +636,7 @@ export async function aiEnrichAsset(params: {
 
   const prompt = `Você é um analista sênior de deal origination e M&A no Brasil, especializado em ativos reais (terras, mineração, imóveis, negócios).
 
-Sua missão é realizar uma pesquisa PROFUNDA sobre o ativo abaixo para gerar um perfil completo que será usado no algoritmo de matching com compradores.
+Sua missão é pesquisar dados técnicos e documentados sobre o ativo abaixo.
 
 ═══════════════════════════════════════
 ATIVO: ${title}
@@ -664,16 +645,7 @@ ${contextLines}
 
 ANÁLISE REQUERIDA:
 
-1. PERFIL IDEAL DE COMPRADOR
-   - Quais CNAEs de empresa seriam compradoras ideais deste ativo? (códigos CNAE 4 dígitos)
-   - Qual porte ideal do comprador? (MEI, ME, EPP, Médio, Grande)
-   - Faturamento mínimo recomendado do comprador
-   - Regiões de onde viriam compradores interessados
-   - Tipo de investidor ideal (estratégico, financeiro, operacional)
-   - Descrição textual do perfil ideal de comprador
-
-2. POTENCIAL DE VALORIZAÇÃO
-   - Score de 0 a 100
+1. POTENCIAL DE VALORIZAÇÃO
    - Horizonte de valorização (curto/médio/longo prazo)
    - Fatores que podem valorizar o ativo
    - Estimativa de valorização percentual
@@ -690,36 +662,24 @@ ANÁLISE REQUERIDA:
    - Faixa de preço sugerida (mínimo e máximo) baseada em comparáveis
    - Justificativa
 
-6. SCORE DE ATRATIVIDADE (0-100)
-   - Considerando localização, tipo, mercado atual, potencial
-
-7. RESUMO EXECUTIVO
+6. RESUMO EXECUTIVO
    - 2-3 parágrafos resumindo a oportunidade
 
-8. OPORTUNIDADES ESPECÍFICAS
+7. OPORTUNIDADES ESPECÍFICAS
    - Oportunidades de valorização, desenvolvimento ou exploração
 
 ═══════════════════════════════════════
 REGRAS:
 - Use busca web para dados REAIS de mercado brasileiro
+- Em ativo minerário, qualquer menção à vigência/validade/vencimento do alvará deve copiar somente a VIGÊNCIA CANÔNICA acima. Nunca recalcule pelos eventos ou pela web
 - NÃO invente preços ou comparáveis
-- CNAEs devem ser códigos reais de 4 dígitos
 - Seja CONSERVADOR em estimativas
 - Se não encontrar dado, use null
 ═══════════════════════════════════════
 
 Responda EXCLUSIVAMENTE com JSON válido neste formato:
 {
-  "perfilIdealComprador": {
-    "cnaesIdeais": ["0710", "0810"],
-    "porteIdeal": "Grande",
-    "faturamentoMinimo": "R$ 50 milhões/ano",
-    "regioesInteresse": ["Sudeste", "Sul"],
-    "tipoInvestidor": "estratégico",
-    "descricaoPerfil": "texto descritivo"
-  },
   "potencialValorizacao": {
-    "score": 75,
     "horizonte": "médio prazo (3-5 anos)",
     "fatores": ["fator1", "fator2"],
     "estimativa": "20-30% em 5 anos"
@@ -735,7 +695,6 @@ Responda EXCLUSIVAMENTE com JSON válido neste formato:
     "maximo": "R$ Y",
     "justificativa": "texto"
   },
-  "scoreAtratividade": 70,
   "resumoExecutivo": "texto",
   "oportunidadesEspecificas": ["oportunidade1", "oportunidade2"],
   "searchSources": ["url1", "url2"]
@@ -748,7 +707,7 @@ Responda EXCLUSIVAMENTE com JSON válido neste formato:
       const startTime = Date.now();
 
       const response = await getOpenAI().responses.create({
-        model: "gpt-4o",
+        model: "gpt-5.4",
         max_output_tokens: 16000,
         tools: [{
           type: "web_search_preview" as any,
@@ -850,21 +809,11 @@ Responda EXCLUSIVAMENTE com JSON válido neste formato:
 }
 
 function normalizeAssetResult(raw: any): AssetAIEnrichmentResult {
-  const pic = raw.perfilIdealComprador && typeof raw.perfilIdealComprador === "object" ? raw.perfilIdealComprador : {};
   const pv = raw.potencialValorizacao && typeof raw.potencialValorizacao === "object" ? raw.potencialValorizacao : {};
   const ts = raw.ticketSugerido && typeof raw.ticketSugerido === "object" ? raw.ticketSugerido : {};
 
   return {
-    perfilIdealComprador: {
-      cnaesIdeais: safeArr(pic.cnaesIdeais),
-      porteIdeal: safeStr(pic.porteIdeal) || "Não definido",
-      faturamentoMinimo: safeStr(pic.faturamentoMinimo) || "Não estimado",
-      regioesInteresse: safeArr(pic.regioesInteresse),
-      tipoInvestidor: safeStr(pic.tipoInvestidor) || "estratégico",
-      descricaoPerfil: safeStr(pic.descricaoPerfil) || "",
-    },
     potencialValorizacao: {
-      score: typeof pv.score === "number" ? Math.min(Math.max(pv.score, 0), 100) : 50,
       horizonte: safeStr(pv.horizonte) || "médio prazo",
       fatores: safeArr(pv.fatores),
       estimativa: safeStr(pv.estimativa) || "Não estimado",
@@ -888,7 +837,6 @@ function normalizeAssetResult(raw: any): AssetAIEnrichmentResult {
       maximo: safeStr(ts.maximo) || "N/D",
       justificativa: safeStr(ts.justificativa) || "",
     },
-    scoreAtratividade: typeof raw.scoreAtratividade === "number" ? Math.min(Math.max(raw.scoreAtratividade, 0), 100) : 50,
     resumoExecutivo: safeStr(raw.resumoExecutivo) || "",
     oportunidadesEspecificas: safeArr(raw.oportunidadesEspecificas),
     searchSources: safeArr(raw.searchSources).filter((u: string) => u.startsWith("http")),
@@ -898,19 +846,10 @@ function normalizeAssetResult(raw: any): AssetAIEnrichmentResult {
 
 function emptyAssetResult(failReason?: string, rawSnippet?: string, errorMessage?: string): AssetAIEnrichmentResult {
   return {
-    perfilIdealComprador: {
-      cnaesIdeais: [],
-      porteIdeal: "Não definido",
-      faturamentoMinimo: "Não estimado",
-      regioesInteresse: [],
-      tipoInvestidor: "estratégico",
-      descricaoPerfil: "",
-    },
-    potencialValorizacao: { score: 0, horizonte: "", fatores: [], estimativa: "" },
+    potencialValorizacao: { horizonte: "", fatores: [], estimativa: "" },
     riscosIdentificados: [],
     comparaveisMercado: [],
     ticketSugerido: { minimo: "N/D", maximo: "N/D", justificativa: "" },
-    scoreAtratividade: 0,
     resumoExecutivo: "",
     oportunidadesEspecificas: [],
     searchSources: [],

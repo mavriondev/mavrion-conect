@@ -25,39 +25,39 @@ function NotificationBell() {
   return (
     <Popover onOpenChange={(open) => { if (open) markAllRead(); }}>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" className="relative h-8 w-8 p-0" data-testid="button-notification-bell">
-          <BellRing className="w-4 h-4" />
+        <Button variant="ghost" size="sm" className="relative h-7 w-7 p-0 text-muted-foreground/60 hover:text-foreground" data-testid="button-notification-bell">
+          <BellRing className="w-3.5 h-3.5" />
           {unreadCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] flex items-center justify-center font-bold" data-testid="badge-notification-count">
+            <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-emerald-500 text-white text-[9px] flex items-center justify-center font-bold" data-testid="badge-notification-count">
               {unreadCount > 9 ? "9+" : unreadCount}
             </span>
           )}
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-80 p-0" align="end" data-testid="popover-notifications">
-        <div className="p-3 border-b font-semibold text-sm flex items-center justify-between">
+        <div className="p-3 border-b font-medium text-sm flex items-center justify-between">
           <span>Notificações</span>
           {notifications.length > 0 && (
-            <span className="text-xs font-normal text-muted-foreground">{notifications.length} recentes</span>
+            <span className="text-[11px] font-normal text-muted-foreground">{notifications.length} recentes</span>
           )}
         </div>
-        <ScrollArea className="h-80">
+        <ScrollArea className="h-72">
           {notifications.length === 0 ? (
-            <div className="text-center text-muted-foreground text-sm p-6">
-              <BellRing className="w-8 h-8 mx-auto mb-2 opacity-20" />
-              <p>Nenhuma notificação</p>
+            <div className="text-center text-muted-foreground text-sm p-8">
+              <BellRing className="w-6 h-6 mx-auto mb-2 opacity-15" />
+              <p className="text-xs">Nenhuma notificação</p>
             </div>
           ) : (
             notifications.map(n => (
               <div
                 key={n.id}
-                className={`p-3 border-b cursor-pointer hover:bg-muted/50 transition-colors ${!n.read ? "bg-blue-50 dark:bg-blue-950/20" : ""}`}
+                className={`p-3 border-b cursor-pointer hover:bg-muted/40 transition-colors ${!n.read ? "bg-emerald-50/50 dark:bg-emerald-950/10" : ""}`}
                 onClick={() => n.link && setLocation(n.link)}
                 data-testid={`notification-sse-${n.id}`}
               >
-                <p className="font-medium text-sm">{n.title}</p>
+                <p className="font-medium text-[13px]">{n.title}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">{n.message}</p>
-                <p className="text-xs text-muted-foreground mt-1">
+                <p className="text-[10px] text-muted-foreground/60 mt-1">
                   {new Date(n.createdAt).toLocaleString("pt-BR")}
                 </p>
               </div>
@@ -70,7 +70,7 @@ function NotificationBell() {
 }
 
 const MODULE_OPTIONS = [
-  "Dashboard", "CRM", "Matching", "Prospeccao", "Empresas",
+  "Dashboard", "Prospeccao", "Empresas",
   "Ativos", "Propostas", "Contratos", "Portal", "Geo/Rural",
   "ANM", "Configuracoes", "Outro",
 ];
@@ -123,26 +123,26 @@ function ReportBugButton() {
       <Button
         variant="ghost"
         size="sm"
-        className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+        className="h-7 gap-1 text-[11px] text-muted-foreground/50 hover:text-foreground"
         onClick={() => setOpen(true)}
         data-testid="button-report-bug"
       >
-        <Bug className="w-3.5 h-3.5" />
-        <span className="hidden sm:inline">Reportar Bug</span>
+        <Bug className="w-3 h-3" />
+        <span className="hidden sm:inline">Bug</span>
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-md" data-testid="dialog-report-bug">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Bug className="w-5 h-5 text-red-500" />
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Bug className="w-4 h-4 text-red-500" />
               Reportar Bug
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
-              <Label htmlFor="bug-title">Título *</Label>
+              <Label htmlFor="bug-title" className="text-xs">Título *</Label>
               <Input
                 id="bug-title"
                 placeholder="Descreva o problema em poucas palavras"
@@ -153,11 +153,11 @@ function ReportBugButton() {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="bug-description">Descrição</Label>
+              <Label htmlFor="bug-description" className="text-xs">Descrição</Label>
               <Textarea
                 id="bug-description"
                 placeholder="Detalhe o que aconteceu, os passos para reproduzir, o que era esperado..."
-                rows={4}
+                rows={3}
                 value={description}
                 onChange={e => setDescription(e.target.value)}
                 data-testid="input-bug-description"
@@ -166,7 +166,7 @@ function ReportBugButton() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Módulo</Label>
+                <Label className="text-xs">Módulo</Label>
                 <Select value={module} onValueChange={setModule}>
                   <SelectTrigger data-testid="select-bug-module">
                     <SelectValue placeholder="Selecione" />
@@ -180,7 +180,7 @@ function ReportBugButton() {
               </div>
 
               <div className="space-y-1.5">
-                <Label>Prioridade</Label>
+                <Label className="text-xs">Prioridade</Label>
                 <Select value={priority} onValueChange={setPriority}>
                   <SelectTrigger data-testid="select-bug-priority">
                     <SelectValue />
@@ -197,11 +197,11 @@ function ReportBugButton() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)} data-testid="button-cancel-bug">
+            <Button variant="outline" size="sm" onClick={() => setOpen(false)} data-testid="button-cancel-bug">
               Cancelar
             </Button>
-            <Button onClick={handleSubmit} disabled={sending} data-testid="button-submit-bug">
-              {sending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Bug className="w-4 h-4 mr-1" />}
+            <Button size="sm" onClick={handleSubmit} disabled={sending} data-testid="button-submit-bug">
+              {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
               Enviar
             </Button>
           </DialogFooter>
@@ -218,10 +218,10 @@ export default function TopBar() {
 
   return (
     <div
-      className="sticky top-0 z-30 w-full h-11 bg-background/95 backdrop-blur-sm border-b border-border flex items-center justify-end px-4 md:px-6"
+      className="sticky top-0 z-30 w-full h-9 bg-background/80 backdrop-blur-md border-b border-border/40 flex items-center justify-end px-4 md:px-5"
       data-testid="top-bar"
     >
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-0.5">
         <ReportBugButton />
         <NotificationBell />
       </div>

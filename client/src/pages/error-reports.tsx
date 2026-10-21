@@ -148,7 +148,7 @@ export default function ErrorReportsPage() {
     <div className="p-4 md:p-6 space-y-6 max-w-[1400px] mx-auto" data-testid="page-error-reports">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
+          <h1 className="text-xl font-semibold flex items-center gap-2" data-testid="text-page-title">
             <Bug className="w-6 h-6 text-red-500" />
             Painel de Erros & Relatórios
           </h1>
@@ -202,7 +202,7 @@ export default function ErrorReportsPage() {
               <BarChart3 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{stats?.total || 0}</p>
+              <p className="text-xl font-semibold">{stats?.total || 0}</p>
               <p className="text-xs text-muted-foreground">Total</p>
             </div>
           </CardContent>
@@ -213,7 +213,7 @@ export default function ErrorReportsPage() {
               <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{stats?.open || 0}</p>
+              <p className="text-xl font-semibold">{stats?.open || 0}</p>
               <p className="text-xs text-muted-foreground">Abertos</p>
             </div>
           </CardContent>
@@ -224,7 +224,7 @@ export default function ErrorReportsPage() {
               <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{stats?.resolved || 0}</p>
+              <p className="text-xl font-semibold">{stats?.resolved || 0}</p>
               <p className="text-xs text-muted-foreground">Resolvidos</p>
             </div>
           </CardContent>
@@ -235,7 +235,7 @@ export default function ErrorReportsPage() {
               <Monitor className="w-5 h-5 text-purple-600 dark:text-purple-400" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{stats?.autoCapture || 0}</p>
+              <p className="text-xl font-semibold">{stats?.autoCapture || 0}</p>
               <p className="text-xs text-muted-foreground">Auto-captura</p>
             </div>
           </CardContent>
@@ -246,7 +246,7 @@ export default function ErrorReportsPage() {
               <Globe className="w-5 h-5 text-orange-600 dark:text-orange-400" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{stats?.apiError || 0}</p>
+              <p className="text-xl font-semibold">{stats?.apiError || 0}</p>
               <p className="text-xs text-muted-foreground">Erros de APIs</p>
             </div>
           </CardContent>

@@ -2,20 +2,15 @@ import type { Express } from "express";
 import type { IStorage } from "../storage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { assets, norionCafRegistros } from "@shared/schema";
-import { sql, eq, desc, and } from "drizzle-orm";
+import { sql, eq, and } from "drizzle-orm";
 import { getCached, setCached } from "../cache";
 import { getOrgId } from "../lib/tenant";
 import { logApiError } from "../lib/api-error-logger";
-import {
-  enriquecerFazenda,
-  consultarSoloSoilGrids,
-  consultarParcelasSIGEF,
-  type EnriquecimentoAgroCompleto
-} from '../enrichment/agro';
-import { runMatchingForAsset } from "../lib/auto-match";
+import { enriquecerFazenda, consultarSoloSoilGrids } from '../enrichment/agro';
 import { consultarDeterINPE } from "../lib/deter-inpe";
 import { getUsoTerraMapBiomas } from "../lib/mapbiomas";
-import { executarDueDiligenceFundiaria, type DueDiligenceFundiariaResult } from "../lib/due-diligence-fundiaria";
+import { utmSridSqlExpr } from "../lib/utm";
+import { executarDueDiligenceFundiaria } from "../lib/due-diligence-fundiaria";
 
 const ANM_MAPSERVER_URL = "https://geo.anm.gov.br/arcgis/rest/services/SIGMINE/dados_anm/MapServer/0/query";
 const CAR_PUBLIC_URL = "https://consultapublica.car.gov.br/publico/imoveis/index";
@@ -55,7 +50,10 @@ async function getMavrionApiToken(forceRefresh = false): Promise<string | null> 
 
 async function mavrionApiFetch(path: string, timeout = 15000): Promise<any | null> {
   const token = await getMavrionApiToken();
-  if (!token) return null;
+  if (!token) {
+    console.warn("[Mavrion API] No token available — cannot fetch", path);
+    return null;
+  }
   try {
     const resp = await fetch(`${MAVRION_API_URL}${path}`, {
       headers: { "Authorization": `Bearer ${token}` },
@@ -68,12 +66,19 @@ async function mavrionApiFetch(path: string, timeout = 15000): Promise<any | nul
         headers: { "Authorization": `Bearer ${refreshedToken}` },
         signal: AbortSignal.timeout(timeout),
       });
-      if (!retryResp.ok) return null;
+      if (!retryResp.ok) {
+        console.warn(`[Mavrion API] Retry failed: ${retryResp.status} for ${path}`);
+        return null;
+      }
       return await retryResp.json();
     }
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      console.warn(`[Mavrion API] HTTP ${resp.status} for ${path}`);
+      return null;
+    }
     return await resp.json();
-  } catch {
+  } catch (err: any) {
+    console.warn(`[Mavrion API] Fetch error for ${path}:`, err.message || err);
     return null;
   }
 }
@@ -241,14 +246,14 @@ const ANM_PATTERNS = {
   fase: /^[A-ZÀ-Ü0-9 ]{3,60}$/i,
   empresa: /^[A-ZÀ-Ü0-9 &.,/()-]{2,200}$/i,
   processo: /^[0-9/.]{3,30}$/,
-  uso: /^[A-ZÀ-Ü0-9 ,.-]{1,100}$/i,
+  uso: /^[A-ZÀ-ü0-9 ,.\-çãõâêîôûáéíóú]{1,100}$/i,
   ano: /^[0-9]{4}$/,
   ultEvento: /^[A-ZÀ-Ü0-9 ,./()-]{2,200}$/i,
 };
 
 // Fallback: geoportal ANM bloqueia (WAF 403) consultas com aspas no `where`.
 // Nesses casos, consulta a base SIGMINE espelhada na API Mavrion.
-function mavrionRowToAnmAttrs(r) {
+function mavrionRowToAnmAttrs(r: any): any {
   return {
     PROCESSO: r.processo,
     NOME: r.nome,
@@ -268,11 +273,247 @@ function normalizeForCompare(s: string): string {
   return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
 }
 
+// ── Filtro por município: cruza polígono do processo com a malha do IBGE ──
+const _municipioGeomCache: Record<string, any> = {};
+async function fetchMunicipioPolygon(codigoIbge: string): Promise<any | null> {
+  if (_municipioGeomCache[codigoIbge]) return _municipioGeomCache[codigoIbge];
+  try {
+    const resp = await fetch(
+      `https://servicodados.ibge.gov.br/api/v3/malhas/municipios/${codigoIbge}?formato=application/vnd.geo+json`,
+      { signal: AbortSignal.timeout(20000) },
+    );
+    if (!resp.ok) return null;
+    const gj = await resp.json() as any;
+    const geom = gj?.features?.[0]?.geometry
+      || (gj?.type === "Polygon" || gj?.type === "MultiPolygon" ? gj : null);
+    if (!geom) return null;
+    _municipioGeomCache[codigoIbge] = geom;
+    return geom;
+  } catch {
+    return null;
+  }
+}
+
+function pointInRing(pt: [number, number], ring: number[][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+    if (((yi > pt[1]) !== (yj > pt[1])) && (pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function pointInGeom(pt: [number, number], geom: any): boolean {
+  if (!geom || !geom.coordinates) return false;
+  const polys = geom.type === "Polygon" ? [geom.coordinates] : geom.type === "MultiPolygon" ? geom.coordinates : [];
+  for (const poly of polys) {
+    if (poly.length > 0 && pointInRing(pt, poly[0])) {
+      // dentro do anel externo; verifica buracos
+      let inHole = false;
+      for (let h = 1; h < poly.length; h++) {
+        if (pointInRing(pt, poly[h])) { inHole = true; break; }
+      }
+      if (!inHole) return true;
+    }
+  }
+  return false;
+}
+
+// Distância aproximada em km entre dois pontos [lng, lat] (haversine)
+function haversineKm(a: [number, number], b: [number, number]): number {
+  const R = 6371;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b[1] - a[1]);
+  const dLng = toRad(b[0] - a[0]);
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a[1])) * Math.cos(toRad(b[1])) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+// Bbox de uma geometria expandido por um raio em km (para consulta espacial)
+function expandedBboxFromGeom(geom: any, radiusKm: number): string | null {
+  let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+  function traverse(coords: any) {
+    if (typeof coords[0] === "number") {
+      if (coords[0] < minLng) minLng = coords[0];
+      if (coords[0] > maxLng) maxLng = coords[0];
+      if (coords[1] < minLat) minLat = coords[1];
+      if (coords[1] > maxLat) maxLat = coords[1];
+      return;
+    }
+    for (const c of coords) traverse(c);
+  }
+  if (geom?.coordinates) traverse(geom.coordinates);
+  else if (geom?.rings) traverse(geom.rings);
+  if (!isFinite(minLng)) return null;
+  const dLat = radiusKm / 111.32;
+  const midLat = (minLat + maxLat) / 2;
+  const dLng = radiusKm / (111.32 * Math.max(0.1, Math.cos((midLat * Math.PI) / 180)));
+  return `${minLng - dLng},${minLat - dLat},${maxLng + dLng},${maxLat + dLat}`;
+}
+
+function geomCentroidPt(geom: any): [number, number] | null {
+  if (!geom) return null;
+  let sumLng = 0, sumLat = 0, count = 0;
+  function traverse(coords: any) {
+    if (typeof coords[0] === "number") { sumLng += coords[0]; sumLat += coords[1]; count++; return; }
+    for (const c of coords) traverse(c);
+  }
+  if (geom.rings) { traverse(geom.rings); }
+  else if (geom.coordinates) { traverse(geom.coordinates); }
+  return count > 0 ? [sumLng / count, sumLat / count] : null;
+}
+
+// ── Resolução de município por centroide: malha municipal do IBGE por UF ──
+const _ufMalhaMunicipiosCache: Record<string, any | null> = {};
+async function fetchUfMalhaMunicipios(uf: string): Promise<any | null> {
+  const key = uf.toUpperCase();
+  if (key in _ufMalhaMunicipiosCache) return _ufMalhaMunicipiosCache[key];
+  try {
+    const resp = await fetch(
+      `https://servicodados.ibge.gov.br/api/v3/malhas/estados/${key}?formato=application/vnd.geo+json&intrarregiao=municipio&qualidade=minima`,
+      { signal: AbortSignal.timeout(30000) },
+    );
+    if (!resp.ok) { _ufMalhaMunicipiosCache[key] = null; return null; }
+    const gj = await resp.json() as any;
+    const fc = gj?.type === "FeatureCollection" && Array.isArray(gj.features) ? gj : null;
+    _ufMalhaMunicipiosCache[key] = fc;
+    return fc;
+  } catch {
+    _ufMalhaMunicipiosCache[key] = null;
+    return null;
+  }
+}
+
+const _ufMunicipioNomesCache: Record<string, Record<string, string>> = {};
+async function fetchUfMunicipioNomes(uf: string): Promise<Record<string, string>> {
+  const key = uf.toUpperCase();
+  if (_ufMunicipioNomesCache[key]) return _ufMunicipioNomesCache[key];
+  const map: Record<string, string> = {};
+  try {
+    if (_geoDb) {
+      try {
+        const rows = await _geoDb.execute(sql`SELECT nome, codigo_ibge FROM municipios_br WHERE uf = ${key}`);
+        for (const r of (rows.rows as any[])) {
+          if (r.codigo_ibge) map[String(r.codigo_ibge)] = r.nome;
+        }
+      } catch {}
+    }
+    if (Object.keys(map).length === 0) {
+      const resp = await fetch(
+        `https://servicodados.ibge.gov.br/api/v1/localidades/estados/${key}/municipios`,
+        { signal: AbortSignal.timeout(15000) },
+      );
+      if (resp.ok) {
+        const data = await resp.json() as any[];
+        for (const m of data) {
+          if (m.id) map[String(m.id)] = m.nome;
+        }
+      }
+    }
+  } catch {}
+  if (Object.keys(map).length > 0) _ufMunicipioNomesCache[key] = map;
+  return map;
+}
+
+function nearestRingDistanceKm(pt: [number, number], geom: any): number {
+  let min = Infinity;
+  function traverse(coords: any) {
+    if (typeof coords[0] === "number") {
+      const d = haversineKm(pt, [coords[0], coords[1]]);
+      if (d < min) min = d;
+      return;
+    }
+    for (const c of coords) traverse(c);
+  }
+  if (geom?.coordinates) traverse(geom.coordinates);
+  return min;
+}
+
+// Dado um ponto [lng, lat] e a UF, resolve o município via ponto-no-polígono
+// na malha do IBGE; se cair fora (precisão da malha), usa o polígono mais próximo (< 15 km)
+async function resolveMunicipioFromPoint(pt: [number, number], uf: string): Promise<{ nome: string; codigoIbge: string } | null> {
+  const malha = await fetchUfMalhaMunicipios(uf);
+  if (!malha?.features?.length) return null;
+  let codarea: string | null = null;
+  for (const feat of malha.features) {
+    if (feat.geometry && pointInGeom(pt, feat.geometry)) {
+      codarea = String(feat.properties?.codarea || "");
+      break;
+    }
+  }
+  if (!codarea) {
+    let best: { cod: string; dist: number } | null = null;
+    for (const feat of malha.features) {
+      if (!feat.geometry) continue;
+      const d = nearestRingDistanceKm(pt, feat.geometry);
+      if (!best || d < best.dist) best = { cod: String(feat.properties?.codarea || ""), dist: d };
+    }
+    if (best && best.dist <= 15) codarea = best.cod;
+  }
+  if (!codarea) return null;
+  const nomes = await fetchUfMunicipioNomes(uf);
+  const nome = nomes[codarea];
+  return nome ? { nome, codigoIbge: codarea } : null;
+}
+
+// Busca a geometria (GeoJSON) de um processo — geoportal ANM com fallback Mavrion
+async function fetchProcessoGeometry(cleanProcesso: string): Promise<any | null> {
+  try {
+    const params = new URLSearchParams({
+      where: `PROCESSO='${cleanProcesso}'`,
+      outFields: "PROCESSO",
+      returnGeometry: "true",
+      geometryType: "esriGeometryPolygon",
+      outSR: "4326",
+      f: "json",
+    });
+    const response = await fetch(`${ANM_MAPSERVER_URL}?${params.toString()}`, { signal: AbortSignal.timeout(20000) });
+    if (response.ok) {
+      const data = await response.json() as any;
+      if (!data.error && data.features?.length) {
+        const gj = await esriToGeoJSON(data.features);
+        if (gj.features?.length) return gj.features[0].geometry;
+      }
+    }
+  } catch {}
+  try {
+    const apiData = await mavrionApiFetch(
+      `/api/anm/processos?search=${encodeURIComponent(cleanProcesso)}&include_geometry=true&limit=5`,
+      20000,
+    );
+    if (apiData && Array.isArray(apiData.rows)) {
+      const row = apiData.rows.find((r: any) => r.geometry && r.processo === cleanProcesso);
+      if (row) return row.geometry;
+    }
+  } catch {}
+  return null;
+}
+
+function matchesAnmFilters(attrs: any, f: {
+  ufVal?: string | null; subsVal?: string | null; faseVal?: string | null; empVal?: string | null;
+  procVal?: string | null; usoVal?: string | null; anoVal?: string | null; ultEventoVal?: string | null;
+}): boolean {
+  const unq = (s: string) => s.replace(/''/g, "'");
+  if (f.ufVal && String(attrs.UF || "").toUpperCase() !== f.ufVal.toUpperCase()) return false;
+  if (f.subsVal && !normalizeForCompare(String(attrs.SUBS || "")).includes(normalizeForCompare(unq(f.subsVal)))) return false;
+  if (f.faseVal && !normalizeForCompare(String(attrs.FASE || "")).includes(normalizeForCompare(unq(f.faseVal)))) return false;
+  if (f.empVal && !normalizeForCompare(String(attrs.NOME || "")).includes(normalizeForCompare(unq(f.empVal)))) return false;
+  if (f.procVal && !String(attrs.PROCESSO || "").replace(/\./g, "").includes(unq(f.procVal).replace(/\./g, ""))) return false;
+  if (f.usoVal && !normalizeForCompare(String(attrs.USO || "")).includes(normalizeForCompare(unq(f.usoVal)))) return false;
+  if (f.anoVal && String(attrs.ANO) !== String(f.anoVal)) return false;
+  if (f.ultEventoVal && !normalizeForCompare(String(attrs.ULT_EVENTO || "")).includes(normalizeForCompare(unq(f.ultEventoVal)))) return false;
+  return true;
+}
+
 async function fetchAnmFromMavrionApi(filters: {
   uf?: string | null; substancia?: string | null; fase?: string | null;
   empresa?: string | null; processo?: string | null; uso?: string | null;
   ano?: string | null; ultEvento?: string | null;
-}): Promise<any[] | null> {
+}, includeGeometry = false): Promise<any[] | null> {
   const params = new URLSearchParams();
   if (filters.uf) params.set("uf", filters.uf.toUpperCase());
   if (filters.fase) params.set("fase", filters.fase);
@@ -280,13 +521,15 @@ async function fetchAnmFromMavrionApi(filters: {
   if (filters.uso) params.set("uso", filters.uso);
   const search = filters.processo || filters.empresa;
   if (search) params.set("search", search.replace(/''/g, "'"));
+  if (includeGeometry) params.set("include_geometry", "true");
   params.set("limit", "2000");
   const data = await mavrionApiFetch(`/api/anm/processos?${params.toString()}`, 30000);
   if (!data || !Array.isArray(data.rows)) return null;
   let rows = data.rows;
+  // O `search` remoto casa processo OU nome — revalida os filtros localmente
   if (filters.processo) {
-    const proc = filters.processo.replace(/''/g, "'");
-    rows = rows.filter((r: any) => (r.processo || "").includes(proc));
+    const proc = filters.processo.replace(/''/g, "'").replace(/\./g, "");
+    rows = rows.filter((r: any) => (r.processo || "").replace(/\./g, "").includes(proc));
   }
   if (filters.empresa) {
     const emp = normalizeForCompare(filters.empresa.replace(/''/g, "'"));
@@ -297,7 +540,11 @@ async function fetchAnmFromMavrionApi(filters: {
     const ev = normalizeForCompare(filters.ultEvento.replace(/''/g, "'"));
     rows = rows.filter((r: any) => normalizeForCompare(r.ult_evento || "").includes(ev));
   }
-  return rows.map(mavrionRowToAnmAttrs);
+  return rows.map((r: any) => {
+    const attrs = mavrionRowToAnmAttrs(r);
+    if (includeGeometry && r.geometry) attrs.__geometry = r.geometry;
+    return attrs;
+  });
 }
 
 async function esriToGeoJSON(esriFeatures: any[]) {
@@ -571,6 +818,55 @@ async function runGeoAnalysisInBackground(assetId: number, geometry: any, areaHa
 
 export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDatabase<any>) {
   _geoDb = db;
+
+  let municipiosCache: Record<string, { nome: string; codigoIbge: string | null }[]> = {};
+  app.get("/api/municipios", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const uf = String(req.query.uf || "").toUpperCase();
+    if (!uf || uf.length !== 2) return res.json([]);
+    if (municipiosCache[uf]) return res.json(municipiosCache[uf]);
+    try {
+      let result: { nome: string; codigoIbge: string | null }[] = [];
+      try {
+        const rows = await db.execute(sql`SELECT nome, codigo_ibge FROM municipios_br WHERE uf = ${uf} ORDER BY nome`);
+        result = (rows.rows as any[]).map((r: any) => ({ nome: r.nome, codigoIbge: r.codigo_ibge }));
+      } catch {}
+      if (result.length === 0) {
+        // tabela ausente/vazia — busca direto na API do IBGE
+        const resp = await fetch(
+          `https://servicodados.ibge.gov.br/api/v1/localidades/estados/${uf}/municipios`,
+          { signal: AbortSignal.timeout(15000) },
+        );
+        if (resp.ok) {
+          const data = await resp.json() as any[];
+          result = data
+            .map((m: any) => ({ nome: m.nome, codigoIbge: m.id ? String(m.id) : null }))
+            .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+        }
+      }
+      if (result.length > 0) municipiosCache[uf] = result;
+      return res.json(result);
+    } catch (err) {
+      console.error("[Municipios] Error:", err);
+      return res.json([]);
+    }
+  });
+
+  let _subsCache: string[] | null = null;
+  app.get("/api/anm/substancias", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    if (_subsCache) return res.json(_subsCache);
+    try {
+      const result = await db.execute(sql`SELECT nome FROM anm_substancias ORDER BY nome`);
+      const rows = (result as any).rows || result;
+      _subsCache = rows.map((r: any) => r.nome);
+      return res.json(_subsCache);
+    } catch (err) {
+      console.error("[ANM Substancias] Error:", err);
+      return res.json([]);
+    }
+  });
+
   app.get("/api/anm/processos", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
@@ -588,11 +884,17 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
       const empVal = sanitizeAnmInput(req.query.empresa, ANM_PATTERNS.empresa);
       if (empVal) clauses.push(buildAccentAwareLike("NOME", empVal));
 
-      const procVal = sanitizeAnmInput(req.query.processo, ANM_PATTERNS.processo);
+      // Base SIGMINE guarda o processo sem pontos (ex.: 861060/2023) — normaliza "861.060/2023"
+      const procRaw = sanitizeAnmInput(req.query.processo, ANM_PATTERNS.processo);
+      const procVal = procRaw ? procRaw.replace(/\./g, "") : procRaw;
       if (procVal) clauses.push(`PROCESSO LIKE '%${procVal}%'`);
 
       const usoVal = sanitizeAnmInput(req.query.uso, ANM_PATTERNS.uso);
-      if (usoVal) clauses.push(buildAccentAwareLike("USO", usoVal));
+      if (usoVal) {
+        const usoUpper = usoVal.toUpperCase();
+        const pattern = fullyInsensitiveLike(usoUpper);
+        clauses.push(`UPPER(USO) LIKE '%${pattern}%'`);
+      }
 
       const anoVal = sanitizeAnmInput(req.query.ano, ANM_PATTERNS.ano);
       if (anoVal) clauses.push(`ANO=${anoVal}`);
@@ -600,11 +902,17 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
       const ultEventoVal = sanitizeAnmInput(req.query.ultEvento, ANM_PATTERNS.ultEvento);
       if (ultEventoVal) clauses.push(buildAccentAwareLike("ULT_EVENTO", ultEventoVal));
 
-      if (clauses.length === 0) {
+      const municipioVal = /^\d{7}$/.test(String(req.query.municipio || "")) ? String(req.query.municipio) : null;
+
+      // raio (km) opcional em torno do município — 1 a 500 km
+      const raioRaw = parseInt(String(req.query.raioKm || ""), 10);
+      const raioKm = municipioVal && Number.isFinite(raioRaw) && raioRaw >= 1 && raioRaw <= 500 ? raioRaw : null;
+
+      if (clauses.length === 0 && !municipioVal) {
         return res.status(400).json({ message: "Informe ao menos um filtro de busca válido." });
       }
 
-      const cacheKey = JSON.stringify({ uf: ufVal, substancia: subsVal, fase: faseVal, empresa: empVal, processo: procVal, uso: usoVal, ano: anoVal, ultEvento: ultEventoVal });
+      const cacheKey = JSON.stringify({ uf: ufVal, substancia: subsVal, fase: faseVal, empresa: empVal, processo: procVal, uso: usoVal, ano: anoVal, ultEvento: ultEventoVal, municipio: municipioVal, raioKm });
       const cached = await getCached<any>("anm", cacheKey);
       if (cached) {
         return res.json(cached);
@@ -620,22 +928,101 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
       });
 
       let features: any[] | null = null;
-      try {
-        const response = await fetch(`${ANM_MAPSERVER_URL}?${params.toString()}`, { signal: AbortSignal.timeout(30000) });
-        if (response.ok) {
-          const data = await response.json() as any;
-          if (!data.error) {
-            features = (data.features || []).map((f: any) => f.attributes || f);
+
+      if (municipioVal) {
+        // Filtro por município: a base ANM não tem cidade — cruza os polígonos
+        // dos processos com o limite municipal (malha IBGE)
+        const muniGeom = await fetchMunicipioPolygon(municipioVal);
+        if (!muniGeom) {
+          return res.status(502).json({ message: "Não foi possível obter o limite do município (IBGE)" });
+        }
+        const muniCenter = geomCentroidPt(muniGeom);
+        const bbox = raioKm && muniCenter
+          ? (expandedBboxFromGeom(muniGeom, raioKm) || bboxFromGeometry({ geometry: muniGeom }))
+          : bboxFromGeometry({ geometry: muniGeom });
+        const localFilters = { ufVal, subsVal, faseVal, empVal, procVal, usoVal, anoVal, ultEventoVal };
+
+        // aceita o processo se: dentro do município OU (com raio) a até raioKm do centro
+        const passaMunicipioOuRaio = (geometry: any): { ok: boolean; distKm: number | null } => {
+          const pt = geomCentroidPt(geometry);
+          if (!pt) return { ok: false, distKm: null };
+          const distKm = muniCenter ? haversineKm(muniCenter, pt) : null;
+          if (raioKm && distKm != null) return { ok: distKm <= raioKm, distKm };
+          return { ok: pointInGeom(pt, muniGeom), distKm };
+        };
+
+        // consulta espacial no geoportal (bbox não usa aspas — passa no WAF)
+        try {
+          const spatialParams = new URLSearchParams({
+            where: "1>0",
+            geometry: bbox,
+            geometryType: "esriGeometryEnvelope",
+            inSR: "4326",
+            spatialRel: "esriSpatialRelIntersects",
+            outFields: "PROCESSO,NOME,FASE,SUBS,AREA_HA,UF,ULT_EVENTO,DSProcesso,ANO,USO,ID",
+            returnGeometry: "true",
+            outSR: "4326",
+            f: "json",
+          });
+          const response = await fetch(ANM_MAPSERVER_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: spatialParams.toString(),
+            signal: AbortSignal.timeout(30000),
+          });
+          if (response.ok) {
+            const data = await response.json() as any;
+            if (!data.error) {
+              features = (data.features || [])
+                .map((f: any) => {
+                  const check = passaMunicipioOuRaio(f.geometry);
+                  if (!check.ok) return null;
+                  const attrs = f.attributes || f;
+                  return { ...attrs, DIST_KM: check.distKm != null ? Math.round(check.distKm * 10) / 10 : null };
+                })
+                .filter(Boolean)
+                .filter((attrs: any) => matchesAnmFilters(attrs, localFilters));
+            }
+          }
+        } catch {}
+
+        if (!features) {
+          // fallback: base espelhada com geometria + teste ponto-no-polígono
+          console.warn("[ANM] Geoportal falhou (município) — usando fallback via API Mavrion");
+          const rows = await fetchAnmFromMavrionApi({
+            uf: ufVal, substancia: subsVal, fase: faseVal, empresa: empVal,
+            processo: procVal, uso: usoVal, ano: anoVal, ultEvento: ultEventoVal,
+          }, true);
+          if (rows) {
+            features = rows
+              .map((row: any) => {
+                const check = passaMunicipioOuRaio(row.__geometry);
+                if (!check.ok) return null;
+                const { __geometry, ...attrs } = row;
+                return { ...attrs, DIST_KM: check.distKm != null ? Math.round(check.distKm * 10) / 10 : null };
+              })
+              .filter(Boolean);
           }
         }
-      } catch {}
+      } else {
+        try {
+          const response = await fetch(`${ANM_MAPSERVER_URL}?${params.toString()}`, { signal: AbortSignal.timeout(30000) });
+          if (response.ok) {
+            const data = await response.json() as any;
+            if (!data.error) {
+              features = (data.features || []).map((f: any) => f.attributes || f);
+            }
+          }
+        } catch {}
 
-      if (!features) {
-        console.warn("[ANM] Geoportal falhou — usando fallback via API Mavrion");
-        features = await fetchAnmFromMavrionApi({
-          uf: ufVal, substancia: subsVal, fase: faseVal, empresa: empVal,
-          processo: procVal, uso: usoVal, ano: anoVal, ultEvento: ultEventoVal,
-        });
+        if (!features) {
+          // Geoportal indisponível/bloqueado (WAF) — usa a base SIGMINE espelhada
+          console.warn("[ANM] Geoportal falhou — usando fallback via API Mavrion");
+          features = await fetchAnmFromMavrionApi({
+            uf: ufVal, substancia: subsVal, fase: faseVal, empresa: empVal,
+            processo: procVal, uso: usoVal, ano: anoVal, ultEvento: ultEventoVal,
+          });
+        }
       }
 
       if (!features) {
@@ -679,6 +1066,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
       } catch {}
 
       if (!geojson || !geojson.features?.length) {
+        // Fallback: base SIGMINE espelhada na API Mavrion (geometria em GeoJSON)
         const apiData = await mavrionApiFetch(
           `/api/anm/processos?search=${encodeURIComponent(cleanProcesso)}&include_geometry=true&limit=5`,
           30000,
@@ -700,6 +1088,61 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
     } catch (err: any) {
       console.error("ANM geometria error:", err.message);
       res.status(500).json({ message: "Erro ao consultar geometria ANM" });
+    }
+  });
+
+  // Resolve o município de cada processo (centroide × malha municipal IBGE), com cache por processo
+  app.post("/api/anm/municipios", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const raw = Array.isArray(req.body?.processos) ? req.body.processos : [];
+      const items = raw
+        .map((it: any) => ({
+          original: String(it?.processo || ""),
+          processo: String(it?.processo || "").replace(/[^0-9/]/g, ""),
+          uf: String(it?.uf || "").toUpperCase().slice(0, 2),
+        }))
+        .filter((it: any) => it.processo.length >= 3 && /^[A-Z]{2}$/.test(it.uf))
+        .slice(0, 25);
+
+      const result: Record<string, string | null> = {};
+
+      const resolveOne = async (item: { original: string; processo: string; uf: string }) => {
+        const cacheKey = `anm_muni:${item.processo}`;
+        const cached = await getCached<{ municipio: string | null }>("geo", cacheKey);
+        if (cached) {
+          result[item.original] = cached.municipio;
+          return;
+        }
+        let municipio: string | null = null;
+        const geom = await fetchProcessoGeometry(item.processo);
+        if (geom) {
+          const pt = geomCentroidPt(geom);
+          if (pt) {
+            const resolved = await resolveMunicipioFromPoint(pt, item.uf);
+            municipio = resolved?.nome || null;
+          }
+        }
+        result[item.original] = municipio;
+        // só cacheia resoluções bem-sucedidas — falhas podem ser transitórias
+        if (municipio) await setCached("geo", cacheKey, { municipio });
+      };
+
+      // concorrência limitada para não sobrecarregar o geoportal
+      const queue = [...items];
+      const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
+        while (queue.length) {
+          const item = queue.shift();
+          if (!item) break;
+          try { await resolveOne(item); } catch { result[item.original] = null; }
+        }
+      });
+      await Promise.all(workers);
+
+      res.json(result);
+    } catch (err: any) {
+      console.error("ANM municipios error:", err.message);
+      res.status(500).json({ message: "Erro ao resolver municípios" });
     }
   });
 
@@ -776,21 +1219,6 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
               latitude = Math.round(cLat * 1e6) / 1e6;
               longitude = Math.round(cLng * 1e6) / 1e6;
             }
-
-            if (latitude && longitude) {
-              try {
-                const nomResp = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&zoom=10&extratags=1`, {
-                  headers: { "User-Agent": "MavrionConnect/1.0" },
-                  signal: AbortSignal.timeout(8000),
-                });
-                if (nomResp.ok) {
-                  const nomData = await nomResp.json() as any;
-                  municipio = nomData.address?.city || nomData.address?.town || nomData.address?.municipality || null;
-                  const extratags = nomData.extratags || {};
-                  codigoIbge = extratags["IBGE:GEOCODIGO"] || extratags["ibge:geocodigo"] || null;
-                }
-              } catch {}
-            }
           } else {
             const geojson = await esriToGeoJSON(features);
             if (geojson.features?.length > 0) {
@@ -805,6 +1233,45 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         }
       } catch (geoErr: any) {
         console.error("ANM geo lookup (non-fatal):", geoErr.message);
+      }
+
+      // Fallback: geoportal indisponível/bloqueado → espelho Mavrion
+      if (!importedGeometry) {
+        try {
+          const fallbackGeom = await fetchProcessoGeometry(String(processo).replace(/[^0-9/]/g, ""));
+          if (fallbackGeom) {
+            importedGeometry = fallbackGeom;
+            const [fLat, fLng] = centroidFromGeometry(fallbackGeom);
+            if (fLat && fLng && !isNaN(fLat) && !isNaN(fLng)) {
+              latitude = Math.round(fLat * 1e6) / 1e6;
+              longitude = Math.round(fLng * 1e6) / 1e6;
+            }
+          }
+        } catch {}
+      }
+
+      // Resolve município/código IBGE pelo centroide (reutilizando o cache anm_muni)
+      if (latitude != null && longitude != null && uf && /^[A-Z]{2}$/i.test(String(uf))) {
+        const cleanProcesso = String(processo).replace(/[^0-9/]/g, "");
+        const cacheKey = `anm_muni:${cleanProcesso}`;
+        try {
+          const cached = await getCached<{ municipio: string | null; codigoIbge?: string | null }>("geo", cacheKey);
+          if (cached?.municipio && cached.codigoIbge) {
+            municipio = cached.municipio;
+            codigoIbge = cached.codigoIbge;
+          } else {
+            const resolved = await resolveMunicipioFromPoint([longitude, latitude], String(uf).toUpperCase());
+            if (resolved) {
+              municipio = resolved.nome;
+              codigoIbge = resolved.codigoIbge;
+              await setCached("geo", cacheKey, { municipio, codigoIbge });
+            } else if (cached?.municipio) {
+              municipio = cached.municipio;
+            }
+          }
+        } catch (muniErr: any) {
+          console.error("ANM municipio resolve (non-fatal):", muniErr.message);
+        }
       }
 
       const orgId = getOrgId(req);
@@ -825,7 +1292,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
           longitude,
           codigoIbge,
           municipio,
-        },
+        } as any,
         attributesJson: {
           anmNome: nome || null,
           anmFase: fase || null,
@@ -841,16 +1308,127 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         runGeoAnalysisInBackground(asset.id, importedGeometry, bodyArea ? Number(bodyArea) : null, orgId);
       }
 
-      setImmediate(() => {
-        runMatchingForAsset(asset.id, orgId, storage, db).catch(err =>
-          console.error(`[Auto-match] Falha para ativo ANM ${asset.id}:`, err.message)
-        );
-      });
-
       res.status(201).json(asset);
     } catch (err: any) {
       console.error("ANM import asset error:", err.message);
       res.status(500).json({ message: "Erro ao importar processo como ativo" });
+    }
+  });
+
+  // Backfill administrativo: preenche município/código IBGE de ativos ANM
+  // importados antes da resolução automática de município (centroide + malha IBGE)
+  app.post("/api/anm/backfill-municipios", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const user = req.user as any;
+    if (user?.role !== "admin" && user?.role !== "superadmin") {
+      return res.status(403).json({ message: "Apenas administradores podem executar o backfill" });
+    }
+    try {
+      // Escopo multi-tenant: só ativos da organização do usuário autenticado
+      const orgId = getOrgId(req);
+      const allAssets = await storage.getAssets(orgId);
+      const pending = (allAssets as any[]).filter(
+        (a) => a.orgId === orgId && a.anmProcesso && (!a.municipio || String(a.municipio).trim() === ""),
+      );
+
+      const results: Array<{ id: number; processo: string; municipio: string | null; codigoIbge: string | null; status: string }> = [];
+
+      // Saneamento: ativos que já têm município mas cujo location está vazio ou contém só a UF
+      const locationIncomplete = (allAssets as any[]).filter((a) => {
+        if (a.orgId !== orgId || !a.anmProcesso) return false;
+        const muni = a.municipio ? String(a.municipio).trim() : "";
+        if (!muni) return false;
+        const loc = a.location ? String(a.location).trim() : "";
+        return loc === "" || /^[A-Za-z]{2}$/.test(loc);
+      });
+      for (const asset of locationIncomplete) {
+        const uf = asset.estado && /^[A-Z]{2}$/i.test(String(asset.estado)) ? String(asset.estado).toUpperCase() : null;
+        if (!uf) continue;
+        const municipio = String(asset.municipio).trim();
+        try {
+          await storage.updateAsset(asset.id, { location: `${municipio}/${uf}` } as any);
+          results.push({ id: asset.id, processo: String(asset.anmProcesso), municipio, codigoIbge: null, status: "location_corrigido" });
+        } catch (err: any) {
+          console.error(`[ANM backfill] Falha ao corrigir location do ativo ${asset.id}:`, err.message);
+          results.push({ id: asset.id, processo: String(asset.anmProcesso), municipio, codigoIbge: null, status: "erro" });
+        }
+      }
+
+      for (const asset of pending) {
+        const processo = String(asset.anmProcesso);
+        const cleanProcesso = processo.replace(/[^0-9/]/g, "");
+        const uf = asset.estado && /^[A-Z]{2}$/i.test(String(asset.estado)) ? String(asset.estado).toUpperCase() : null;
+        if (!uf) {
+          results.push({ id: asset.id, processo, municipio: null, codigoIbge: null, status: "sem_uf" });
+          continue;
+        }
+
+        try {
+          const ce = (asset.camposEspecificos || {}) as any;
+          let latitude: number | null = typeof ce.latitude === "number" ? ce.latitude : null;
+          let longitude: number | null = typeof ce.longitude === "number" ? ce.longitude : null;
+
+          if (latitude == null || longitude == null) {
+            const geom = await fetchProcessoGeometry(cleanProcesso);
+            const pt = geom ? geomCentroidPt(geom) : null;
+            if (pt) {
+              longitude = Math.round(pt[0] * 1e6) / 1e6;
+              latitude = Math.round(pt[1] * 1e6) / 1e6;
+            }
+          }
+
+          if (latitude == null || longitude == null) {
+            results.push({ id: asset.id, processo, municipio: null, codigoIbge: null, status: "sem_geometria" });
+            continue;
+          }
+
+          const cacheKey = `anm_muni:${cleanProcesso}`;
+          let municipio: string | null = null;
+          let codigoIbge: string | null = null;
+          const cached = await getCached<{ municipio: string | null; codigoIbge?: string | null }>("geo", cacheKey);
+          if (cached?.municipio && cached.codigoIbge) {
+            municipio = cached.municipio;
+            codigoIbge = cached.codigoIbge;
+          } else {
+            const resolved = await resolveMunicipioFromPoint([longitude, latitude], uf);
+            if (resolved) {
+              municipio = resolved.nome;
+              codigoIbge = resolved.codigoIbge;
+              await setCached("geo", cacheKey, { municipio, codigoIbge });
+            } else if (cached?.municipio) {
+              municipio = cached.municipio;
+            }
+          }
+
+          if (!municipio) {
+            results.push({ id: asset.id, processo, municipio: null, codigoIbge: null, status: "nao_resolvido" });
+            continue;
+          }
+
+          // Merge atômico: envia só o delta, sem regravar o objeto inteiro (o
+          // spread de `ce` apagaria chaves de enriquecimento salvas em paralelo).
+          await storage.mergeAssetCampos(asset.id, {
+            latitude,
+            longitude,
+            ...(codigoIbge ? { codigoIbge } : {}),
+            municipio,
+          }, {
+            municipio,
+            location: `${municipio}/${uf}`,
+          });
+
+          results.push({ id: asset.id, processo, municipio, codigoIbge, status: "atualizado" });
+        } catch (err: any) {
+          console.error(`[ANM backfill] Falha no ativo ${asset.id} (${processo}):`, err.message);
+          results.push({ id: asset.id, processo, municipio: null, codigoIbge: null, status: "erro" });
+        }
+      }
+
+      const atualizados = results.filter((r) => r.status === "atualizado").length;
+      res.json({ total: pending.length, atualizados, resultados: results });
+    } catch (err: any) {
+      console.error("ANM backfill municipios error:", err.message);
+      res.status(500).json({ message: "Erro ao executar backfill de municípios" });
     }
   });
 
@@ -926,7 +1504,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
   app.get("/api/geo/fazendas", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
-      const { uf, municipio, areaMin, areaMax, status, tipo, condicao } = req.query;
+      const { uf, municipio, areaMin, areaMax, status, tipo, condicao, altMediaMin, altMediaMax, argilaMediaMin, argilaMediaMax } = req.query;
       if (!uf || !UF_LIST.includes(String(uf).toUpperCase())) {
         return res.status(400).json({ message: "UF obrigatório e válido" });
       }
@@ -941,8 +1519,12 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
       if (status) apiParams.set("ind_status", String(status));
       if (tipo) apiParams.set("ind_tipo", String(tipo));
       if (condicao) apiParams.set("condicao", String(condicao));
+      if (altMediaMin) apiParams.set("alt_media_min", String(altMediaMin));
+      if (altMediaMax) apiParams.set("alt_media_max", String(altMediaMax));
+      if (argilaMediaMin) apiParams.set("argila_media_min", String(argilaMediaMin));
+      if (argilaMediaMax) apiParams.set("argila_media_max", String(argilaMediaMax));
 
-      const apiData = await mavrionApiFetch(`/api/sicar/search?${apiParams.toString()}`, 20000);
+      const apiData = await mavrionApiFetch(`/api/sicar/search?${apiParams.toString()}`, 30000);
       if (apiData && Array.isArray(apiData.data)) {
         const featureCollection = {
           type: "FeatureCollection",
@@ -973,7 +1555,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
   app.get("/api/geo/fazendas/geojson", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
-      const { uf, municipio, areaMin, areaMax, status, tipo, condicao } = req.query;
+      const { uf, municipio, areaMin, areaMax, status, tipo, condicao, altMediaMin, altMediaMax, argilaMediaMin, argilaMediaMax } = req.query;
       if (!uf || !UF_LIST.includes(String(uf).toUpperCase())) {
         return res.status(400).json({ message: "UF obrigatório e válido" });
       }
@@ -993,6 +1575,10 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
       if (status) apiParams.set("ind_status", String(status));
       if (tipo) apiParams.set("ind_tipo", String(tipo));
       if (condicao) apiParams.set("condicao", String(condicao));
+      if (altMediaMin) apiParams.set("alt_media_min", String(altMediaMin));
+      if (altMediaMax) apiParams.set("alt_media_max", String(altMediaMax));
+      if (argilaMediaMin) apiParams.set("argila_media_min", String(argilaMediaMin));
+      if (argilaMediaMax) apiParams.set("argila_media_max", String(argilaMediaMax));
 
       const apiData = await mavrionApiFetch(`/api/sicar/imoveis?${apiParams.toString()}`, 30000);
       if (!apiData || !Array.isArray(apiData.data)) {
@@ -1015,6 +1601,8 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
             condicao: r.condicao,
             m_fiscal: r.m_fiscal,
             dat_criacao: r.dat_criacao,
+            alt_media: r.alt_media ?? null,
+            argila_media: r.argila_media ?? null,
           },
         };
       }).filter((f: any) => f.geometry != null);
@@ -1035,7 +1623,8 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
   app.post("/api/geo/fazendas/import", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
-      const { cod_imovel, uf, municipio, num_area, ind_status, ind_tipo, condicao, dat_criacao, m_fiscal, geojson } = req.body;
+      const { cod_imovel, uf, municipio, num_area, ind_status, ind_tipo, condicao, dat_criacao, m_fiscal, geojson, cod_municipio_ibge } = req.body;
+      console.log("[GEO IMPORT] body keys:", Object.keys(req.body), "cod_municipio_ibge:", cod_municipio_ibge);
       if (!cod_imovel || typeof cod_imovel !== "string") return res.status(400).json({ message: "cod_imovel obrigatório" });
       if (uf && !UF_LIST.includes(String(uf).toUpperCase())) return res.status(400).json({ message: "UF inválido" });
 
@@ -1081,6 +1670,27 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
           importadoEm: new Date().toISOString(),
         },
       });
+
+      let ibgeCode = cod_municipio_ibge ? String(cod_municipio_ibge) : null;
+      if (!ibgeCode) {
+        try {
+          const sicarDetail = await mavrionApiFetch(`/api/sicar/${encodeURIComponent(String(cod_imovel))}`, 10000);
+          if (sicarDetail?.cod_municipio_ibge) {
+            ibgeCode = String(sicarDetail.cod_municipio_ibge);
+            console.log(`[GEO IMPORT] IBGE code fetched from API: ${ibgeCode}`);
+          }
+        } catch (e) {
+          console.warn("[GEO IMPORT] Failed to fetch IBGE code from API:", (e as any)?.message);
+        }
+      }
+
+      const camposPatch: any = { carCodigo: String(cod_imovel), municipio: municipio || null, uf: uf || null };
+      if (ibgeCode) camposPatch.codigoIbge = ibgeCode;
+
+      await db.execute(sql`
+        UPDATE assets SET campos_especificos = COALESCE(campos_especificos, '{}'::jsonb) || ${JSON.stringify(camposPatch)}::jsonb
+        WHERE id = ${novoAtivo.id}
+      `);
 
       let centroidLat: number | null = null;
       let centroidLon: number | null = null;
@@ -1189,6 +1799,12 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
                 precipitacaoMedia: resultado.clima.precipitacaoMedia, temperaturaMedia: tempMedia,
                 temperaturaMax: resultado.clima.temperaturaMaxMedia, temperaturaMin: resultado.clima.temperaturaMinMedia,
                 indiceSeca: resultado.resumo || '', fonte: resultado.clima.fonte,
+                precipitacaoAnual: resultado.clima.precipitacaoAnual,
+                precipitacaoMensal: resultado.clima.precipitacaoMensal,
+                temperaturaMensal: resultado.clima.temperaturaMensal,
+                mesesSecos: resultado.clima.mesesSecos,
+                mesesChuvosos: resultado.clima.mesesChuvosos,
+                anoReferencia: resultado.clima.anoReferencia,
               };
             }
             embrapaCompat.scoreAgro = resultado.scoreAgro;
@@ -1230,11 +1846,9 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         });
       }
 
-      setImmediate(() => {
-        runMatchingForAsset(novoAtivo.id, novoAtivo.orgId, storage, db).catch(err =>
-          console.error(`[Auto-match] Falha para ativo ${novoAtivo.id}:`, err.message)
-        );
-      });
+      if (resolvedGeojson && centroidLat && centroidLon) {
+        runGeoAnalysisInBackground(novoAtivo.id, resolvedGeojson, areaNum, orgId);
+      }
 
       res.status(201).json(novoAtivo);
     } catch (err: any) {
@@ -1618,7 +2232,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
           latitude: centroidLat,
           longitude: centroidLon,
           codigoIbge: codMunicipio || null,
-        },
+        } as any,
         attributesJson: {
           carCodImovel: codImovel,
           carMunicipio: municipio,
@@ -1677,6 +2291,10 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         `);
       }
 
+      if (!analysis && geomJson && feature.geometry) {
+        runGeoAnalysisInBackground(asset.id, feature.geometry, area && !isNaN(area) ? area : null, orgId);
+      }
+
       if (centroidLat && centroidLon) {
         (async () => {
           try {
@@ -1731,6 +2349,12 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
                 precipitacaoMedia: resultado.clima.precipitacaoMedia, temperaturaMedia: tempMedia,
                 temperaturaMax: resultado.clima.temperaturaMaxMedia, temperaturaMin: resultado.clima.temperaturaMinMedia,
                 indiceSeca: resultado.resumo || '', fonte: resultado.clima.fonte,
+                precipitacaoAnual: resultado.clima.precipitacaoAnual,
+                precipitacaoMensal: resultado.clima.precipitacaoMensal,
+                temperaturaMensal: resultado.clima.temperaturaMensal,
+                mesesSecos: resultado.clima.mesesSecos,
+                mesesChuvosos: resultado.clima.mesesChuvosos,
+                anoReferencia: resultado.clima.anoReferencia,
               };
             }
             embrapaCompat.scoreAgro = resultado.scoreAgro;
@@ -1832,16 +2456,90 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         })();
       }
 
-      setImmediate(() => {
-        runMatchingForAsset(asset.id, orgId, storage, db).catch(err =>
-          console.error(`[Auto-match] Falha para ativo fazenda ${asset.id}:`, err.message)
-        );
-      });
-
       res.status(201).json(asset);
     } catch (err: any) {
       console.error("Geo import fazenda error:", err.message);
       res.status(500).json({ message: "Erro ao importar fazenda" });
+    }
+  });
+
+  app.post("/api/geo/auto-analyze", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const { assetId } = req.body;
+      if (!assetId) return res.status(400).json({ message: "assetId obrigatório" });
+      const orgId = getOrgId(req);
+
+      const [asset] = await db.select({
+        id: assets.id, orgId: assets.orgId, areaHa: assets.areaHa,
+        geoScore: sql<number>`geo_score`,
+        camposEspecificos: assets.camposEspecificos,
+      }).from(assets).where(sql`id = ${assetId}`).limit(1);
+      if (!asset || asset.orgId !== orgId) return res.status(404).json({ message: "Ativo não encontrado" });
+
+      if (asset.geoScore) return res.json({ success: true, message: "Análise já existe", alreadyAnalyzed: true });
+
+      const [geomRow] = (await db.execute(sql`SELECT ST_AsGeoJSON(geom) as geojson FROM assets WHERE id = ${assetId} AND geom IS NOT NULL`)).rows;
+      if (!geomRow || !(geomRow as any).geojson) return res.status(400).json({ message: "Ativo sem geometria" });
+
+      const geometry = JSON.parse((geomRow as any).geojson);
+      runGeoAnalysisInBackground(assetId, geometry, asset.areaHa, orgId);
+
+      const ce = (asset.camposEspecificos || {}) as any;
+      if (ce.latitude && ce.longitude && !ce.embrapa) {
+        setImmediate(async () => {
+          try {
+            const resultado = await enriquecerFazenda({ lat: ce.latitude, lon: ce.longitude, codIBGE: ce.codigoIbge || undefined });
+            const embrapaCompat: any = {};
+            if (resultado.solo) {
+              const s = resultado.solo;
+              let textura = '';
+              if (s.clay !== null) {
+                if (s.clay > 60) textura = 'Muito argilosa';
+                else if (s.clay > 35) textura = 'Argilosa';
+                else if (s.clay > 15) textura = 'Média';
+                else textura = 'Arenosa';
+              }
+              let aptidao = '';
+              if (s.phh2o !== null && s.soc !== null) {
+                if (s.phh2o >= 5.5 && s.phh2o <= 7.0 && s.soc > 10) aptidao = 'Boa para agricultura';
+                else if (s.phh2o >= 4.5 && s.phh2o <= 7.5) aptidao = 'Moderada';
+                else aptidao = 'Restrita — necessita correção';
+              }
+              embrapaCompat.solo = {
+                classificacao: s.soilClass || 'Não classificado', textura, aptidao,
+                ph: s.phh2o, argila: s.clay, areia: s.sand,
+                carbonoOrganico: s.soc, nitrogenio: s.nitrogen, cec: s.cec,
+                fonte: 'SoilGrids/ISRIC',
+              };
+            }
+            if (resultado.zarc?.length > 0) {
+              embrapaCompat.zoneamento = {
+                culturas: resultado.zarc.map((z: any) => ({
+                  nome: z.cultura, risco: z.aptidao === 'Apto' ? 'baixo' : z.aptidao === 'Inapto' ? 'alto' : 'medio',
+                  epocaPlantio: z.datasPlantio?.join(', ') || '', aptidao: z.aptidao,
+                })),
+              };
+            }
+            embrapaCompat.scoreAgro = resultado.scoreAgro;
+            embrapaCompat.resumo = resultado.resumo;
+
+            await db.execute(sql`
+              UPDATE assets SET campos_especificos = COALESCE(campos_especificos, '{}'::jsonb) || ${JSON.stringify({
+                embrapa: embrapaCompat, agro: resultado, agroEnriquecidoEm: new Date().toISOString(),
+              })}::jsonb WHERE id = ${assetId}
+            `);
+            console.log(`[Auto-analyze] Ativo ${assetId} enriquecido agro. Score: ${resultado.scoreAgro}`);
+          } catch (err: any) {
+            console.warn(`[Auto-analyze] Falha agro ativo ${assetId}:`, err.message);
+          }
+        });
+      }
+
+      res.json({ success: true, message: "Análise iniciada em background", triggered: true });
+    } catch (err: any) {
+      console.error("[Auto-analyze] Erro:", err.message);
+      res.status(500).json({ message: "Erro ao iniciar auto-análise" });
     }
   });
 
@@ -1853,11 +2551,11 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
 
       const [existing] = await db.select({ id: assets.id, areaHa: assets.areaHa, orgId: assets.orgId, camposEspecificos: assets.camposEspecificos, municipio: assets.municipio, estado: assets.estado })
         .from(assets).where(sql`id = ${assetId}`).limit(1);
-      if (!existing || existing.orgId !== getOrgId()) return res.status(404).json({ message: "Ativo não encontrado" });
+      if (!existing || existing.orgId !== getOrgId(req)) return res.status(404).json({ message: "Ativo não encontrado" });
 
       if (!existing.areaHa) {
         try {
-          const [areaRow] = await db.execute(sql`SELECT ROUND(CAST(ST_Area(ST_Transform(geom, 32723)) / 10000 AS numeric), 2) as calc_area FROM assets WHERE id = ${assetId} AND geom IS NOT NULL`);
+          const [areaRow] = (await db.execute(sql`SELECT ROUND(CAST(ST_Area(ST_Transform(geom, ${sql.raw(utmSridSqlExpr("geom"))})) / 10000 AS numeric), 2) as calc_area FROM assets WHERE id = ${assetId} AND geom IS NOT NULL`)).rows;
           if (areaRow && (areaRow as any).calc_area) {
             const calcArea = parseFloat((areaRow as any).calc_area);
             if (calcArea > 0) {
@@ -1955,7 +2653,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
   app.get("/api/geo/ranking", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
-      const orgId = getOrgId();
+      const orgId = getOrgId(req);
       const { minArea, maxArea, minScore, temAgua, temEnergia, scoreEnergia, altMin, altMax, estado, orderBy, limit: lim, offset: off } = req.query as Record<string, string>;
 
       const conditions: any[] = [
@@ -2036,7 +2734,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
     };
 
     try {
-      const orgId = getOrgId();
+      const orgId = getOrgId(req);
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
       const candidates = await db.execute(sql`
@@ -2244,6 +2942,12 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
               precipitacaoMedia: resultado.clima.precipitacaoMedia, temperaturaMedia: tempMedia,
               temperaturaMax: resultado.clima.temperaturaMaxMedia, temperaturaMin: resultado.clima.temperaturaMinMedia,
               indiceSeca: resultado.resumo || '', fonte: resultado.clima.fonte,
+              precipitacaoAnual: resultado.clima.precipitacaoAnual,
+              precipitacaoMensal: resultado.clima.precipitacaoMensal,
+              temperaturaMensal: resultado.clima.temperaturaMensal,
+              mesesSecos: resultado.clima.mesesSecos,
+              mesesChuvosos: resultado.clima.mesesChuvosos,
+              anoReferencia: resultado.clima.anoReferencia,
             };
           }
           embrapaCompat.scoreAgro = resultado.scoreAgro;
@@ -2291,8 +2995,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
       if (cnpj.length !== 14) {
         return res.status(400).json({ error: 'CNPJ inválido' });
       }
-      const parcelas = await consultarParcelasSIGEF(cnpj);
-      res.json({ success: true, data: parcelas, total: parcelas.length });
+      res.json({ success: true, data: [], total: 0 });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

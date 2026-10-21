@@ -421,8 +421,6 @@ export default function IaGuiaPdf() {
 
       subtitle("Curto prazo (1-2 meses)");
       bullet("Barra de busca inteligente na interface — digitar em linguagem natural direto na prospecção");
-      bullet("Auto-matching: a IA sugere automaticamente os 5 melhores compradores para cada novo ativo");
-      bullet("Resumo automático de deals: ao criar um deal, a IA gera um briefing para o time");
       spacer(4);
 
       subtitle("Médio prazo (3-6 meses)");

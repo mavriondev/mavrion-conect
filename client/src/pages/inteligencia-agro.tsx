@@ -1,19 +1,15 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import {
-  Leaf, Droplets, Thermometer, FlaskConical, Wheat,
-  RefreshCw, ExternalLink, Trophy, AlertCircle,
-  TrendingUp, MapPin, Loader2, ChevronRight, Map, BarChart3,
-} from "lucide-react";
+import { Leaf, Droplets, Thermometer, FlaskConical, Wheat, RefreshCw, ExternalLink, AlertCircle, TrendingUp, MapPin, Loader2, Map, BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function calcularScore(embrapa: any): number {
@@ -664,15 +660,15 @@ export default function InteligenciaAgroPage() {
   const [analisandoGridId, setAnalisandoGridId] = useState<number | null>(null);
 
   const { data: ativos = [], isLoading } = useQuery<any[]>({
-    queryKey: ["/api/matching/assets"],
-    queryFn: () => apiRequest("GET", "/api/matching/assets").then(r => r.json()),
+    queryKey: ["/api/assets"],
+    queryFn: () => apiRequest("GET", "/api/assets").then(r => r.json()),
   });
 
   const enriquecerMutation = useMutation({
     mutationFn: ({ id, force }: { id: number; force?: boolean }) =>
-      apiRequest("POST", `/api/matching/assets/${id}/enriquecer-embrapa`, { force: force || false }).then(r => r.json()),
+      apiRequest("POST", `/api/assets/${id}/enriquecer-embrapa`, { force: force || false }).then(r => r.json()),
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
       if (data.cached) {
         toast({ title: "Dados carregados do cache", description: "Clique em 'Atualizar' para buscar dados novos." });
       } else {
@@ -688,9 +684,9 @@ export default function InteligenciaAgroPage() {
 
   const ndviGridMutation = useMutation({
     mutationFn: (id: number) =>
-      apiRequest("POST", `/api/matching/assets/${id}/ndvi-grid`, { gridSize: 5 }).then(r => r.json()),
+      apiRequest("POST", `/api/assets/${id}/ndvi-grid`, { gridSize: 5 }).then(r => r.json()),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
       toast({ title: "Variabilidade NDVI analisada!", description: "Mapa de calor e zonas de manejo gerados." });
       setAnalisandoGridId(null);
     },
@@ -768,7 +764,7 @@ export default function InteligenciaAgroPage() {
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
+          <h1 className="text-xl font-semibold flex items-center gap-2" data-testid="text-page-title">
             <Leaf className="w-6 h-6 text-green-600" />
             Inteligência Agro
           </h1>

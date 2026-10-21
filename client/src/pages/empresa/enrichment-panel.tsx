@@ -1,11 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Phone, Mail, Loader2, Sparkles, Search, Code, Tag, CheckCircle2, Clock, ExternalLink, Globe, TriangleAlert,
-  Brain, Users, Shield, Lightbulb, UserCheck, Link2, TrendingUp, Building2, Target, AlertTriangle, DollarSign,
-  Briefcase, Calendar, Scale, Award, Swords, ShieldAlert, FileWarning,
-} from "lucide-react";
+import { Phone, Mail, Loader2, Sparkles, Search, Code, CheckCircle2, Clock, ExternalLink, Globe, Brain, Users, Lightbulb, UserCheck, Link2, AlertTriangle, DollarSign, Briefcase, Calendar, Scale, Award, Swords, ShieldAlert, FileWarning } from "lucide-react";
 import { SiFacebook, SiInstagram, SiLinkedin, SiYoutube, SiWhatsapp, SiX, SiTiktok } from "react-icons/si";
 
 interface EnrichmentPanelProps {
@@ -176,12 +172,6 @@ const CONFIDENCE_COLORS: Record<string, string> = {
   baixa: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400 border-gray-300",
 };
 
-const BUYER_POTENTIAL_COLORS: Record<string, string> = {
-  alto: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300 border-emerald-300",
-  medio: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 border-amber-300",
-  baixo: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400 border-gray-300",
-};
-
 function AIEnrichmentResults({ aiData, company }: { aiData: any; company: any }) {
   if (!aiData) return null;
 
@@ -191,7 +181,6 @@ function AIEnrichmentResults({ aiData, company }: { aiData: any; company: any })
   const social = aiData.socialMedia || {};
   const website = aiData.website || {};
   const financial = aiData.financialProfile || {};
-  const matching = aiData.matchingSignals || {};
   const competitive = aiData.competitiveIntel || {};
   const legal = aiData.legalCompliance || {};
   const intel = aiData.businessIntel || [];
@@ -199,11 +188,10 @@ function AIEnrichmentResults({ aiData, company }: { aiData: any; company: any })
 
   const socialEntries = Object.entries(social).filter(([, url]) => url);
   const hasFinancial = financial.estimatedRevenue || financial.companySize || financial.sector || (financial.mainActivities || []).length > 0;
-  const hasMatching = matching.buyerPotential || (matching.expansionSignals || []).length > 0 || (matching.interestAreas || []).length > 0;
   const hasCompetitive = (competitive.mainCompetitors || []).length > 0 || competitive.marketPosition || (competitive.differentials || []).length > 0;
   const hasLegal = (legal.certifications || []).length > 0 || (legal.lawsuits || []).length > 0 || (legal.environmentalIssues || []).length > 0 || (legal.debtSignals || []).length > 0;
   const hasWebsite = website.url || website.seo?.title || (website.tech || []).length > 0;
-  const hasData = phones.length > 0 || emails.length > 0 || makers.length > 0 || intel.length > 0 || socialEntries.length > 0 || hasFinancial || hasMatching || hasCompetitive || hasLegal || hasWebsite;
+  const hasData = phones.length > 0 || emails.length > 0 || makers.length > 0 || intel.length > 0 || socialEntries.length > 0 || hasFinancial || hasCompetitive || hasLegal || hasWebsite;
   if (!hasData) return null;
 
   return (
@@ -503,73 +491,7 @@ function AIEnrichmentResults({ aiData, company }: { aiData: any; company: any })
         </Card>
       )}
 
-      {hasMatching && (
-        <Card data-testid="card-ai-matching">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Target className="w-4 h-4 text-blue-500" /> Sinais para Deal Origination
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {matching.buyerPotential && (
-              <div className="flex items-center gap-2">
-                <p className="text-xs text-muted-foreground">Potencial Comprador:</p>
-                <Badge variant="outline" className={`text-xs uppercase font-bold ${BUYER_POTENTIAL_COLORS[matching.buyerPotential] || ""}`}>
-                  {matching.buyerPotential}
-                </Badge>
-              </div>
-            )}
-            {matching.investmentCapacity && (
-              <div>
-                <p className="text-xs text-muted-foreground mb-0.5">Capacidade de Investimento</p>
-                <p className="text-sm">{matching.investmentCapacity}</p>
-              </div>
-            )}
-            {matching.acquisitionHistory && (
-              <div>
-                <p className="text-xs text-muted-foreground mb-0.5">Histórico de Aquisições</p>
-                <p className="text-sm">{matching.acquisitionHistory}</p>
-              </div>
-            )}
-            {(matching.expansionSignals || []).length > 0 && (
-              <div>
-                <p className="text-xs text-muted-foreground mb-1.5">Sinais de Expansão</p>
-                <div className="space-y-1">
-                  {matching.expansionSignals.map((s: string, i: number) => (
-                    <div key={i} className="flex items-start gap-2 text-sm">
-                      <TrendingUp className="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" />
-                      <span>{s}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {(matching.riskFactors || []).length > 0 && (
-              <div>
-                <p className="text-xs text-muted-foreground mb-1.5">Fatores de Risco</p>
-                <div className="space-y-1">
-                  {matching.riskFactors.map((r: string, i: number) => (
-                    <div key={i} className="flex items-start gap-2 text-sm">
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-500 mt-0.5 shrink-0" />
-                      <span>{r}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {(matching.interestAreas || []).length > 0 && (
-              <div>
-                <p className="text-xs text-muted-foreground mb-1.5">Áreas de Interesse</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {matching.interestAreas.map((a: string, i: number) => (
-                    <Badge key={i} className="text-xs bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 border-0">{a}</Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+
 
       {hasLegal && (
         <Card data-testid="card-ai-legal">

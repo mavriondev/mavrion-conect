@@ -2,11 +2,12 @@ import axios from 'axios';
 import { getCached, setCached } from '../cache';
 import { db } from '../db';
 import { sql } from 'drizzle-orm';
+import { utmSridSqlExpr } from './utm';
+import { sanearSobreposicao, checarPercentual } from './sanidade-numerica';
 
 const TERRABRASILIS_WFS = 'https://terrabrasilis.dpi.inpe.br/geoserver/ows';
 const ICMBIO_WFS = 'https://geoservicos.icmbio.gov.br/geoserver/ows';
 const FUNAI_WFS = 'https://geoserver.funai.gov.br/geoserver/ows';
-const SICOR_ODATA = 'https://olinda.bcb.gov.br/olinda/servico/SICOR/versao/v2/odata';
 
 export interface ProdesResult {
   totalAreaHa: number;
@@ -23,6 +24,8 @@ export interface SobreposicaoArea {
   categoria?: string;
   percentualSobreposicao: number;
   areaIntersecaoHa: number;
+  /** sanidade numérica falhou — exibir o motivo no lugar dos números */
+  aVerificar?: string;
   nivelRisco: 'alto' | 'medio' | 'baixo';
 }
 
@@ -44,8 +47,10 @@ export interface CarVsIncraResult {
   diferencaPct: number | null;
   alertaDiscrepancia: boolean;
   sobreposicaoGeometrica: {
-    areaIntersecaoHa: number;
-    percentualSobreposicao: number;
+    areaIntersecaoHa: number | null;
+    percentualSobreposicao: number | null;
+    /** sanidade numérica falhou — motivo substitui os números na exibição */
+    aVerificar?: string;
     carCobreIncra: boolean;
     geoJsonIntersecao: any | null;
     carPolygonGeoJson: any | null;
@@ -534,6 +539,8 @@ async function computeCarIncraGeometricOverlap(
     const carGeoStr = JSON.stringify(carGeoJson);
     const incraGeoStr = referenceGeoJson ? JSON.stringify(referenceGeoJson) : null;
 
+    // SRID UTM derivado do centróide da geometria de referência (não mais
+    // EPSG:32723 fixo — errado fora da zona 23S)
     const rows = await db.execute(sql`
       WITH incra_geom AS (
         ${incraGeoStr
@@ -543,20 +550,23 @@ async function computeCarIncraGeometricOverlap(
       ),
       car_geom AS (
         SELECT ST_SetSRID(ST_GeomFromGeoJSON(${carGeoStr}), 4326) as geom
+      ),
+      srid AS (
+        SELECT ${sql.raw(utmSridSqlExpr("(SELECT geom FROM incra_geom)"))} AS s
       )
       SELECT
         ROUND(CAST(
           ST_Area(ST_Intersection(
-            ST_Transform((SELECT geom FROM incra_geom), 32723),
-            ST_Transform((SELECT geom FROM car_geom), 32723)
+            ST_Transform((SELECT geom FROM incra_geom), (SELECT s FROM srid)),
+            ST_Transform((SELECT geom FROM car_geom), (SELECT s FROM srid))
           )) / 10000 AS numeric
         ), 2) as intersect_ha,
         ROUND(CAST(
           ST_Area(ST_Intersection(
-            ST_Transform((SELECT geom FROM incra_geom), 32723),
-            ST_Transform((SELECT geom FROM car_geom), 32723)
+            ST_Transform((SELECT geom FROM incra_geom), (SELECT s FROM srid)),
+            ST_Transform((SELECT geom FROM car_geom), (SELECT s FROM srid))
           )) * 100.0 /
-          NULLIF(ST_Area(ST_Transform((SELECT geom FROM incra_geom), 32723)), 0)
+          NULLIF(ST_Area(ST_Transform((SELECT geom FROM incra_geom), (SELECT s FROM srid))), 0)
         AS numeric), 1) as overlap_pct,
         ST_AsGeoJSON(ST_Intersection(
           (SELECT geom FROM incra_geom),
@@ -567,7 +577,7 @@ async function computeCarIncraGeometricOverlap(
           (SELECT geom FROM incra_geom)
         ) as car_covers_incra,
         ROUND(CAST(
-          ST_Area(ST_Transform((SELECT geom FROM car_geom), 32723)) / 10000 AS numeric
+          ST_Area(ST_Transform((SELECT geom FROM car_geom), (SELECT s FROM srid))) / 10000 AS numeric
         ), 2) as car_area_ha
       WHERE ST_Intersects(
         (SELECT geom FROM incra_geom),
@@ -589,8 +599,9 @@ async function computeCarIncraGeometricOverlap(
     }
 
     const carAreaRows = await db.execute(sql`
+      WITH g AS (SELECT ST_SetSRID(ST_GeomFromGeoJSON(${carGeoStr}), 4326) AS geom)
       SELECT ROUND(CAST(
-        ST_Area(ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(${carGeoStr}), 4326), 32723)) / 10000 AS numeric
+        ST_Area(ST_Transform((SELECT geom FROM g), ${sql.raw(utmSridSqlExpr("(SELECT geom FROM g)"))})) / 10000 AS numeric
       ), 2) as car_area_ha
     `);
     const carRow = (carAreaRows as any).rows?.[0];
@@ -631,6 +642,23 @@ export async function compararCarVsIncra(
     }
   }
 
+  // sanidade: interseção ≤ menor área e pct ≤ 100 — falha vira "a verificar"
+  if (sobreposicaoGeometrica) {
+    const san = sanearSobreposicao({
+      sobreposicaoHa: sobreposicaoGeometrica.areaIntersecaoHa,
+      sobreposicaoPct: sobreposicaoGeometrica.percentualSobreposicao,
+      areaMenorHa: effectiveCarArea,
+      areaOutraHa: areaIncraHa,
+      contexto: 'sobreposição geométrica CAR×INCRA (PostGIS)',
+    });
+    sobreposicaoGeometrica = {
+      ...sobreposicaoGeometrica,
+      areaIntersecaoHa: san.sobreposicaoHa,
+      percentualSobreposicao: san.sobreposicaoPct,
+      ...(san.sobreposicaoAVerificar ? { aVerificar: san.sobreposicaoAVerificar } : {}),
+    };
+  }
+
   let diferencaHa: number | null = null;
   let diferencaPct: number | null = null;
   let alertaDiscrepancia = false;
@@ -655,116 +683,31 @@ export async function compararCarVsIncra(
 
 export async function consultarSicorTitular(
   cpfCnpj: string,
-  codigoIbge?: string
+  _codigoIbge?: string
 ): Promise<SicorTitularResult | null> {
   const doc = cpfCnpj.replace(/\D/g, '');
   if (!doc || (doc.length !== 11 && doc.length !== 14)) return null;
 
-  const cacheKey = `sicor_titular:${doc}:${codigoIbge || 'sem_ibge'}`;
-  const cached = await getCached<SicorTitularResult>('due_diligence', cacheKey);
-  if (cached) return cached;
-
-  try {
-    const sicorApiKey = process.env.SICOR_API_KEY || process.env.BCB_API_KEY;
-
-    if (sicorApiKey) {
-      try {
-        const resp = await fetch(
-          `${SICOR_ODATA}/Empreendimentos?$filter=CpfCnpj eq '${doc}'&$top=50&$format=json`,
-          {
-            headers: { Authorization: `Bearer ${sicorApiKey}` },
-            signal: AbortSignal.timeout(20000),
-          }
-        );
-        if (resp.ok) {
-          const data = await resp.json();
-          const items = data?.value || [];
-          if (items.length > 0) {
-            const operacoes: SicorOperacao[] = items.map((item: any) => ({
-              programa: item.Programa || item.DescPrograma || 'N/D',
-              subprograma: item.SubPrograma || item.DescSubPrograma || undefined,
-              instituicao: item.DescInstFinanceira || undefined,
-              valor: Number(item.VlRecurso || item.VlCusteio || 0),
-              area: Number(item.AreaFinanciada || 0) || undefined,
-              safra: item.AnoEmissao || item.Safra || undefined,
-              situacao: item.SitOperacao || item.Situacao || undefined,
-              dataContratacao: item.DtEmissao || undefined,
-            }));
-            const temHipoteca = operacoes.some(
-              (o) => o.situacao?.toLowerCase().includes('ativ') || o.situacao?.toLowerCase().includes('vigent')
-            );
-            const result: SicorTitularResult = {
-              cpfCnpj: doc,
-              totalOperacoes: operacoes.length,
-              valorTotal: operacoes.reduce((s, o) => s + o.valor, 0),
-              operacoes,
-              temHipotecaAtiva: temHipoteca,
-              fonte: 'SICOR/BCB — consulta por titular via convênio',
-              consultadoEm: new Date().toISOString(),
-            };
-            await setCached('due_diligence', cacheKey, result);
-            return result;
-          }
-        }
-      } catch (err) {
-        console.warn('[SICOR] Erro na consulta por titular com API key:', (err as Error).message);
-      }
-    }
-
-    console.log('[SICOR] Consulta por titular (CPF/CNPJ) indisponível — API pública BCB não suporta filtro por CPF/CNPJ; requer convênio ou API key');
-    return null;
-  } catch (err) {
-    console.error('[SICOR Titular] Erro:', (err as Error).message);
-    return null;
-  }
+  console.log('[SICOR] Consulta por CPF/CNPJ indisponível — API pública BCB/SICOR não suporta filtro por titular individual; requer convênio com Banco Central');
+  return null;
 }
 
 export async function consultarItrVtn(
   codigoIncra: string,
-  cpfCnpj?: string
+  _cpfCnpj?: string
 ): Promise<ItrVtnResult | null> {
   const cacheKey = `itr_vtn:${codigoIncra}`;
   const cached = await getCached<ItrVtnResult>('due_diligence', cacheKey);
   if (cached) return cached;
 
   try {
-    const apiKey = process.env.INFOSIMPLES_API_KEY;
-
-    if (apiKey && cpfCnpj) {
-      try {
-        const doc = cpfCnpj.replace(/\D/g, '');
-        const res = await axios.post(
-          'https://api.infosimples.com/api/v2/consultas/receita-federal/cafir',
-          { cpf_cnpj: doc, nirf: codigoIncra, token: apiKey },
-          { timeout: 30000 }
-        );
-
-        const data = res.data?.data?.[0] || {};
-        if (data.vtn || data.valor_terra_nua) {
-          const result: ItrVtnResult = {
-            nirf: data.nirf || codigoIncra,
-            vtn: parseFloat(data.vtn || data.valor_terra_nua || '0'),
-            vtnPorHa: data.area_total ? parseFloat(data.vtn || '0') / parseFloat(data.area_total) : null,
-            areaDeclarada: data.area_total ? parseFloat(data.area_total) : null,
-            aliquota: data.aliquota ? parseFloat(data.aliquota) : null,
-            fonte: 'CAFIR/Receita Federal via InfoSimples',
-            consultadoEm: new Date().toISOString(),
-          };
-          await setCached('due_diligence', cacheKey, result);
-          return result;
-        }
-      } catch (err) {
-        console.warn('[ITR/VTN InfoSimples] Erro:', (err as Error).message);
-      }
-    }
-
     const result: ItrVtnResult = {
       nirf: codigoIncra,
       vtn: null,
       vtnPorHa: null,
       areaDeclarada: null,
       aliquota: null,
-      fonte: 'Consulta ITR/VTN indisponível (requer InfoSimples)',
+      fonte: 'VTN por propriedade disponível apenas via CAFIR/Receita Federal (requer certificado digital)',
       consultadoEm: new Date().toISOString(),
     };
 
@@ -822,7 +765,10 @@ export function calcularScoreRiscoFundiario(
     if (carVsIncra.sobreposicaoGeometrica) {
       if (!carVsIncra.sobreposicaoGeometrica.carCobreIncra) {
         const overlapPct = carVsIncra.sobreposicaoGeometrica.percentualSobreposicao;
-        if (overlapPct < 50) documental -= 30;
+        // null = valor reprovado na sanidade ("a verificar") — cobertura
+        // desconhecida recebe penalidade intermediária, nunca é tratada como boa
+        if (overlapPct == null) documental -= 15;
+        else if (overlapPct < 50) documental -= 30;
         else if (overlapPct < 80) documental -= 15;
         else if (overlapPct < 95) documental -= 5;
       }
@@ -884,7 +830,7 @@ async function fetchAssetSpatialData(assetId: number): Promise<AssetSpatialData 
         ST_XMin(geom) as xmin, ST_YMin(geom) as ymin,
         ST_XMax(geom) as xmax, ST_YMax(geom) as ymax,
         ST_X(ST_Centroid(geom)) as cx, ST_Y(ST_Centroid(geom)) as cy,
-        ROUND(CAST(ST_Area(ST_Transform(geom, 32723)) / 10000 AS numeric), 2) as area_ha
+        ROUND(CAST(ST_Area(ST_Transform(geom, ${sql.raw(utmSridSqlExpr("geom"))})) / 10000 AS numeric), 2) as area_ha
       FROM assets
       WHERE id = ${assetId} AND geom IS NOT NULL
     `);
@@ -912,7 +858,16 @@ async function computePostGISIntersection(
   assetId: number,
   featureGeoJson: any,
   referenceGeoJson?: any
-): Promise<{ intersectionAreaHa: number; overlapPercent: number }> {
+): Promise<{ intersectionAreaHa: number; overlapPercent: number; aVerificar?: string }> {
+  // sanidade do percentual: > 100 (além da tolerância) devolve aVerificar —
+  // números zerados + motivo, para o consumidor exibir o marcador
+  const checarRow = (row: any): { intersectionAreaHa: number; overlapPercent: number; aVerificar?: string } => {
+    const inter = Number(row.intersection_ha) || 0;
+    const pctC = checarPercentual(Number(row.overlap_pct) || 0, 'sobreposição × área de referência (PostGIS)');
+    return pctC.ok
+      ? { intersectionAreaHa: inter, overlapPercent: pctC.valor }
+      : { intersectionAreaHa: 0, overlapPercent: 0, aVerificar: pctC.motivo };
+  };
   try {
     const featureStr = JSON.stringify(featureGeoJson);
 
@@ -921,20 +876,23 @@ async function computePostGISIntersection(
       const rows = await db.execute(sql`
         WITH ref AS (
           SELECT ST_SetSRID(ST_GeomFromGeoJSON(${refStr}), 4326) as geom
+        ),
+        srid AS (
+          SELECT ${sql.raw(utmSridSqlExpr("(SELECT geom FROM ref)"))} AS s
         )
         SELECT
           ROUND(CAST(
             ST_Area(ST_Intersection(
-              ST_Transform((SELECT geom FROM ref), 32723),
-              ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(${featureStr}), 4326), 32723)
+              ST_Transform((SELECT geom FROM ref), (SELECT s FROM srid)),
+              ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(${featureStr}), 4326), (SELECT s FROM srid))
             )) / 10000 AS numeric
           ), 2) as intersection_ha,
-          CASE WHEN ST_Area(ST_Transform((SELECT geom FROM ref), 32723)) > 0
+          CASE WHEN ST_Area(ST_Transform((SELECT geom FROM ref), (SELECT s FROM srid))) > 0
             THEN ROUND(CAST(
               ST_Area(ST_Intersection(
-                ST_Transform((SELECT geom FROM ref), 32723),
-                ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(${featureStr}), 4326), 32723)
-              )) / ST_Area(ST_Transform((SELECT geom FROM ref), 32723)) * 100 AS numeric
+                ST_Transform((SELECT geom FROM ref), (SELECT s FROM srid)),
+                ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(${featureStr}), 4326), (SELECT s FROM srid))
+              )) / ST_Area(ST_Transform((SELECT geom FROM ref), (SELECT s FROM srid))) * 100 AS numeric
             ), 1)
             ELSE 0
           END as overlap_pct
@@ -944,27 +902,22 @@ async function computePostGISIntersection(
         )
       `);
       const row = (rows as any).rows?.[0];
-      if (row) {
-        return {
-          intersectionAreaHa: Number(row.intersection_ha) || 0,
-          overlapPercent: Number(row.overlap_pct) || 0,
-        };
-      }
+      if (row) return checarRow(row);
     } else {
       const rows = await db.execute(sql`
         SELECT
           ROUND(CAST(
             ST_Area(ST_Intersection(
-              ST_Transform(a.geom, 32723),
-              ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(${featureStr}), 4326), 32723)
+              ST_Transform(a.geom, ${sql.raw(utmSridSqlExpr("a.geom"))}),
+              ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(${featureStr}), 4326), ${sql.raw(utmSridSqlExpr("a.geom"))})
             )) / 10000 AS numeric
           ), 2) as intersection_ha,
-          CASE WHEN ST_Area(ST_Transform(a.geom, 32723)) > 0
+          CASE WHEN ST_Area(ST_Transform(a.geom, ${sql.raw(utmSridSqlExpr("a.geom"))})) > 0
             THEN ROUND(CAST(
               ST_Area(ST_Intersection(
-                ST_Transform(a.geom, 32723),
-                ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(${featureStr}), 4326), 32723)
-              )) / ST_Area(ST_Transform(a.geom, 32723)) * 100 AS numeric
+                ST_Transform(a.geom, ${sql.raw(utmSridSqlExpr("a.geom"))}),
+                ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(${featureStr}), 4326), ${sql.raw(utmSridSqlExpr("a.geom"))})
+              )) / ST_Area(ST_Transform(a.geom, ${sql.raw(utmSridSqlExpr("a.geom"))})) * 100 AS numeric
             ), 1)
             ELSE 0
           END as overlap_pct
@@ -973,12 +926,7 @@ async function computePostGISIntersection(
           AND ST_Intersects(a.geom, ST_SetSRID(ST_GeomFromGeoJSON(${featureStr}), 4326))
       `);
       const row = (rows as any).rows?.[0];
-      if (row) {
-        return {
-          intersectionAreaHa: Number(row.intersection_ha) || 0,
-          overlapPercent: Number(row.overlap_pct) || 0,
-        };
-      }
+      if (row) return checarRow(row);
     }
   } catch (err) {
     console.warn('[DD PostGIS] Intersection error:', (err as Error).message);
@@ -1025,7 +973,7 @@ export async function executarDueDiligenceFundiaria(params: {
           ST_XMin(g) as xmin, ST_YMin(g) as ymin,
           ST_XMax(g) as xmax, ST_YMax(g) as ymax,
           ST_X(ST_Centroid(g)) as cx, ST_Y(ST_Centroid(g)) as cy,
-          ROUND(CAST(ST_Area(ST_Transform(g, 32723)) / 10000 AS numeric), 2) as area_ha
+          ROUND(CAST(ST_Area(ST_Transform(g, ${sql.raw(utmSridSqlExpr("g"))})) / 10000 AS numeric), 2) as area_ha
         FROM (SELECT ST_SetSRID(ST_GeomFromGeoJSON(${sigefStr}), 4326) as g) t
       `);
       const br = (bboxRows as any).rows?.[0];
@@ -1096,10 +1044,11 @@ export async function executarDueDiligenceFundiaria(params: {
       const feat = geoFeatures[geoIdx++];
       if (feat?.geometry) {
         try {
-          const { intersectionAreaHa, overlapPercent } = await computePostGISIntersection(assetId || 0, feat.geometry, refGeom || undefined);
-          if (intersectionAreaHa > 0 || overlapPercent > 0) {
-            ti.areaIntersecaoHa = intersectionAreaHa;
-            ti.percentualSobreposicao = overlapPercent;
+          const r = await computePostGISIntersection(assetId || 0, feat.geometry, refGeom || undefined);
+          if (r.intersectionAreaHa > 0 || r.overlapPercent > 0 || r.aVerificar) {
+            ti.areaIntersecaoHa = r.intersectionAreaHa;
+            ti.percentualSobreposicao = r.overlapPercent;
+            if (r.aVerificar) ti.aVerificar = r.aVerificar;
             tiWithIntersection.push({ area: ti, feat });
           }
         } catch {}
@@ -1109,10 +1058,11 @@ export async function executarDueDiligenceFundiaria(params: {
       const feat = geoFeatures[geoIdx++];
       if (feat?.geometry) {
         try {
-          const { intersectionAreaHa, overlapPercent } = await computePostGISIntersection(assetId || 0, feat.geometry, refGeom || undefined);
-          if (intersectionAreaHa > 0 || overlapPercent > 0) {
-            q.areaIntersecaoHa = intersectionAreaHa;
-            q.percentualSobreposicao = overlapPercent;
+          const r = await computePostGISIntersection(assetId || 0, feat.geometry, refGeom || undefined);
+          if (r.intersectionAreaHa > 0 || r.overlapPercent > 0 || r.aVerificar) {
+            q.areaIntersecaoHa = r.intersectionAreaHa;
+            q.percentualSobreposicao = r.overlapPercent;
+            if (r.aVerificar) q.aVerificar = r.aVerificar;
             quilWithIntersection.push({ area: q, feat });
           }
         } catch {}
@@ -1122,10 +1072,11 @@ export async function executarDueDiligenceFundiaria(params: {
       const feat = geoFeatures[geoIdx++];
       if (feat?.geometry) {
         try {
-          const { intersectionAreaHa, overlapPercent } = await computePostGISIntersection(assetId || 0, feat.geometry, refGeom || undefined);
-          if (intersectionAreaHa > 0 || overlapPercent > 0) {
-            uc.areaIntersecaoHa = intersectionAreaHa;
-            uc.percentualSobreposicao = overlapPercent;
+          const r = await computePostGISIntersection(assetId || 0, feat.geometry, refGeom || undefined);
+          if (r.intersectionAreaHa > 0 || r.overlapPercent > 0 || r.aVerificar) {
+            uc.areaIntersecaoHa = r.intersectionAreaHa;
+            uc.percentualSobreposicao = r.overlapPercent;
+            if (r.aVerificar) uc.aVerificar = r.aVerificar;
             ucWithIntersection.push({ area: uc, feat });
           }
         } catch {}
@@ -1204,8 +1155,7 @@ export async function executarDueDiligenceFundiaria(params: {
   } else if (sicor) {
     status.sicor = 'sucesso';
   } else {
-    const hasSicorKey = !!(process.env.SICOR_API_KEY || process.env.BCB_API_KEY);
-    status.sicor = hasSicorKey ? 'erro' : 'indisponivel';
+    status.sicor = 'indisponivel';
   }
 
   const itrVtn = itrVtnResult.status === 'fulfilled' ? itrVtnResult.value : null;

@@ -35,6 +35,20 @@ export function log(message: string, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
+const SENSITIVE_KEYS = new Set(["password", "passwordhash", "password_hash"]);
+
+function redactSensitive(value: any, depth = 0): any {
+  if (depth > 6 || value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((v) => redactSensitive(v, depth + 1));
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(value)) {
+    out[k] = SENSITIVE_KEYS.has(k.toLowerCase())
+      ? "[REDACTED]"
+      : redactSensitive(v, depth + 1);
+  }
+  return out;
+}
+
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
@@ -51,7 +65,7 @@ app.use((req, res, next) => {
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        logLine += ` :: ${JSON.stringify(redactSensitive(capturedJsonResponse))}`;
       }
 
       log(logLine);
@@ -64,6 +78,11 @@ app.use((req, res, next) => {
 (async () => {
   await registerRoutes(httpServer, app);
 
+  // Endpoints inexistentes não devem cair no HTML da aplicação.
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ message: "Endpoint não encontrado" });
+  });
+
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
@@ -74,6 +93,7 @@ app.use((req, res, next) => {
       return next(err);
     }
 
+    res.setHeader("Content-Type", "application/json");
     return res.status(status).json({ message });
   });
 
@@ -91,6 +111,8 @@ app.use((req, res, next) => {
   // Other ports are firewalled. Default to 5000 if not specified.
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
+  const { ensureLocalDataTables } = await import("./lib/ensure-tables");
+  await ensureLocalDataTables();
   await initScheduler();
 
   const port = parseInt(process.env.PORT || "5000", 10);

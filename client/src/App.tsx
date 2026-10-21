@@ -5,21 +5,18 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/use-auth";
+import { useErrorCapture } from "@/hooks/use-error-capture";
 import { ThemeProvider } from "@/components/theme-provider";
 import { I18nContext, type Lang, getTranslation } from "@/lib/i18n";
 
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import LoginPage from "@/pages/login";
-
-import CRMBoard from "@/pages/crm";
-import MatchingPage from "@/pages/matching";
 import ConnectorsPage from "@/pages/connectors";
 import ProspeccaoPage from "@/pages/prospeccao";
 import EmpresasPage from "@/pages/empresas";
 import EmpresaDetailPage from "@/pages/empresa-detail";
 import UsersPage from "@/pages/users";
-import PropostasPage from "@/pages/propostas";
 import ConfiguracoesPage from "@/pages/configuracoes";
 import AtivosPage from "@/pages/ativos";
 import AtivoDetalhePage from "@/pages/ativo-detalhe";
@@ -29,24 +26,23 @@ import GeoRuralPage from "@/pages/geo-rural";
 import AnaliseAgroPage from "@/pages/analise-agro";
 import InteligenciaAgroPage from "@/pages/inteligencia-agro";
 import ManualPage from "@/pages/manual";
-import ContratosPage from "@/pages/contratos";
-import PortalAdminPage from "@/pages/portal-admin";
-import PortalPublicoPage from "@/pages/portal-publico";
-import LandingPagePublic from "@/pages/landing-page";
 import ErrorReportsPage from "@/pages/error-reports";
 import ArquiteturaPage from "@/pages/arquitetura";
 import IaGuiaPdf from "@/pages/ia-guia-pdf";
-import MADealsPage from "@/pages/ma-deals";
 import NegociosInvestidoresPage from "@/pages/negocios-investidores";
-import MapaConexoesPage from "@/pages/mapa-conexoes";
-import HonorariosPage from "@/pages/honorarios";
-import FiiFundosPage from "@/pages/fii-fundos";
-import ShowcasePublico from "@/pages/showcase-publico";
 import SicarWorkerPage from "@/pages/sicar-worker";
-import OnboardingPage from "@/pages/crm/onboarding";
-import Sidebar, { SidebarProvider, MobileTopBar } from "@/components/layout-sidebar";
+import Sidebar, { SidebarProvider, MobileTopBar, useSidebar } from "@/components/layout-sidebar";
 import TopBar from "@/components/top-bar";
 
+
+function MainContent({ children }: { children: React.ReactNode }) {
+  const { collapsed } = useSidebar();
+  return (
+    <main className={`flex-1 transition-all duration-300 ease-out ${collapsed ? "md:ml-[60px]" : "md:ml-60"}`}>
+      {children}
+    </main>
+  );
+}
 
 function PrivateRoute({ component: Component, ...rest }: any) {
   const { user, isLoading } = useAuth();
@@ -73,19 +69,20 @@ function PrivateRoute({ component: Component, ...rest }: any) {
       <ErrorCaptureWrapper />
       <div className="flex min-h-screen bg-background">
         <Sidebar />
-        <main className="flex-1 md:ml-64 transition-all duration-300">
+        <MainContent>
           <MobileTopBar />
-          <div className="pt-14 md:pt-0">
+          <div className="pt-12 md:pt-0">
             <TopBar />
             <Component {...rest} />
           </div>
-        </main>
+        </MainContent>
       </div>
     </SidebarProvider>
   );
 }
 
 function ErrorCaptureWrapper() {
+  useErrorCapture();
   return null;
 }
 
@@ -105,17 +102,16 @@ function Router() {
         {() => <PrivateRoute component={Dashboard} />}
       </Route>
 
-      <Route path="/crm/onboarding">
-        {() => <PrivateRoute component={OnboardingPage} />}
-      </Route>
 
-      <Route path="/crm">
-        {() => <PrivateRoute component={CRMBoard} />}
-      </Route>
 
-      <Route path="/matching">
-        {() => <PrivateRoute component={MatchingPage} />}
-      </Route>
+
+
+
+
+
+
+
+
 
       <Route path="/connectors">
         {() => <PrivateRoute component={ConnectorsPage} />}
@@ -125,13 +121,9 @@ function Router() {
         {() => <PrivateRoute component={ProspeccaoPage} />}
       </Route>
 
-      <Route path="/empresas/leads">
-        {() => <PrivateRoute component={EmpresasPage} mode="leads" />}
-      </Route>
 
-      <Route path="/empresas/desqualificadas">
-        {() => <PrivateRoute component={EmpresasPage} mode="desqualificadas" />}
-      </Route>
+
+
 
       <Route path="/empresas">
         {() => <PrivateRoute component={EmpresasPage} mode="all" />}
@@ -145,9 +137,7 @@ function Router() {
         {() => <PrivateRoute component={UsersPage} />}
       </Route>
 
-      <Route path="/propostas">
-        {() => <PrivateRoute component={PropostasPage} />}
-      </Route>
+
 
       <Route path="/configuracoes">
         {() => <PrivateRoute component={ConfiguracoesPage} />}
@@ -181,9 +171,9 @@ function Router() {
         {() => <PrivateRoute component={GeoRuralPage} />}
       </Route>
 
-      <Route path="/fii-fundos">
+      {/* <Route path="/fii-fundos">
         {() => <PrivateRoute component={FiiFundosPage} />}
-      </Route>
+      </Route> — desativado temporariamente */}
 
       <Route path="/analise-agro">
         {() => <PrivateRoute component={AnaliseAgroPage} />}
@@ -193,13 +183,9 @@ function Router() {
         {() => <PrivateRoute component={InteligenciaAgroPage} />}
       </Route>
 
-      <Route path="/contratos">
-        {() => <PrivateRoute component={ContratosPage} />}
-      </Route>
 
-      <Route path="/portal-admin">
-        {() => <PrivateRoute component={PortalAdminPage} />}
-      </Route>
+
+
 
       <Route path="/error-reports">
         {() => <PrivateRoute component={ErrorReportsPage} />}
@@ -212,29 +198,17 @@ function Router() {
         }}
       </Route>
 
-      <Route path="/mapa-conexoes">
-        {() => <PrivateRoute component={MapaConexoesPage} />}
-      </Route>
 
-      <Route path="/honorarios">
-        {() => <PrivateRoute component={HonorariosPage} />}
-      </Route>
 
-      <Route path="/vitrine/:id">
-        {(params) => <ShowcasePublico id={params.id} />}
-      </Route>
 
-      <Route path="/lp/:slug">
-        {(params) => <LandingPagePublic slug={params.slug} />}
-      </Route>
 
-      <Route path="/portal/:id">
-        {() => <PortalPublicoPage />}
-      </Route>
 
-      <Route path="/portal">
-        {() => <PortalPublicoPage />}
-      </Route>
+
+
+
+
+
+
 
       <Route path="/sicar-worker">
         {() => <PrivateRoute component={SicarWorkerPage} />}

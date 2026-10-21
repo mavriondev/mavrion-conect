@@ -87,7 +87,7 @@ export default function AnaliseAgroPage() {
       <div className="flex items-center gap-3">
         <Sprout className="w-7 h-7 text-green-600" />
         <div>
-          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Análise Agro</h1>
+          <h1 className="text-xl font-semibold tracking-tight" data-testid="text-page-title">Análise Agro</h1>
           <p className="text-sm text-muted-foreground">Solo, aptidão ZARC, produtividade e parcelas SIGEF — funciona independente do SICAR</p>
         </div>
       </div>
@@ -249,7 +249,7 @@ export default function AnaliseAgroPage() {
                 </Card>
               )}
 
-              {result.zarc.length > 0 && (
+              {(result.zarc?.length ?? 0) > 0 && (
                 <Card>
                   <CardContent className="p-4">
                     <p className="font-medium text-sm mb-2 flex items-center gap-1.5">
@@ -291,7 +291,7 @@ export default function AnaliseAgroPage() {
                 </Card>
               )}
 
-              {result.parcelasSigef.length > 0 && (
+              {(result.parcelasSigef?.length ?? 0) > 0 && (
                 <Card className="md:col-span-2 lg:col-span-3">
                   <CardContent className="p-4">
                     <p className="font-medium text-sm mb-2 flex items-center gap-1.5">
@@ -307,7 +307,7 @@ export default function AnaliseAgroPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {result.parcelasSigef.map((p, i) => (
+                        {(result.parcelasSigef ?? []).map((p, i) => (
                           <TableRow key={i} data-testid={`agro-sigef-row-${i}`}>
                             <TableCell className="font-mono text-xs">{p.codigo}</TableCell>
                             <TableCell className="text-xs">{p.municipio}/{p.uf}</TableCell>
@@ -322,7 +322,7 @@ export default function AnaliseAgroPage() {
               )}
             </div>
 
-            {!result.solo && result.zarc.length === 0 && result.parcelasSigef.length === 0 && (
+            {!result.solo && (result.zarc?.length ?? 0) === 0 && (result.parcelasSigef?.length ?? 0) === 0 && (
               <div className="text-center py-6 text-muted-foreground">
                 <AlertTriangle className="w-8 h-8 mx-auto mb-2 text-amber-500" />
                 <p className="text-sm">Nenhum dado disponível para estas coordenadas.</p>

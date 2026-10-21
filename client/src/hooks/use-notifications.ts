@@ -16,6 +16,23 @@ export function useNotifications() {
   const [unreadCount, setUnreadCount] = useState(0);
   const { toast } = useToast();
 
+  // Alertas persistentes (ex.: rotina VPS defasada): carregados no login a partir
+  // do servidor, para não depender de estar online no momento do SSE.
+  useEffect(() => {
+    fetch("/api/notifications/pending", { credentials: "include" })
+      .then(r => (r.ok ? r.json() : []))
+      .then((pending: Omit<AppNotification, "read">[]) => {
+        if (!Array.isArray(pending) || pending.length === 0) return;
+        setNotifications(prev => {
+          const existing = new Set(prev.map(n => n.id));
+          const novos = pending.filter(p => !existing.has(p.id)).map(p => ({ ...p, read: false }));
+          if (novos.length) setUnreadCount(c => c + novos.length);
+          return [...novos, ...prev].slice(0, 50);
+        });
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     const source = new EventSource("/api/notifications/stream");
 

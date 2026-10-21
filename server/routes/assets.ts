@@ -3,13 +3,12 @@ import type { IStorage } from "../storage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { matchSuggestions, type CamposEspecificos } from "@shared/schema";
+import { matchSuggestions } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
-import { sendNotification, notifId } from "../notifications";
-import { matchesRegion } from "./matching";
+import { fetchAnmProcessoGeometryFallback } from "../lib/anm-fallback";
+import { resolveAssetUfs } from "../lib/uf";
 import { getOrgId } from "../lib/tenant";
-import { runMatchingForAsset } from "../lib/auto-match";
-import { enriquecerFazenda, consultarNDVIGrid, consultarCCIR, consultarCCIRViaSICAR, consultarParcelaSIGEFPorCoordenadas } from "../enrichment/agro";
+import { enriquecerFazenda, consultarNDVIGrid, consultarSIGEFPublicoPorCoordenadas, consultarCCIRViaSICAR, consultarSIGEFPorDocumento, isSicarDisponivel, logSicarWarningOnce } from "../enrichment/agro";
 import { sql } from "drizzle-orm";
 import { consultarEmbargoIbama, consultarEmbargoIbamaCoordenadas, consultarEmbargoIbamaMunicipio } from "../lib/ibama";
 import { getUsoTerraMapBiomas } from "../lib/mapbiomas";
@@ -18,8 +17,14 @@ import { getNDVISentinel } from "../lib/sentinel";
 import { getProducaoMunicipio } from "../lib/contexto-regional";
 import { consultarApiPaginadaPublica, calcularPerfilNorion } from "../services/caf-crawler";
 import { getCached, setCached } from "../cache";
+import { payloadFalhaConsulta } from "../lib/consulta-contrato";
 
 const MAVRION_API_URL = "https://api.mavrionconnect.com.br";
+
+// Ativos minerários (MINA/JAZIDA) compartilham polígono ANM, base fundiária etc.
+function isTipoMinerario(type: any): boolean {
+  return type === "MINA" || type === "JAZIDA";
+}
 let _assetsMavrionToken: string | null = null;
 let _assetsMavrionTokenExp: number = 0;
 
@@ -80,27 +85,21 @@ function computeCentroid(geometry: any): { lat: number; lon: number } | null {
 }
 
 export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgDatabase<any>) {
-  app.get(api.matching.assets.list.path, async (req, res) => {
+  app.get(api.assets.list.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     const user = req.user as any;
     const assetsList = await storage.getAssets(user?.orgId);
     res.json(assetsList);
   });
 
-  app.post(api.matching.assets.create.path, async (req, res) => {
+  app.post(api.assets.create.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
-      const input = api.matching.assets.create.input.parse(req.body);
+      const input = api.assets.create.input.parse(req.body);
       if (input.priceAsking !== undefined && input.priceAsking !== null && input.priceAsking < 0) {
         return res.status(400).json({ message: "Preço não pode ser negativo" });
       }
       const novoAtivo = await storage.createAsset(input);
-
-      setImmediate(() => {
-        runMatchingForAsset(novoAtivo.id, novoAtivo.orgId, storage, db).catch(err =>
-          console.error(`[Auto-match] Falha para ativo ${novoAtivo.id}:`, err.message)
-        );
-      });
 
       res.status(201).json(novoAtivo);
     } catch (err) {
@@ -109,7 +108,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     }
   });
 
-  app.get("/api/matching/assets/geo/terra", async (req, res) => {
+  app.get("/api/assets/geo/terra", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const user = req.user as any;
@@ -147,33 +146,17 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     }
   });
 
-  app.get("/api/matching/assets/:id", async (req, res) => {
+  app.get("/api/assets/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const asset = await storage.getAsset(Number(req.params.id));
       if (!asset) return res.status(404).json({ message: "Asset not found" });
 
-      const allDeals = await storage.getDeals?.() ?? [];
-      const linkedDeals = allDeals.filter((d: any) =>
-        d.assetId === asset.id ||
-        d.title?.toLowerCase().includes((asset.title || "").toLowerCase().slice(0, 15))
-      ).map((d: any) => ({
-        id: d.id,
-        title: d.title,
-        stageId: d.stageId,
-        stageName: d.stage?.name || null,
-        amountEstimate: d.amountEstimate,
-        pipelineType: d.pipelineType,
-        createdAt: d.createdAt,
-      }));
-
-      const emNegociacao = linkedDeals.length > 0;
-
-      res.json({ ...asset, linkedDeals, emNegociacao });
+      res.json(asset);
     } catch (err) { res.status(500).json({ message: "Erro interno" }); }
   });
 
-  app.get("/api/matching/assets/:id/geometry", async (req, res) => {
+  app.get("/api/assets/:id/geometry", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const assetId = Number(req.params.id);
@@ -201,7 +184,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
         return res.json({ geometry: JSON.parse(row.geojson) });
       }
 
-      if (row?.type === "MINA" && row?.anm_processo) {
+      if (isTipoMinerario(row?.type) && row?.anm_processo) {
         try {
           const processo = row.anm_processo.replace(/[^0-9/]/g, "");
           const ANM_URL = "https://geo.anm.gov.br/arcgis/rest/services/SIGMINE/dados_anm/MapServer/0/query";
@@ -213,19 +196,35 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
             outSR: "4326",
             f: "json",
           });
-          const anmResp = await fetch(ANM_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: formBody.toString(),
-            signal: AbortSignal.timeout(15000),
-          });
-          if (anmResp.ok) {
-            const anmData = await anmResp.json() as any;
-            const features = anmData.features || [];
-            if (features.length > 0 && features[0].geometry?.rings) {
-              const rings = features[0].geometry.rings;
-              const coordinates = rings.map((ring: number[][]) => ring.map((c: number[]) => [c[0], c[1]]));
-              const geometry = { type: "Polygon", coordinates };
+          let geometry: any | null = null;
+          try {
+            const anmResp = await fetch(ANM_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: formBody.toString(),
+              signal: AbortSignal.timeout(15000),
+            });
+            if (anmResp.ok) {
+              const anmData = await anmResp.json() as any;
+              const features = anmData.features || [];
+              if (features.length > 0 && features[0].geometry?.rings) {
+                const rings = features[0].geometry.rings;
+                const coordinates = rings.map((ring: number[][]) => ring.map((c: number[]) => [c[0], c[1]]));
+                geometry = { type: "Polygon", coordinates };
+              }
+            }
+          } catch {}
+
+          if (!geometry) {
+            // Geoportal bloqueado (WAF) — base SIGMINE espelhada na API Mavrion
+            const fb = await fetchAnmProcessoGeometryFallback(processo);
+            if (fb) geometry = fb.geometry;
+          }
+
+          if (geometry) {
+            const coordinates = geometry.type === "Polygon"
+              ? geometry.coordinates
+              : geometry.coordinates.flat();
 
               let sumLat = 0, sumLng = 0, ptCount = 0;
               for (const ring of coordinates) {
@@ -252,18 +251,21 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
               }
 
               try {
-                const camposAtual = (await db.execute(sql`SELECT campos_especificos, municipio FROM assets WHERE id = ${assetId}`)) as any;
-                const existingRow = camposAtual.rows?.[0];
-                const campos = existingRow?.campos_especificos || {};
-                const newCampos = { ...campos, latitude: centLat, longitude: centLng, codigoIbge, municipio: municipioNome };
+                // Merge atômico (jsonb ||): não regrava o objeto inteiro para não
+                // apagar chaves de enriquecimento salvas por requisições paralelas.
+                const camposPatch: Record<string, any> = {};
+                if (centLat != null) camposPatch.latitude = centLat;
+                if (centLng != null) camposPatch.longitude = centLng;
+                if (codigoIbge) camposPatch.codigoIbge = codigoIbge;
+                if (municipioNome) camposPatch.municipio = municipioNome;
 
-                if (!existingRow?.municipio && municipioNome) {
-                  await db.execute(
-                    sql`UPDATE assets SET municipio = ${municipioNome}, campos_especificos = ${JSON.stringify(newCampos)}::jsonb WHERE id = ${assetId}`
-                  );
-                } else {
-                  await db.execute(
-                    sql`UPDATE assets SET campos_especificos = ${JSON.stringify(newCampos)}::jsonb WHERE id = ${assetId}`
+                const municipioAtual = (await db.execute(sql`SELECT municipio FROM assets WHERE id = ${assetId}`)) as any;
+                const setMunicipioColuna = !municipioAtual.rows?.[0]?.municipio && municipioNome;
+                if (Object.keys(camposPatch).length > 0 || setMunicipioColuna) {
+                  await storage.mergeAssetCampos(
+                    assetId,
+                    camposPatch,
+                    setMunicipioColuna ? { municipio: municipioNome } : undefined,
                   );
                 }
               } catch (updateErr) {
@@ -271,7 +273,6 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
               }
 
               return res.json({ geometry, municipio: municipioNome, codigoIbge });
-            }
           }
         } catch (anmErr: any) {
           console.error("ANM geometry fallback error:", anmErr.message);
@@ -289,12 +290,12 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
             if (sicarionData?.geometry) {
               const centroid = computeCentroid(sicarionData.geometry);
               try {
-                const camposAtual = (await db.execute(sql`SELECT campos_especificos FROM assets WHERE id = ${assetId}`)) as any;
-                const campos = camposAtual.rows?.[0]?.campos_especificos || {};
-                const newCampos = {
-                  ...campos,
+                // Merge atômico: envia só as chaves do SICAR; codigoIbge é
+                // omitido quando ausente para preservar o valor já salvo.
+                const ibgeSicar = sicarionData.cod_municipio_ibge || sicarionData.properties?.cod_municipio_ibge;
+                const sicarPatch: Record<string, any> = {
                   ...(centroid ? { latitude: centroid.lat, longitude: centroid.lon } : {}),
-                  codigoIbge: String(sicarionData.cod_municipio_ibge || sicarionData.properties?.cod_municipio_ibge || campos.codigoIbge || ""),
+                  ...(ibgeSicar ? { codigoIbge: String(ibgeSicar) } : {}),
                   sicarStatus: sicarionData.ind_status || sicarionData.properties?.status_imovel,
                   sicarCondicao: sicarionData.condicao || sicarionData.properties?.condicao,
                   sicarTipo: sicarionData.ind_tipo || sicarionData.properties?.tipo_imovel,
@@ -304,7 +305,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
                   sicarFonte: "SICARIOn API",
                   sicarConsultadoEm: new Date().toISOString(),
                 };
-                await db.execute(sql`UPDATE assets SET campos_especificos = ${JSON.stringify(newCampos)}::jsonb WHERE id = ${assetId}`);
+                await storage.mergeAssetCampos(assetId, sicarPatch);
               } catch (updateErr) {
                 console.warn("Failed to update asset from SICARIOn:", updateErr);
               }
@@ -320,7 +321,494 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     } catch (err) { res.status(500).json({ message: "Erro interno" }); }
   });
 
-  app.patch("/api/matching/assets/:id", async (req, res) => {
+  // Resolve a geometria do processo de um ativo: coluna geom (PostGIS) → ANM ArcGIS → espelho Mavrion
+  async function resolveProcessoGeometry(assetId: number, orgId: any, asset: any): Promise<any | null> {
+    let geometry: any | null = null;
+    try {
+      const result = await db.execute(
+        sql`SELECT ST_AsGeoJSON(geom) as geojson FROM assets WHERE id = ${assetId} AND org_id = ${orgId}`
+      );
+      const gj = (result as any).rows?.[0]?.geojson;
+      if (gj) geometry = JSON.parse(gj);
+    } catch { /* banco sem PostGIS/coluna geom */ }
+
+    if (!geometry && isTipoMinerario(asset.type) && (asset as any).anmProcesso) {
+      const processo = String((asset as any).anmProcesso).replace(/[^0-9/]/g, "");
+      try {
+        const formBody = new URLSearchParams({
+          where: `PROCESSO='${processo}'`,
+          outFields: "PROCESSO",
+          returnGeometry: "true",
+          geometryType: "esriGeometryPolygon",
+          outSR: "4326",
+          f: "json",
+        });
+        const anmResp = await fetch("https://geo.anm.gov.br/arcgis/rest/services/SIGMINE/dados_anm/MapServer/0/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: formBody.toString(),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (anmResp.ok) {
+          const anmData = await anmResp.json() as any;
+          const rings = anmData.features?.[0]?.geometry?.rings;
+          if (rings) {
+            // normaliza topologia esri (cascas/furos em ordem arbitrária) para MultiPolygon GeoJSON
+            const { esriRingsToMultiPoly } = await import("../lib/sigef-parcelas");
+            const mp = esriRingsToMultiPoly(rings);
+            if (mp.length > 0) geometry = { type: "MultiPolygon", coordinates: mp };
+          }
+        }
+      } catch { /* geoportal ANM instável/WAF */ }
+      if (!geometry) {
+        try {
+          const fb = await fetchAnmProcessoGeometryFallback(processo);
+          if (fb?.geometry) geometry = fb.geometry;
+        } catch {}
+      }
+    }
+    return geometry;
+  }
+
+  // Parcelas certificadas SIGEF/INCRA sobre o polígono do processo (ativo MINA)
+  app.post("/api/assets/:id/sigef-parcelas", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const assetId = Number(req.params.id);
+      const orgId = getOrgId(req);
+      const asset = await storage.getAsset(assetId);
+      if (!asset || asset.orgId !== orgId) return res.status(404).json({ message: "Ativo não encontrado" });
+
+      const geometry = await resolveProcessoGeometry(assetId, orgId, asset);
+      if (!geometry) {
+        // pré-condição ausente: sem geometria não há vínculo geométrico —
+        // responde o contrato com identificador nulo (não estabelecido)
+        return res.status(422).json(payloadFalhaConsulta({
+          fonte: "SIGEF/INCRA — Acervo Fundiário (espelho ArcGIS sigef_brasil)",
+          tierFonte: "T1",
+          motivoFalha: "Geometria do processo indisponível — não foi possível cruzar com o SIGEF",
+        }));
+      }
+
+      // 2) cruzamento com as parcelas certificadas
+      const { consultarParcelasSigef } = await import("../lib/sigef-parcelas");
+      const resultado = await consultarParcelasSigef(geometry);
+      if (!resultado.disponivel) {
+        // A lib já devolve o contrato completo (estadoConsulta, tier, janela,
+        // identificador); a rota repassa o payload e PERSISTE a falha quando não
+        // houver consulta boa anterior — o relatório distingue "tentou e falhou
+        // em X" de "nunca consultada", sem perder dados bons já salvos.
+        const motivo = (resultado as any).motivoFalha || (resultado as any).erro || "Serviço SIGEF indisponível no momento";
+        const falha: any = { ...resultado, motivoFalha: motivo, message: motivo };
+        delete falha.geometrias;
+        const anterior = ((asset.camposEspecificos as any) || {}).sigefParcelas;
+        if (!anterior || anterior.disponivel === false) {
+          try {
+            await storage.mergeAssetCampos(assetId, { sigefParcelas: falha, sigefParcelasUpdatedAt: new Date().toISOString() } as any);
+          } catch (persistErr: any) {
+            console.error("[SIGEF] Falha ao persistir estado de falha da consulta:", persistErr.message);
+          }
+        }
+        return res.status(502).json(falha);
+      }
+
+      // 3) persiste no ativo (sem as geometrias — vão para o cache do mapa)
+      const { geometrias, ...resultadoSemGeometrias } = resultado;
+      const updatedAt = new Date().toISOString();
+      try {
+        await storage.mergeAssetCampos(assetId, { sigefParcelas: resultadoSemGeometrias, sigefParcelasUpdatedAt: updatedAt });
+      } catch (persistErr: any) {
+        console.error("[SIGEF] Falha ao persistir parcelas:", persistErr.message);
+      }
+
+      // 4) preenche o cache de geometrias (mesma chave da rota GET .../geometrias
+      // e da consolidação CCIR), evitando nova ida à rede na primeira consolidação
+      try {
+        const porCodigo = new Map(resultado.parcelas.filter((p) => p.codigoParcela).map((p) => [p.codigoParcela, p]));
+        const parcelasCache = (geometrias || [])
+          .filter((g) => g.codigoParcela && porCodigo.has(g.codigoParcela))
+          .map((g) => {
+            const p = porCodigo.get(g.codigoParcela!)!;
+            return {
+              codigoParcela: g.codigoParcela,
+              nomeArea: p.nomeArea ?? null,
+              detentor: p.detentor ?? null,
+              areaHa: p.areaHa ?? null,
+              sobreposicaoHa: p.sobreposicaoHa ?? null,
+              relacao: p.relacao,
+              geometry: g.geometry,
+            };
+          });
+        await setCached("sigef_geometrias", `${assetId}:${updatedAt}`, { parcelas: parcelasCache });
+      } catch (cacheErr: any) {
+        console.warn("[SIGEF] Falha ao gravar cache de geometrias na consulta:", cacheErr.message);
+      }
+
+      res.json(resultadoSemGeometrias);
+    } catch (err: any) {
+      console.error("[SIGEF] Erro no cruzamento de parcelas:", err.message);
+      res.status(500).json(payloadFalhaConsulta({
+        fonte: "SIGEF/INCRA — Acervo Fundiário (espelho ArcGIS sigef_brasil)",
+        tierFonte: "T1",
+        motivoFalha: `Erro inesperado ao consultar parcelas SIGEF: ${err?.message || String(err)}`,
+        identificadorVinculo: { tipo: "geometria", valor: "polígono do processo ANM", proveniencia: "documento_oficial", origem: "SIGMINE" },
+      }));
+    }
+  });
+
+  // Geometrias das parcelas SIGEF já consultadas, para desenhar no mapa do ativo.
+  // Consulta leve no espelho (só geometria); relacao/atributos vêm do resultado salvo.
+  app.get("/api/assets/:id/sigef-parcelas/geometrias", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const assetId = Number(req.params.id);
+      const orgId = getOrgId(req);
+      const asset = await storage.getAsset(assetId);
+      if (!asset || asset.orgId !== orgId) return res.status(404).json({ message: "Ativo não encontrado" });
+
+      const campos = (asset.camposEspecificos as any) || {};
+      const salvas: any[] = campos.sigefParcelas?.parcelas || [];
+      if (salvas.length === 0) return res.json({ parcelas: [] });
+
+      // Cache no servidor por ativo: a chave inclui o timestamp da última consulta
+      // SIGEF, então refazer a consulta (POST sigef-parcelas) invalida naturalmente.
+      const cacheKey = `${assetId}:${campos.sigefParcelasUpdatedAt || "sem-data"}`;
+      const cached = await getCached<{ parcelas: any[] }>("sigef_geometrias", cacheKey);
+      if (cached?.parcelas) return res.json(cached);
+
+      const geometry = await resolveProcessoGeometry(assetId, orgId, asset);
+      if (!geometry) return res.json({ parcelas: [] });
+
+      const { consultarGeometriasParcelasSigef } = await import("../lib/sigef-parcelas");
+      const geoms = await consultarGeometriasParcelasSigef(geometry);
+      const porCodigo = new Map(salvas.filter((p) => p.codigoParcela).map((p) => [p.codigoParcela, p]));
+      const parcelas = geoms
+        .filter((g) => g.codigoParcela && porCodigo.has(g.codigoParcela))
+        .map((g) => {
+          const p = porCodigo.get(g.codigoParcela!)!;
+          return {
+            codigoParcela: g.codigoParcela,
+            nomeArea: p.nomeArea ?? null,
+            detentor: p.detentor ?? null,
+            areaHa: p.areaHa ?? null,
+            sobreposicaoHa: p.sobreposicaoHa ?? null,
+            relacao: p.relacao,
+            geometry: g.geometry,
+          };
+        });
+      try {
+        await setCached("sigef_geometrias", cacheKey, { parcelas });
+      } catch (cacheErr: any) {
+        console.warn("[SIGEF] Falha ao gravar cache de geometrias:", cacheErr.message);
+      }
+      res.json({ parcelas });
+    } catch (err: any) {
+      console.error("[SIGEF] Erro ao buscar geometrias das parcelas:", err.message);
+      res.status(500).json(payloadFalhaConsulta({
+        fonte: "SIGEF/INCRA — Acervo Fundiário (espelho ArcGIS sigef_brasil)",
+        tierFonte: "T1",
+        motivoFalha: `Erro ao buscar geometrias das parcelas SIGEF: ${err?.message || String(err)}`,
+        identificadorVinculo: { tipo: "geometria", valor: "polígono do processo ANM", proveniencia: "documento_oficial", origem: "SIGMINE" },
+        extras: { parcelas: [] },
+      }));
+    }
+  });
+
+  // UF(s) do ativo para consultas em camadas estaduais (ex.: SICAR):
+  // resolveAssetUfs (../lib/uf) — cadastro → dados ANM → fallback por dados
+  // fundiários já consultados (parcelas SIGEF salvas / última consulta CAR).
+
+  // Imóveis CAR (SICAR) sobre o polígono do processo (ativo MINA)
+  app.post("/api/assets/:id/car-imoveis", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const assetId = Number(req.params.id);
+      const orgId = getOrgId(req);
+      const asset = await storage.getAsset(assetId);
+      if (!asset || asset.orgId !== orgId) return res.status(404).json({ message: "Ativo não encontrado" });
+
+      const geometry = await resolveProcessoGeometry(assetId, orgId, asset);
+      if (!geometry) {
+        return res.status(422).json(payloadFalhaConsulta({
+          fonte: "SICAR — GeoServer público (geoserver.car.gov.br)",
+          tierFonte: "T1",
+          motivoFalha: "Geometria do processo indisponível — não foi possível cruzar com o CAR",
+        }));
+      }
+
+      const ufs = resolveAssetUfs(asset);
+      if (ufs.length === 0) {
+        return res.status(422).json(payloadFalhaConsulta({
+          fonte: "SICAR — GeoServer público (geoserver.car.gov.br)",
+          tierFonte: "T1",
+          motivoFalha: "UF do ativo desconhecida — preencha o estado do ativo para consultar o CAR",
+          identificadorVinculo: { tipo: "geometria", valor: "polígono do processo ANM", proveniencia: "documento_oficial", origem: "SIGMINE" },
+        }));
+      }
+
+      const { consultarImoveisCar } = await import("../lib/car-imoveis");
+      const resultado = await consultarImoveisCar(geometry, ufs);
+      if (!resultado.disponivel) {
+        // Mesmo tratamento da rota SIGEF: repassa o contrato da lib e persiste
+        // a falha quando não houver consulta boa anterior.
+        const motivo = (resultado as any).motivoFalha || (resultado as any).erro || "GeoServer do SICAR indisponível no momento";
+        const falha: any = { ...resultado, motivoFalha: motivo, message: motivo };
+        delete falha.geometrias;
+        const anterior = ((asset.camposEspecificos as any) || {}).carImoveis;
+        if (!anterior || anterior.disponivel === false) {
+          try {
+            await storage.mergeAssetCampos(assetId, { carImoveis: falha, carImoveisUpdatedAt: new Date().toISOString() } as any);
+          } catch (persistErr: any) {
+            console.error("[CAR] Falha ao persistir estado de falha da consulta:", persistErr.message);
+          }
+        }
+        return res.status(502).json(falha);
+      }
+
+      // persiste no ativo (sem as geometrias — vão para o cache do mapa)
+      const { geometrias, ...resultadoSemGeometrias } = resultado;
+      const updatedAt = new Date().toISOString();
+      try {
+        await storage.mergeAssetCampos(assetId, { carImoveis: resultadoSemGeometrias, carImoveisUpdatedAt: updatedAt });
+      } catch (persistErr: any) {
+        console.error("[CAR] Falha ao persistir imóveis CAR:", persistErr.message);
+      }
+
+      // preenche o cache de geometrias (mesma chave da rota GET .../geometrias
+      // e da consolidação CCIR), evitando nova ida à rede na primeira consolidação
+      try {
+        const porCodigo = new Map(resultado.imoveis.filter((i) => i.codImovel).map((i) => [i.codImovel, i]));
+        const imoveisCache = (geometrias || [])
+          .filter((g) => g.codImovel && porCodigo.has(g.codImovel))
+          .map((g) => {
+            const i = porCodigo.get(g.codImovel!)!;
+            return {
+              codImovel: g.codImovel,
+              municipio: i.municipio ?? null,
+              areaHa: i.areaHa ?? null,
+              sobreposicaoHa: i.sobreposicaoHa ?? null,
+              sobreposicaoPct: i.sobreposicaoPct ?? null,
+              status: i.status ?? null,
+              relacao: i.relacao,
+              geometry: g.geometry,
+            };
+          });
+        await setCached("car_geometrias", `${assetId}:${updatedAt}`, { imoveis: imoveisCache });
+      } catch (cacheErr: any) {
+        console.warn("[CAR] Falha ao gravar cache de geometrias na consulta:", cacheErr.message);
+      }
+
+      res.json(resultadoSemGeometrias);
+    } catch (err: any) {
+      console.error("[CAR] Erro no cruzamento de imóveis CAR:", err.message);
+      res.status(500).json(payloadFalhaConsulta({
+        fonte: "SICAR — GeoServer público (geoserver.car.gov.br)",
+        tierFonte: "T1",
+        motivoFalha: `Erro inesperado ao consultar imóveis CAR: ${err?.message || String(err)}`,
+        identificadorVinculo: { tipo: "geometria", valor: "polígono do processo ANM", proveniencia: "documento_oficial", origem: "SIGMINE" },
+      }));
+    }
+  });
+
+  // Geometrias dos imóveis CAR já consultados, para desenhar no mapa do ativo.
+  app.get("/api/assets/:id/car-imoveis/geometrias", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const assetId = Number(req.params.id);
+      const orgId = getOrgId(req);
+      const asset = await storage.getAsset(assetId);
+      if (!asset || asset.orgId !== orgId) return res.status(404).json({ message: "Ativo não encontrado" });
+
+      const campos = (asset.camposEspecificos as any) || {};
+      const salvos: any[] = campos.carImoveis?.imoveis || [];
+      if (salvos.length === 0) return res.json({ imoveis: [] });
+
+      const cacheKey = `${assetId}:${campos.carImoveisUpdatedAt || "sem-data"}`;
+      const cached = await getCached<{ imoveis: any[] }>("car_geometrias", cacheKey);
+      if (cached?.imoveis) return res.json(cached);
+
+      const geometry = await resolveProcessoGeometry(assetId, orgId, asset);
+      if (!geometry) return res.json({ imoveis: [] });
+
+      const ufs = resolveAssetUfs(asset);
+      const { consultarGeometriasImoveisCar } = await import("../lib/car-imoveis");
+      const geoms = await consultarGeometriasImoveisCar(geometry, ufs);
+      const porCodigo = new Map(salvos.filter((i) => i.codImovel).map((i) => [i.codImovel, i]));
+      const imoveis = geoms
+        .filter((g) => g.codImovel && porCodigo.has(g.codImovel))
+        .map((g) => {
+          const i = porCodigo.get(g.codImovel!)!;
+          return {
+            codImovel: g.codImovel,
+            municipio: i.municipio ?? null,
+            areaHa: i.areaHa ?? null,
+            sobreposicaoHa: i.sobreposicaoHa ?? null,
+            sobreposicaoPct: i.sobreposicaoPct ?? null,
+            status: i.status ?? null,
+            relacao: i.relacao,
+            geometry: g.geometry,
+          };
+        });
+      try {
+        await setCached("car_geometrias", cacheKey, { imoveis });
+      } catch (cacheErr: any) {
+        console.warn("[CAR] Falha ao gravar cache de geometrias:", cacheErr.message);
+      }
+      res.json({ imoveis });
+    } catch (err: any) {
+      console.error("[CAR] Erro ao buscar geometrias dos imóveis CAR:", err.message);
+      res.status(500).json(payloadFalhaConsulta({
+        fonte: "SICAR — GeoServer público (geoserver.car.gov.br)",
+        tierFonte: "T1",
+        motivoFalha: `Erro ao buscar geometrias dos imóveis CAR: ${err?.message || String(err)}`,
+        identificadorVinculo: { tipo: "geometria", valor: "polígono do processo ANM", proveniencia: "documento_oficial", origem: "SIGMINE" },
+        extras: { imoveis: [] },
+      }));
+    }
+  });
+
+  // Abre sessão na Consulta Pública do SNCR e devolve a sitekey do hCaptcha
+  // para a interface embedar o widget (o usuário resolve o captcha).
+  app.post("/api/sncr/sessao", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const { iniciarSessaoSncr } = await import("../lib/sncr-detentores");
+      const sessao = await iniciarSessaoSncr();
+      res.json(sessao);
+    } catch (err: any) {
+      console.error("[SNCR] Falha ao abrir sessão:", err.message);
+      res.status(502).json({ message: err.message || "SNCR indisponível" });
+    }
+  });
+
+  // Detentores das parcelas SIGEF via SNCR:
+  // - sem captchaToken: preenche do cache e devolve municípios pendentes;
+  // - com sessionId+captchaToken: baixa o CSV de UM município pendente,
+  //   preenche as parcelas e devolve o que ainda falta.
+  app.post("/api/assets/:id/sigef-detentores", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const assetId = Number(req.params.id);
+      const orgId = getOrgId(req);
+      const asset = await storage.getAsset(assetId);
+      if (!asset || asset.orgId !== orgId) return res.status(404).json({ message: "Ativo não encontrado" });
+
+      const campos = (asset.camposEspecificos as any) || {};
+      const resultado = campos.sigefParcelas;
+      if (!resultado?.parcelas?.length) {
+        return res.status(422).json({ message: "Consulte as parcelas SIGEF antes de buscar os detentores" });
+      }
+
+      const {
+        baixarMunicipioSncr, preencherDetentoresDoCacheSncr,
+        municipiosPendentesSncr, CaptchaInvalidoError,
+      } = await import("../lib/sncr-detentores");
+
+      const { sessionId, captchaToken } = req.body || {};
+      let municipioBaixado: string | null = null;
+      if (sessionId && captchaToken) {
+        const pendentes = await municipiosPendentesSncr(resultado.parcelas);
+        if (pendentes.length > 0) {
+          const alvo = pendentes[0];
+          try {
+            const payload = await baixarMunicipioSncr(sessionId, alvo.ufIbge, alvo.municipioIbge, captchaToken);
+            municipioBaixado = payload.nomeMunicipio;
+          } catch (e: any) {
+            if (e instanceof CaptchaInvalidoError) {
+              return res.status(422).json({ message: e.message, captchaInvalido: true });
+            }
+            throw e;
+          }
+        }
+      }
+
+      const preenchidas = await preencherDetentoresDoCacheSncr(resultado.parcelas);
+      const municipiosPendentes = await municipiosPendentesSncr(resultado.parcelas);
+
+      try {
+        await storage.mergeAssetCampos(assetId, { sigefParcelas: resultado });
+      } catch (persistErr: any) {
+        console.error("[SNCR] Falha ao persistir detentores:", persistErr.message);
+      }
+
+      res.json({
+        resultado,
+        preenchidas,
+        municipioBaixado,
+        municipiosPendentes,
+        totalComDetentor: resultado.parcelas.filter((p: any) => p.detentor).length,
+      });
+    } catch (err: any) {
+      console.error("[SNCR] Erro ao buscar detentores:", err.message);
+      res.status(500).json(payloadFalhaConsulta({
+        fonte: "SNCR/INCRA — consulta pública de imóveis rurais",
+        tierFonte: "T1",
+        motivoFalha: err.message || "Erro ao buscar detentores no SNCR",
+      }));
+    }
+  });
+
+  // Fallback manual: o usuário baixa o CSV no site do SNCR e envia o conteúdo.
+  // `municipioIbge`/`ufIbge` indicam a qual município o CSV pertence (para cache).
+  app.post("/api/assets/:id/sigef-detentores/csv", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const assetId = Number(req.params.id);
+      const orgId = getOrgId(req);
+      const asset = await storage.getAsset(assetId);
+      if (!asset || asset.orgId !== orgId) return res.status(404).json({ message: "Ativo não encontrado" });
+
+      const campos = (asset.camposEspecificos as any) || {};
+      const resultado = campos.sigefParcelas;
+      if (!resultado?.parcelas?.length) {
+        return res.status(422).json({ message: "Consulte as parcelas SIGEF antes de buscar os detentores" });
+      }
+      const { csv, ufIbge, municipioIbge } = req.body || {};
+      if (!csv || typeof csv !== "string") return res.status(400).json({ message: "CSV ausente" });
+
+      const { parsearCsvSncr, preencherDetentoresDoCacheSncr, municipiosPendentesSncr } = await import("../lib/sncr-detentores");
+      const { setCached } = await import("../cache");
+      const imoveis = parsearCsvSncr(csv);
+
+      if (ufIbge && municipioIbge) {
+        await setCached("sncr_detentor", `${ufIbge}:${municipioIbge}`, {
+          ufIbge: String(ufIbge),
+          municipioIbge: Number(municipioIbge),
+          nomeMunicipio: null,
+          baixadoEm: new Date().toISOString(),
+          totalImoveis: Object.keys(imoveis).length,
+          imoveis,
+        });
+      }
+
+      // aplica direto às parcelas (além do cache)
+      let preenchidas = 0;
+      for (const p of resultado.parcelas) {
+        if (p.detentor || !p.codigoImovel) continue;
+        const nome = imoveis[String(p.codigoImovel).replace(/[^\d]/g, "")];
+        if (nome) { p.detentor = nome; preenchidas++; }
+      }
+      preenchidas += await preencherDetentoresDoCacheSncr(resultado.parcelas);
+
+      try {
+        await storage.mergeAssetCampos(assetId, { sigefParcelas: resultado });
+      } catch (persistErr: any) {
+        console.error("[SNCR] Falha ao persistir detentores (csv):", persistErr.message);
+      }
+
+      res.json({
+        resultado,
+        preenchidas,
+        municipiosPendentes: await municipiosPendentesSncr(resultado.parcelas),
+        totalComDetentor: resultado.parcelas.filter((p: any) => p.detentor).length,
+      });
+    } catch (err: any) {
+      console.error("[SNCR] Erro no CSV manual:", err.message);
+      res.status(400).json({ message: err.message || "CSV inválido" });
+    }
+  });
+
+  app.patch("/api/assets/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const orgId = getOrgId(req);
@@ -355,6 +843,9 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
         req.body.activityLog = [...logAtual, ...novoLog];
       }
 
+      // storage.updateAsset aplica camposEspecificos como merge atômico (jsonb ||):
+      // um PATCH com cópia parcial/desatualizada não apaga chaves salvas por
+      // consultas de enriquecimento concorrentes.
       const updated = await storage.updateAsset(Number(req.params.id), req.body);
 
       if (req.body.statusAtivo &&
@@ -380,7 +871,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     FII_CRI: ["tipoFundo", "rentabilidadeAnual", "vacanciaMedia", "qtdImoveis", "segmentoImoveis", "dividendYield", "situacaoDocumental", "observacoesQualitativas"],
   };
 
-  app.patch("/api/matching/assets/:id/enrichment", async (req, res) => {
+  app.patch("/api/assets/:id/enrichment", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const orgId = getOrgId(req);
@@ -416,12 +907,6 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
 
       const updated = await storage.mergeAssetCampos(Number(req.params.id), { enrichment: mergedEnrichment }, { activityLog: logAtual });
 
-      setImmediate(() => {
-        runMatchingForAsset(updated.id, updated.orgId, storage, db).catch(err =>
-          console.error(`[Auto-match enrich] Falha para ativo ${updated.id}:`, err.message)
-        );
-      });
-
       res.json({ ...updated, enrichmentProgress: progress });
     } catch (err: any) {
       console.error("[Enrichment PATCH]", err.message);
@@ -429,13 +914,13 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     }
   });
 
-  app.get("/api/matching/assets/:id/enrichment-fields", async (req, res) => {
+  app.get("/api/assets/:id/enrichment-fields", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     const type = String(req.query.type || "NEGOCIO");
     res.json({ fields: ENRICHMENT_FIELDS[type] || ENRICHMENT_FIELDS["NEGOCIO"] });
   });
 
-  app.delete("/api/matching/assets/:id", async (req, res) => {
+  app.delete("/api/assets/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const orgId = getOrgId(req);
@@ -446,7 +931,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     } catch (err) { res.status(500).json({ message: "Erro interno" }); }
   });
 
-  app.post("/api/matching/assets/:id/enriquecer-sicar", async (req, res) => {
+  app.post("/api/assets/:id/enriquecer-sicar", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const orgId = getOrgId(req);
@@ -506,19 +991,19 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
         success: true,
         sicar: {
           codImovel: carCode,
-          status: sicarEnriched.sicarStatus,
-          condicao: sicarEnriched.sicarCondicao,
-          tipo: sicarEnriched.sicarTipo,
-          moduloFiscal: sicarEnriched.sicarModuloFiscal,
-          area: sicarEnriched.sicarArea,
-          municipio: sicarEnriched.sicarMunicipio,
-          uf: sicarEnriched.sicarUf,
-          dataCriacao: sicarEnriched.sicarDataCriacao,
-          dataAtualizacao: sicarEnriched.sicarDataAtualizacao,
-          codigoIbge: sicarEnriched.codigoIbge,
+          status: sicarPatch.sicarStatus,
+          condicao: sicarPatch.sicarCondicao,
+          tipo: sicarPatch.sicarTipo,
+          moduloFiscal: sicarPatch.sicarModuloFiscal,
+          area: sicarPatch.sicarArea,
+          municipio: sicarPatch.sicarMunicipio,
+          uf: sicarPatch.sicarUf,
+          dataCriacao: sicarPatch.sicarDataCriacao,
+          dataAtualizacao: sicarPatch.sicarDataAtualizacao,
+          codigoIbge: sicarPatch.codigoIbge,
           temGeometria: !!geometry,
           fonte: "SICARIOn API",
-          consultadoEm: sicarEnriched.sicarConsultadoEm,
+          consultadoEm: sicarPatch.sicarConsultadoEm,
         },
       });
     } catch (err) {
@@ -527,7 +1012,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     }
   });
 
-  app.post("/api/matching/assets/:id/enriquecer-embrapa", async (req, res) => {
+  app.post("/api/assets/:id/enriquecer-embrapa", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const asset = await storage.getAsset(Number(req.params.id));
@@ -652,6 +1137,12 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
           temperaturaMin: resultado.clima.temperaturaMinMedia,
           indiceSeca: resultado.resumo || '',
           fonte: resultado.clima.fonte,
+          precipitacaoAnual: resultado.clima.precipitacaoAnual,
+          precipitacaoMensal: resultado.clima.precipitacaoMensal,
+          temperaturaMensal: resultado.clima.temperaturaMensal,
+          mesesSecos: resultado.clima.mesesSecos,
+          mesesChuvosos: resultado.clima.mesesChuvosos,
+          anoReferencia: resultado.clima.anoReferencia,
         };
       } else {
         embrapaCompat.clima = {
@@ -681,7 +1172,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     }
   });
 
-  app.post("/api/matching/assets/:id/ndvi-grid", async (req, res) => {
+  app.post("/api/assets/:id/ndvi-grid", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const asset = await storage.getAsset(Number(req.params.id));
@@ -767,71 +1258,76 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     }
   });
 
-  app.post("/api/matching/assets/:id/enriquecer-completo", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+  app.post("/api/assets/:id/enriquecer-completo", async (req, res) => {
+    try {
+      if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
 
-    const asset = await storage.getAsset(Number(req.params.id));
-    if (!asset) return res.status(404).json({ message: "Ativo não encontrado" });
+      const asset = await storage.getAsset(Number(req.params.id));
+      if (!asset) return res.status(404).json({ message: "Ativo não encontrado" });
 
-    const campos = asset.camposEspecificos ?? {};
-    const lat = Number(campos.latitude);
-    const lon = Number(campos.longitude);
-    const polygon = campos.geoPolygon || null;
-    const cpfCnpjProprietario = campos.cpfProprietario || campos.cnpjProprietario || null;
+      const campos = asset.camposEspecificos ?? {};
+      const lat = Number(campos.latitude);
+      const lon = Number(campos.longitude);
+      const polygon = campos.geoPolygon || null;
+      const cpfCnpjProprietario = campos.cpfProprietario || campos.cnpjProprietario || null;
 
-    const resultados: any = { enriquecidoEm: new Date().toISOString() };
-    const erros: string[] = [];
+      const resultados: any = { enriquecidoEm: new Date().toISOString() };
+      const erros: string[] = [];
 
-    const [ibamaCnpj, ibamaGeo, mapbiomas, sentinelNdvi] = await Promise.allSettled([
-      cpfCnpjProprietario
-        ? consultarEmbargoIbama(cpfCnpjProprietario)
-        : Promise.resolve(null),
-      lat && lon
-        ? consultarEmbargoIbamaCoordenadas(lat, lon)
-        : Promise.resolve(null),
-      lat && lon
-        ? getUsoTerraMapBiomas(lat, lon, campos.car_cod_imovel || asset.carCodImovel || undefined)
-        : Promise.resolve(null),
-      lat && lon
-        ? getNDVISentinel(lat, lon, polygon)
-        : Promise.resolve(null),
-    ]);
+      const [ibamaCnpj, ibamaGeo, mapbiomas, sentinelNdvi] = await Promise.allSettled([
+        cpfCnpjProprietario
+          ? consultarEmbargoIbama(cpfCnpjProprietario)
+          : Promise.resolve(null),
+        lat && lon
+          ? consultarEmbargoIbamaCoordenadas(lat, lon)
+          : Promise.resolve(null),
+        lat && lon
+          ? getUsoTerraMapBiomas(lat, lon, campos.car_cod_imovel || asset.carCodImovel || undefined)
+          : Promise.resolve(null),
+        lat && lon
+          ? getNDVISentinel(lat, lon, polygon)
+          : Promise.resolve(null),
+      ]);
 
-    if (ibamaCnpj.status === "fulfilled" && ibamaCnpj.value) {
-      resultados.ibamaProprietario = ibamaCnpj.value;
-    } else erros.push("IBAMA CPF/CNPJ");
+      if (ibamaCnpj.status === "fulfilled" && ibamaCnpj.value) {
+        resultados.ibamaProprietario = ibamaCnpj.value;
+      } else erros.push("IBAMA CPF/CNPJ");
 
-    if (ibamaGeo.status === "fulfilled" && ibamaGeo.value) {
-      resultados.ibamaGeo = ibamaGeo.value;
-    } else erros.push("IBAMA Geo");
+      if (ibamaGeo.status === "fulfilled" && ibamaGeo.value) {
+        resultados.ibamaGeo = ibamaGeo.value;
+      } else erros.push("IBAMA Geo");
 
-    if (mapbiomas.status === "fulfilled" && mapbiomas.value) {
-      resultados.mapbiomas = mapbiomas.value;
-    } else erros.push("MapBiomas");
+      if (mapbiomas.status === "fulfilled" && mapbiomas.value) {
+        resultados.mapbiomas = mapbiomas.value;
+      } else erros.push("MapBiomas");
 
-    if (sentinelNdvi.status === "fulfilled" && sentinelNdvi.value) {
-      resultados.ndviHD = sentinelNdvi.value;
-    } else erros.push("Sentinel NDVI");
+      if (sentinelNdvi.status === "fulfilled" && sentinelNdvi.value) {
+        resultados.ndviHD = sentinelNdvi.value;
+      } else erros.push("Sentinel NDVI");
 
-    const temEmbargoIbama =
-      resultados.ibamaProprietario?.temEmbargo ||
-      resultados.ibamaGeo?.temEmbargo || false;
+      const temEmbargoIbama =
+        resultados.ibamaProprietario?.temEmbargo ||
+        resultados.ibamaGeo?.temEmbargo || false;
 
-    await storage.mergeAssetCampos(asset.id, {
-      enriquecimentoCompleto: resultados,
-      temEmbargoIbama,
-      enriquecimentoCompletoEm: new Date().toISOString(),
-    });
+      await storage.mergeAssetCampos(asset.id, {
+        enriquecimentoCompleto: resultados,
+        temEmbargoIbama,
+        enriquecimentoCompletoEm: new Date().toISOString(),
+      });
 
-    res.json({
-      message: `Enriquecimento concluído${erros.length > 0 ? ` (${erros.join(", ")} indisponíveis)` : ""}`,
-      resultados,
-      temEmbargoIbama,
-      erros,
-    });
+      res.json({
+        message: `Enriquecimento concluído${erros.length > 0 ? ` (${erros.join(", ")} indisponíveis)` : ""}`,
+        resultados,
+        temEmbargoIbama,
+        erros,
+      });
+    } catch (err: any) {
+      console.error("[enriquecer-completo] Erro:", err);
+      res.status(500).json({ message: err?.message || "Erro interno no enriquecimento completo" });
+    }
   });
 
-  app.get("/api/matching/assets/:id/ambiental", async (req, res) => {
+  app.get("/api/assets/:id/ambiental", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const user = req.user as any;
@@ -880,7 +1376,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
             "Maranhão": "MA", "Piauí": "PI", "Ceará": "CE", "Pernambuco": "PE", "Tocantins": "TO",
             "Rondônia": "RO", "Acre": "AC", "Amapá": "AP", "Roraima": "RR", "Sergipe": "SE",
             "Alagoas": "AL", "Rio Grande do Norte": "RN", "Paraíba": "PB", "Espírito Santo": "ES",
-            "Distrito Federal": "DF" }[ufName] || "";
+            "Distrito Federal": "DF" }[ufName as string] as string || "";
         if (munName && ufSigla) {
           try {
             const munResult = await consultarEmbargoIbamaMunicipio(munName, ufSigla);
@@ -931,7 +1427,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     }
   });
 
-  app.post("/api/matching/assets/:id/contexto-regional", async (req, res) => {
+  app.post("/api/assets/:id/contexto-regional", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const user = req.user as any;
@@ -964,7 +1460,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     }
   });
 
-  app.post("/api/matching/assets/:id/enriquecer-caf", async (req, res) => {
+  app.post("/api/assets/:id/enriquecer-caf", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     const user = req.user as any;
     const id = Number(req.params.id);
@@ -1017,7 +1513,63 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
       });
 
       if (!result.sucesso) {
-        return res.status(502).json({ message: "API do CAF indisponível no momento" });
+        try {
+          const localRows = await db.execute(sql`
+            SELECT * FROM norion_caf_registros
+            WHERE (municipio ILIKE ${`%${municipio}%`} OR uf = ${estado})
+            ORDER BY created_at DESC
+            LIMIT 50
+          `);
+          const localData = (localRows as any).rows || localRows;
+          if (localData && localData.length > 0) {
+            const produtoresLocal = localData.map((r: any) => ({
+              idUfpa: r.numero_ufpa || "",
+              nufpa: r.numero_ufpa || "",
+              nome: r.nome_titular || "",
+              cpfMascarado: r.cpf_titular || "",
+              situacao: r.status === "ativo" ? "ATIVA" : r.status?.toUpperCase() || "ATIVA",
+              grauParentesco: "Titular",
+              municipio: r.municipio || municipio || "",
+              uf: r.uf || estado || "",
+              atividade: r.atividade_principal || "",
+              areaHa: r.area_ha ? Number(r.area_ha) : null,
+              condicaoPosse: r.condicao_posse || "",
+              numImoveis: r.num_imoveis || 1,
+              enquadramentoPronaf: r.enquadramento_pronaf === "Sim",
+              dataValidade: r.validade || null,
+              dataInscricao: r.data_inscricao || null,
+              entidadeCadastradora: r.entidade_nome || "",
+              membros: r.composicao_familiar || [],
+              classificacao: "pendente" as const,
+              extraidoEm: r.created_at || new Date().toISOString(),
+              perfil: r.norion_profile || "baixo",
+              fonteLocal: true,
+            }));
+            const familias = new Set(produtoresLocal.map((p: any) => p.idUfpa || p.nufpa));
+            const cafData = {
+              produtores: produtoresLocal,
+              totalProdutores: produtoresLocal.length,
+              totalFamilias: familias.size,
+              totalMembros: produtoresLocal.reduce((s: number, p: any) => s + (p.membros?.length || 0), 0),
+              municipio,
+              codigoMunicipio,
+              consultadoEm: new Date().toISOString(),
+              fonteLocal: true,
+            };
+            return res.json({ success: true, cafData, fonteLocal: true });
+          }
+        } catch (localErr: any) {
+          console.log("[enriquecer-caf] Fallback local DB também falhou:", localErr.message);
+        }
+
+        const motivo = (result as any).motivo || "API do CAF indisponível no momento";
+        return res.status(502).json({
+          message: motivo,
+          httpStatus: (result as any).httpStatus,
+          detalhes: (result as any).httpStatus === 403
+            ? "O site caf.mda.gov.br está bloqueando conexões deste servidor (HTTP 403). Isso pode ser temporário ou um bloqueio de IP pelo firewall do governo."
+            : undefined,
+        });
       }
 
       const produtores = result.dados.map((d: any) => {
@@ -1079,8 +1631,12 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     }
   });
 
+  logSicarWarningOnce();
+
   app.post("/api/enrichment/ccir/:assetId", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+
+    const ROUTE_TIMEOUT_MS = 60000;
 
     try {
       const user = req.user as any;
@@ -1090,70 +1646,578 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
         return res.status(404).json({ message: "Ativo não encontrado" });
       }
 
-      let cpfCnpj = req.body?.cpfCnpj as string | undefined;
-      let resolvedFrom = "manual";
-      const campos = (asset.camposEspecificos as any) || {};
+      // Ativo minerário: CCIR por imóvel identificado sobre o polígono do
+      // processo (parcelas SIGEF sobrepostas + imóveis CAR), em vez do CAR
+      // do próprio ativo. Consolida denominação, código INCRA, detentores
+      // (SNCR) e situação — persistido por imóvel em campos.ccirImoveis.
+      if (isTipoMinerario(asset.type)) {
+        const campos = (asset.camposEspecificos as any) || {};
+        const parcelasSobrepostas: any[] = (campos.sigefParcelas?.parcelas || []).filter((p: any) => p.relacao === "sobreposta");
+        const carSobrepostos: any[] = (campos.carImoveis?.imoveis || []).filter((i: any) => i.relacao === "sobreposto");
 
-      if (!cpfCnpj || typeof cpfCnpj !== "string" || cpfCnpj.replace(/\D/g, "").length < 11) {
-        if (campos.cnpj && typeof campos.cnpj === "string" && campos.cnpj.replace(/\D/g, "").length >= 11) {
-          cpfCnpj = campos.cnpj;
-          resolvedFrom = "camposEspecificos.cnpj";
-          console.log(`[CCIR] Auto-resolved document from camposEspecificos.cnpj`);
+        if (parcelasSobrepostas.length === 0 && carSobrepostos.length === 0) {
+          // pré-condição ausente também responde o contrato de três estados
+          return res.status(422).json(payloadFalhaConsulta({
+            fonte: "CCIR — consolidação fundiária (SIGEF + SNCR + CAR)",
+            tierFonte: "T1",
+            motivoFalha: "Nenhum imóvel identificado sobre o processo. Consulte primeiro as parcelas SIGEF e os imóveis CAR na aba Geo (Base Fundiária).",
+            identificadorVinculo: { tipo: "geometria", valor: "imóveis sobrepostos ao polígono do processo ANM", proveniencia: "documento_oficial", origem: "SIGMINE + consultas SIGEF/CAR do ativo" },
+          }));
         }
 
-        if (!cpfCnpj && asset.linkedCompanyId) {
-          const company = await storage.getCompany(asset.linkedCompanyId);
-          if (company?.cnpj && company.cnpj.replace(/\D/g, "").length >= 11) {
-            cpfCnpj = company.cnpj;
-            resolvedFrom = "linkedCompany.cnpj";
-            console.log(`[CCIR] Auto-resolved document from linked company (id=${asset.linkedCompanyId})`);
+        // Detentores via cache SNCR (melhor esforço, sem captcha) — a falha
+        // fica explícita no payload em vez de engolida
+        let municipiosPendentes: any[] = [];
+        let estadoSncr: "registro_existente" | "consultada_sem_registro" | "nao_consultada" = "consultada_sem_registro";
+        let motivoEstadoSncr: string | null = null;
+        try {
+          const { preencherDetentoresDoCacheSncr, municipiosPendentesSncr } = await import("../lib/sncr-detentores");
+          await preencherDetentoresDoCacheSncr(parcelasSobrepostas);
+          municipiosPendentes = await municipiosPendentesSncr(parcelasSobrepostas);
+        } catch (sncrErr: any) {
+          estadoSncr = "nao_consultada";
+          motivoEstadoSncr = `cache SNCR indisponível: ${sncrErr?.message || String(sncrErr)}`;
+        }
+
+        // Casamento SIGEF×CAR por geometria: parcela majoritariamente dentro do
+        // imóvel CAR ⇒ mesma propriedade ⇒ funde num único registro (melhor esforço).
+        let parcelaParaCar = new Map<string, string>();
+        let casamentoInfo: { abaixoLimiar: Map<string, { codImovel: string; fracaoPct: number }>; limiarPct: number } | undefined;
+        let casamentoRealizado = false;
+        let casamentoIndisponivelMotivo: string | null = null;
+        try {
+          // Reaproveita as geometrias já buscadas para o mapa (mesmas chaves de
+          // cache das rotas .../geometrias) — rede só para o que faltar.
+          const [sigefCache, carCache] = await Promise.all([
+            getCached<{ parcelas: any[] }>("sigef_geometrias", `${assetId}:${campos.sigefParcelasUpdatedAt || "sem-data"}`).catch(() => null),
+            getCached<{ imoveis: any[] }>("car_geometrias", `${assetId}:${campos.carImoveisUpdatedAt || "sem-data"}`).catch(() => null),
+          ]);
+          const geometriasCache = {
+            parcelas: (sigefCache?.parcelas || []).filter((p: any) => p.codigoParcela && p.geometry),
+            imoveis: (carCache?.imoveis || []).filter((i: any) => i.codImovel && i.geometry),
+          };
+          const cacheCompleto = geometriasCache.parcelas.length > 0 && geometriasCache.imoveis.length > 0;
+          // Só resolve a geometria do processo (potencialmente rede) se alguma fonte faltar no cache
+          const geometry = cacheCompleto ? null : await resolveProcessoGeometry(assetId, user?.orgId, asset);
+          if (geometry || cacheCompleto) {
+            const { casarParcelasSigefComCar } = await import("../lib/car-imoveis");
+            const casamento = await casarParcelasSigefComCar(
+              geometry,
+              resolveAssetUfs(asset),
+              parcelasSobrepostas.map((p: any) => p.codigoParcela).filter(Boolean),
+              carSobrepostos.map((i: any) => i.codImovel).filter(Boolean),
+              geometriasCache,
+            );
+            parcelaParaCar = casamento.casados;
+            casamentoInfo = { abaixoLimiar: casamento.abaixoLimiar, limiarPct: casamento.limiarPct };
+            casamentoRealizado = true;
+          } else {
+            casamentoIndisponivelMotivo = "geometria do processo indisponível para o casamento SIGEF×CAR — fontes exibidas separadamente";
           }
+        } catch (matchErr: any) {
+          console.warn("[CCIR-MINA] Casamento SIGEF×CAR indisponível:", matchErr.message);
+          casamentoIndisponivelMotivo = `casamento SIGEF×CAR indisponível: ${matchErr?.message || String(matchErr)} — fontes exibidas separadamente`;
         }
 
-        if (!cpfCnpj && campos.latitude && campos.longitude) {
-          console.log(`[CCIR] Attempting SIGEF coordinate-based resolution`);
-          const sigefDoc = await consultarParcelaSIGEFPorCoordenadas(campos.latitude, campos.longitude);
-          if (sigefDoc && sigefDoc.replace(/\D/g, "").length >= 11) {
-            cpfCnpj = sigefDoc;
-            resolvedFrom = "sigef.coordenadas";
-            console.log(`[CCIR] Auto-resolved document from SIGEF coordinates`);
-          }
+        // Consolida por código do imóvel (SNCR/INCRA) e funde SIGEF×CAR
+        const { consolidarImoveisFundiarios } = await import("../lib/ccir-fusao");
+        const imoveis = consolidarImoveisFundiarios(parcelasSobrepostas, carSobrepostos, parcelaParaCar, casamentoInfo);
+
+        const comDetentor = imoveis.filter((i) => i.detentores.length > 0).length;
+        if (estadoSncr !== "nao_consultada") {
+          estadoSncr = comDetentor > 0 ? "registro_existente" : "consultada_sem_registro";
         }
+        const ccirImoveis: any = {
+          disponivel: true,
+          consultadoEm: new Date().toISOString(),
+          fonte: "SIGEF/INCRA (espelho ArcGIS) + SNCR (detentores) + SICAR (CAR)",
+          // contrato de três estados no nível do módulo consolidado
+          estadoConsulta: imoveis.length > 0 ? "registro_existente" : "consultada_sem_registro",
+          situacaoRegistro: imoveis.length > 0 ? "indeterminada" : null,
+          tierFonte: "T1",
+          janelaCobertura: [campos.sigefParcelas?.janelaCobertura, campos.carImoveis?.janelaCobertura].filter(Boolean).join(" + ")
+            || "bases SIGEF/SNCR/CAR conforme as consultas de origem persistidas no ativo",
+          identificadorVinculo: { tipo: "geometria", valor: "imóveis sobrepostos ao polígono do processo ANM", proveniencia: "documento_oficial", origem: "SIGMINE + consultas SIGEF/CAR do ativo" },
+          // disponibilidade explícita das etapas de enriquecimento
+          estadoSncr,
+          motivoEstadoSncr,
+          casamentoRealizado,
+          casamentoIndisponivelMotivo,
+          totalImoveis: imoveis.length,
+          comCodigoIncra: imoveis.filter((i) => i.codigoIncra).length,
+          fundidosSigefCar: imoveis.filter((i) => i.origem === "SIGEF+CAR").length,
+          naoConsolidados: imoveis.filter((i) => i.consolidacao === "nao_consolidado").length,
+          comDetentor,
+          municipiosPendentesSncr: municipiosPendentes.length,
+          observacao: "O CCIR (certificado) é emitido por imóvel no SNCR/INCRA. Os dados acima consolidam as fontes públicas (SIGEF, SNCR e CAR) para os imóveis identificados sobre o processo.",
+          imoveis,
+        };
+
+        try {
+          await storage.mergeAssetCampos(assetId, {
+            ccirImoveis,
+            ccirImoveisUpdatedAt: ccirImoveis.consultadoEm,
+            // detentores eventualmente preenchidos pelo cache SNCR
+            sigefParcelas: campos.sigefParcelas,
+          });
+        } catch (persistErr: any) {
+          console.error("[CCIR-MINA] Falha ao persistir:", persistErr.message);
+        }
+
+        return res.json({ success: true, ccirImoveis });
       }
 
+      if (asset.type !== "TERRA" && asset.type !== "AGRO") {
+        return res.status(400).json({ message: "CCIR não se aplica a este tipo de ativo" });
+      }
+
+      const fontesTentadas: Array<{ fonte: string; status: string }> = [];
+      let resolvedFrom = "";
+      const campos = (asset.camposEspecificos as any) || {};
       let resultado: any = null;
 
-      if (cpfCnpj) {
-        resultado = await consultarCCIR(cpfCnpj);
+      const cpfCnpjManual = req.body?.cpfCnpj ? String(req.body.cpfCnpj).replace(/\D/g, '') : '';
+
+      const documentosExtraidos: string[] = [];
+      if (cpfCnpjManual && cpfCnpjManual.length >= 11) {
+        documentosExtraidos.push(cpfCnpjManual);
       }
 
-      if (!resultado && campos.latitude && campos.longitude) {
-        console.log(`[CCIR] Trying SICAR/PostGIS local lookup for coordinates ${campos.latitude}, ${campos.longitude}`);
-        resultado = await consultarCCIRViaSICAR(
-          parseFloat(campos.latitude),
-          parseFloat(campos.longitude),
-          campos.cafProdutores
-        );
-        if (resultado) {
-          resolvedFrom = "sicar.postgis";
+      if (campos.cafProdutores && Array.isArray(campos.cafProdutores)) {
+        for (const p of campos.cafProdutores) {
+          const doc = (p.cpf || p.cpfCnpj || p.documento || '').replace(/\D/g, '');
+          if (doc.length >= 11 && !documentosExtraidos.includes(doc)) {
+            documentosExtraidos.push(doc);
+          }
         }
+      }
+
+      if (campos.empresaCnpj) {
+        const doc = String(campos.empresaCnpj).replace(/\D/g, '');
+        if (doc.length >= 11 && !documentosExtraidos.includes(doc)) {
+          documentosExtraidos.push(doc);
+        }
+      }
+
+      const ownerDocFields = [
+        campos.proprietarioCpf, campos.proprietarioCnpj,
+        campos.cpfProprietario, campos.cnpjProprietario,
+      ];
+      for (const ownerDoc of ownerDocFields) {
+        if (ownerDoc) {
+          const doc = String(ownerDoc).replace(/\D/g, '');
+          if (doc.length >= 11 && !documentosExtraidos.includes(doc)) {
+            documentosExtraidos.push(doc);
+          }
+        }
+      }
+
+      if (campos.contatos && Array.isArray(campos.contatos)) {
+        for (const c of campos.contatos) {
+          const doc = (c.cpf || c.cnpj || c.cpfCnpj || c.documento || '').replace(/\D/g, '');
+          if (doc.length >= 11 && !documentosExtraidos.includes(doc)) {
+            documentosExtraidos.push(doc);
+          }
+        }
+      }
+
+      if (documentosExtraidos.length > 0) {
+        console.log(`[CCIR] Documentos disponíveis para busca: ${documentosExtraidos.length} (${cpfCnpjManual ? 'inclui manual' : 'extraídos do ativo'})`);
+      }
+
+      let lat = campos.latitude != null ? parseFloat(String(campos.latitude)) : NaN;
+      let lon = campos.longitude != null ? parseFloat(String(campos.longitude)) : NaN;
+      let coordSource = "";
+
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        coordSource = "coordenadas diretas";
+        console.log(`[CCIR] Fonte: coordenadas diretas do ativo: lat=${lat}, lon=${lon}`);
+      } else if (campos.carCentroidLat != null && campos.carCentroidLon != null) {
+        lat = parseFloat(String(campos.carCentroidLat));
+        lon = parseFloat(String(campos.carCentroidLon));
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+          coordSource = "centróide CAR salvo";
+          console.log(`[CCIR] Fonte: centróide CAR salvo: lat=${lat}, lon=${lon}`);
+        }
+      }
+
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        if (campos.carGeometria) {
+          try {
+            const geom = typeof campos.carGeometria === 'string' ? JSON.parse(campos.carGeometria) : campos.carGeometria;
+            if (geom?.coordinates) {
+              const coords = geom.type === 'Point' ? geom.coordinates :
+                geom.type === 'Polygon' ? geom.coordinates[0] :
+                geom.type === 'MultiPolygon' ? geom.coordinates[0][0] : null;
+              if (coords) {
+                const flatCoords = geom.type === 'Point' ? [coords] : coords;
+                const sumLon = flatCoords.reduce((s: number, c: number[]) => s + c[0], 0);
+                const sumLat = flatCoords.reduce((s: number, c: number[]) => s + c[1], 0);
+                lon = sumLon / flatCoords.length;
+                lat = sumLat / flatCoords.length;
+                coordSource = "geometria CAR salva";
+                console.log(`[CCIR] Fonte: geometria CAR salva: lat=${lat}, lon=${lon}`);
+              }
+            }
+          } catch (e) {
+            console.warn(`[CCIR] Erro ao extrair coordenadas da geometria CAR:`, e);
+          }
+        }
+      }
+
+      const needsSicarionResolve = !Number.isFinite(lat) || !Number.isFinite(lon);
+      const carCode = needsSicarionResolve ? (asset.carCodImovel || campos.codigoCar || campos.car_cod_imovel) : null;
+
+      if (!needsSicarionResolve) {
+        console.log(`[CCIR] Coordenadas resolvidas (fonte: ${coordSource}): lat=${lat}, lon=${lon}`);
+      } else if (!carCode) {
+        console.log(`[CCIR] Sem coordenadas e sem código CAR disponível para o ativo ${assetId}`);
+      } else {
+        console.log(`[CCIR] Sem coordenadas disponíveis. Resolução via Sicarion será tentada com CAR: ${carCode}`);
+      }
+
+      const enrichmentWork = async () => {
+        if (needsSicarionResolve && carCode) {
+          console.log(`[CCIR] Tentando resolver coordenadas via Sicarion com código CAR: ${carCode}`);
+          try {
+            const sicarionData = await sicarionFetch(`/api/sicar/${encodeURIComponent(carCode)}`);
+            if (sicarionData) {
+              const geom = sicarionData.geometry
+                || (sicarionData.type === 'FeatureCollection' && sicarionData.features?.[0]?.geometry ? sicarionData.features[0].geometry : null);
+
+              if (geom) {
+                let centroid: { lat: number; lon: number } | null = null;
+
+                if (geom.type === 'Point' && geom.coordinates) {
+                  centroid = {
+                    lat: Math.round(geom.coordinates[1] * 1e6) / 1e6,
+                    lon: Math.round(geom.coordinates[0] * 1e6) / 1e6,
+                  };
+                } else {
+                  centroid = computeCentroid(geom);
+                }
+
+                if (centroid) {
+                  lat = centroid.lat;
+                  lon = centroid.lon;
+                  coordSource = "Sicarion (código CAR)";
+                  console.log(`[CCIR] Fonte: Sicarion via código CAR: lat=${lat}, lon=${lon}`);
+
+                  const coordPatch: Record<string, any> = {
+                    latitude: centroid.lat,
+                    longitude: centroid.lon,
+                    carCentroidLat: centroid.lat,
+                    carCentroidLon: centroid.lon,
+                    carGeometria: geom,
+                  };
+                  await storage.mergeAssetCampos(assetId, coordPatch);
+                  console.log(`[CCIR] Coordenadas resolvidas via Sicarion salvas no ativo ${assetId}`);
+                } else {
+                  console.warn(`[CCIR] Sicarion retornou geometria mas não foi possível calcular centróide para CAR: ${carCode}`);
+                }
+              } else {
+                console.log(`[CCIR] Sicarion não retornou geometria para código CAR: ${carCode}`);
+              }
+            } else {
+              console.log(`[CCIR] Sicarion não retornou dados para código CAR: ${carCode}`);
+            }
+          } catch (e) {
+            console.warn(`[CCIR] Erro ao buscar geometria via Sicarion para CAR ${carCode}:`, e);
+          }
+        }
+
+        const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
+
+        const searchPromises: Array<Promise<{ fonte: string; resultado: any | null; erro?: string; isDocSearch: boolean }>> = [];
+
+        if (hasCoords) {
+          searchPromises.push(
+            (async () => {
+              console.log(`[CCIR] Tentando SIGEF API Pública por coordenadas: lat=${lat}, lon=${lon}`);
+              try {
+                const r = await consultarSIGEFPublicoPorCoordenadas(lat, lon);
+                if (r) {
+                  console.log(`[CCIR] Dados obtidos via SIGEF API Pública (coordenadas)`);
+                  return { fonte: 'SIGEF (coordenadas)', resultado: r, isDocSearch: false };
+                }
+                return { fonte: 'SIGEF (coordenadas)', resultado: null, erro: 'Área não coberta pelo SIGEF', isDocSearch: false };
+              } catch (e: any) {
+                const isTimeout = e.code === 'ECONNABORTED' || e.code === 'ETIMEDOUT';
+                return { fonte: 'SIGEF (coordenadas)', resultado: null, erro: isTimeout ? 'SIGEF não respondeu (timeout)' : `Erro: ${e.message}`, isDocSearch: false };
+              }
+            })()
+          );
+        }
+
+        const docsToSearch = documentosExtraidos.slice(0, 3);
+        for (const doc of docsToSearch) {
+          searchPromises.push(
+            (async () => {
+              console.log(`[CCIR] Tentando SIGEF API Pública por documento: ${doc.substring(0, 3)}***`);
+              try {
+                const r = await consultarSIGEFPorDocumento(doc);
+                if (r) {
+                  console.log(`[CCIR] Dados obtidos via SIGEF API Pública (documento ${doc.substring(0, 3)}***)`);
+                  return { fonte: `SIGEF (documento ${doc.substring(0, 3)}***)`, resultado: r, isDocSearch: true };
+                }
+                return { fonte: `SIGEF (documento ${doc.substring(0, 3)}***)`, resultado: null, erro: 'Nenhuma parcela encontrada para este documento', isDocSearch: true };
+              } catch (e: any) {
+                const isTimeout = e.code === 'ECONNABORTED' || e.code === 'ETIMEDOUT';
+                return { fonte: `SIGEF (documento ${doc.substring(0, 3)}***)`, resultado: null, erro: isTimeout ? 'SIGEF não respondeu (timeout)' : `Erro: ${e.message}`, isDocSearch: true };
+              }
+            })()
+          );
+        }
+
+        let sigefProprietariosCompletos: any[] = [];
+
+        if (searchPromises.length > 0) {
+          const results = await Promise.allSettled(searchPromises);
+
+          let coordResult: any = null;
+          let docResult: any = null;
+
+          for (const r of results) {
+            if (r.status === 'fulfilled') {
+              fontesTentadas.push({ fonte: r.value.fonte, status: r.value.resultado ? 'sucesso' : (r.value.erro || 'sem dados') });
+              if (r.value.resultado) {
+                if (r.value.resultado.proprietarios) {
+                  for (const sp of r.value.resultado.proprietarios) {
+                    if (sp.nome && !sp.nome.includes('*')) {
+                      sigefProprietariosCompletos.push(sp);
+                    }
+                  }
+                }
+                if (r.value.isDocSearch && !docResult) {
+                  docResult = { resultado: r.value.resultado, fonte: r.value.fonte };
+                } else if (!r.value.isDocSearch && !coordResult) {
+                  coordResult = { resultado: r.value.resultado, fonte: r.value.fonte };
+                }
+              }
+            } else {
+              fontesTentadas.push({ fonte: 'SIGEF', status: `Erro: ${r.reason?.message || 'desconhecido'}` });
+            }
+          }
+
+          if (coordResult) {
+            resultado = coordResult.resultado;
+            resolvedFrom = 'sigef.publico';
+            if (docResult && docResult.resultado.proprietarios) {
+              for (const dp of docResult.resultado.proprietarios) {
+                if (dp.nome || dp.cpfCnpj) {
+                  const already = resultado.proprietarios.some((p: any) => p.nome === dp.nome && p.cpfCnpj === dp.cpfCnpj);
+                  if (!already) {
+                    resultado.proprietarios.push(dp);
+                  }
+                }
+              }
+            }
+          } else if (docResult) {
+            resultado = docResult.resultado;
+            resolvedFrom = 'sigef.documento';
+          }
+        }
+
+        if (!resultado && hasCoords) {
+          if (isSicarDisponivel()) {
+            console.log(`[CCIR] Fallback: SICAR/PostGIS para coordenadas ${lat}, ${lon}`);
+            try {
+              resultado = await consultarCCIRViaSICAR(lat, lon, campos.cafProdutores);
+              if (resultado) {
+                resolvedFrom = "sicar.postgis";
+                fontesTentadas.push({ fonte: 'SICAR/PostGIS', status: 'sucesso' });
+                console.log(`[CCIR] Dados obtidos via SICAR/PostGIS`);
+              } else {
+                fontesTentadas.push({ fonte: 'SICAR/PostGIS', status: 'Nenhum imóvel encontrado nas coordenadas' });
+              }
+            } catch (e: any) {
+              fontesTentadas.push({ fonte: 'SICAR/PostGIS', status: `Erro: ${e.message}` });
+            }
+          }
+        }
+
+        if (resultado && resultado.proprietarios && sigefProprietariosCompletos.length > 0) {
+          const hasMaskedProps = resultado.proprietarios.some((p: any) =>
+            (p.nome || '').includes('*') || (p.cpfCnpj || '').includes('*'));
+          if (hasMaskedProps) {
+            const merged: any[] = [];
+            for (const p of resultado.proprietarios) {
+              const isMasked = (p.nome || '').includes('*') || (p.cpfCnpj || '').includes('*');
+              if (!isMasked) {
+                merged.push(p);
+                continue;
+              }
+              const cafNameParts = (p.nome || '').replace(/\*/g, '').split(/\s+/).filter((w: string) => w.length > 2);
+              const cafDocDigits = (p.cpfCnpj || '').replace(/\D/g, '').replace(/\*/g, '');
+              const match = sigefProprietariosCompletos.find((sp: any) => {
+                const sigefNameParts = (sp.nome || '').split(/\s+/);
+                const nameMatch = cafNameParts.some((part: string) =>
+                  sigefNameParts.some((sp2: string) => sp2.toLowerCase() === part.toLowerCase()));
+                const sigefDoc = (sp.cpfCnpj || '').replace(/\D/g, '');
+                const docMatch = cafDocDigits.length >= 3 && sigefDoc.includes(cafDocDigits.substring(0, 3));
+                return nameMatch || docMatch;
+              });
+              if (match) {
+                merged.push({ ...match, tipo: p.tipo || match.tipo });
+              } else {
+                merged.push(p);
+              }
+            }
+            for (const sp of sigefProprietariosCompletos) {
+              const already = merged.some((m: any) =>
+                m.nome === sp.nome || ((m.cpfCnpj || '').replace(/\D/g, '') === (sp.cpfCnpj || '').replace(/\D/g, '')));
+              if (!already) merged.push(sp);
+            }
+            resultado.proprietarios = merged;
+            console.log(`[CCIR] Proprietários SIGEF (completos) priorizados sobre CAF (mascarados). Total: ${merged.length}`);
+          }
+        }
+
+        if (resultado && resultado.proprietarios && campos.cafProdutores && Array.isArray(campos.cafProdutores) && campos.cafProdutores.length > 0) {
+          const cafList = campos.cafProdutores;
+          const normalize = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+          const allCafPeople: Array<{ nome: string; cpf: string }> = [];
+          for (const caf of cafList) {
+            const cafCpf = (caf.cpf || caf.cpfCnpj || caf.documento || caf.cpfMascarado || '').replace(/\D/g, '');
+            if (caf.nome && cafCpf.length >= 11 && !cafCpf.includes('*')) {
+              allCafPeople.push({ nome: caf.nome, cpf: cafCpf });
+            }
+            if (caf.membros && Array.isArray(caf.membros)) {
+              for (const m of caf.membros) {
+                const mCpf = (m.cpf || '').replace(/\D/g, '');
+                if (m.nome && mCpf.length >= 11 && !mCpf.includes('*')) {
+                  allCafPeople.push({ nome: m.nome, cpf: mCpf });
+                }
+              }
+            }
+          }
+
+          if (allCafPeople.length > 0) {
+            resultado.proprietarios = resultado.proprietarios.map((p: any) => {
+              const nomeMasked = (p.nome || '').includes('*');
+              const cpfMasked = (p.cpfCnpj || '').includes('*');
+              if (!nomeMasked && !cpfMasked) return p;
+
+              const maskedDoc = (p.cpfCnpj || '');
+              const maskedDigitsAndStars = maskedDoc.replace(/[^0-9*]/g, '');
+              const prefixDigits = (maskedDigitsAndStars.match(/^(\d+)/) || ['', ''])[1];
+              const suffixDigits = (maskedDigitsAndStars.match(/(\d+)$/) || ['', ''])[1];
+              const visibleDigitCount = (maskedDigitsAndStars.match(/\d/g) || []).length;
+              const propNameParts = (p.nome || '').replace(/\*/g, '').split(/\s+/).filter((w: string) => w.length >= 2);
+              const propNameNorm = propNameParts.map((w: string) => normalize(w));
+
+              const scoredMatches: Array<{ caf: typeof allCafPeople[0]; score: number }> = [];
+
+              for (const caf of allCafPeople) {
+                let score = 0;
+
+                if (cpfMasked && visibleDigitCount >= 3 && (prefixDigits.length >= 2 || suffixDigits.length >= 2)) {
+                  const prefixOk = !prefixDigits || caf.cpf.startsWith(prefixDigits);
+                  const suffixOk = !suffixDigits || caf.cpf.endsWith(suffixDigits);
+                  if (prefixOk && suffixOk) {
+                    score += visibleDigitCount >= 5 ? 10 : 6;
+                  }
+                }
+
+                if (propNameNorm.length >= 1) {
+                  const cafNameNorm = caf.nome.split(/\s+/).map((w: string) => normalize(w));
+                  const matchCount = propNameNorm.filter((part: string) =>
+                    cafNameNorm.some((cn: string) => cn === part)
+                  ).length;
+                  if (matchCount >= 2) score += 5;
+                  else if (matchCount === 1 && score > 0) score += 3;
+                }
+
+                if (score > 0) scoredMatches.push({ caf, score });
+              }
+
+              if (scoredMatches.length === 0) return p;
+
+              scoredMatches.sort((a, b) => b.score - a.score);
+              const best = scoredMatches[0];
+              const secondBest = scoredMatches[1];
+              if (secondBest && secondBest.score === best.score) return p;
+              if (best.score < 3) return p;
+
+              const cpfFormatado = best.caf.cpf.length === 14
+                ? best.caf.cpf.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5')
+                : best.caf.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+              return {
+                ...p,
+                nome: nomeMasked ? best.caf.nome : p.nome,
+                cpfCnpj: cpfMasked ? cpfFormatado : p.cpfCnpj,
+              };
+            });
+            console.log(`[CCIR] Cruzamento CAF aplicado aos proprietários mascarados. cafPeople=${allCafPeople.length}`);
+          }
+        }
+
+        if (resultado && cpfCnpjManual && resultado.proprietarios) {
+          const docJaPresente = resultado.proprietarios.some((p: any) => {
+            const docLimpo = (p.cpfCnpj || '').replace(/\D/g, '').replace(/\*/g, '');
+            return docLimpo.length > 0 && cpfCnpjManual.includes(docLimpo);
+          });
+          if (!docJaPresente) {
+            resultado.proprietarios.push({
+              nome: '',
+              cpfCnpj: cpfCnpjManual,
+              tipo: 'Informado manualmente',
+            });
+          }
+        }
+
+        return resultado;
+      };
+
+      const timeoutPromise = new Promise<null>((resolve) => {
+        setTimeout(() => {
+          console.warn(`[CCIR] Timeout global de ${ROUTE_TIMEOUT_MS / 1000}s atingido para ativo ${assetId}`);
+          resolve(null);
+        }, ROUTE_TIMEOUT_MS);
+      });
+
+      const TIMED_OUT_SENTINEL = Symbol('timed_out');
+      const timeoutSentinel = timeoutPromise.then(() => TIMED_OUT_SENTINEL);
+      const raceResult = await Promise.race([enrichmentWork(), timeoutSentinel]);
+      const didTimeout = raceResult === TIMED_OUT_SENTINEL;
+      resultado = didTimeout ? null : raceResult;
+
+      if (didTimeout) {
+        fontesTentadas.push({ fonte: 'Global', status: 'Timeout — consulta excedeu o tempo limite' });
       }
 
       if (!resultado) {
-        if (!cpfCnpj) {
-          return res.status(400).json({
-            message: "Não foi possível determinar o CPF/CNPJ automaticamente. Informe manualmente.",
-            autoResolveAttempted: true,
-          });
+        const sugestoes: string[] = [];
+        if (documentosExtraidos.length === 0) {
+          sugestoes.push('Informe o CPF/CNPJ do proprietário para busca direta');
         }
-        return res.status(502).json({ message: "Não foi possível consultar o CCIR." });
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          sugestoes.push('Preencha as coordenadas ou código CAR do ativo');
+        }
+        if (didTimeout) {
+          sugestoes.push('Tente novamente — o SIGEF pode estar lento');
+        }
+
+        return res.status(404).json({
+          message: didTimeout
+            ? "Consulta CCIR excedeu o tempo limite."
+            : "Não foi possível obter dados CCIR.",
+          fontesTentadas: fontesTentadas.map(f => `${f.fonte} (${f.status})`),
+          sugestao: sugestoes.join('. ') || 'Verifique se o ativo possui código CAR ou coordenadas válidas.',
+          autoResolveAttempted: true,
+          timedOut: didTimeout,
+        });
       }
 
       const hasSubstantiveData = resultado.denominacao || resultado.codigoIncra || resultado.nirf ||
         resultado.proprietarios.length > 0 || resultado.classificacaoFundiaria;
 
       if (!hasSubstantiveData) {
-        return res.status(404).json({ message: "Nenhum dado CCIR encontrado." });
+        return res.status(404).json({
+          message: "Nenhum dado CCIR encontrado.",
+          fontesTentadas: fontesTentadas.map(f => `${f.fonte} (${f.status})`),
+          sugestao: documentosExtraidos.length === 0 ? 'Informe o CPF/CNPJ do proprietário' : 'Verifique as coordenadas do ativo',
+        });
       }
 
       const ccirPatch: Record<string, any> = {
@@ -1173,10 +2237,443 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
 
       await storage.mergeAssetCampos(assetId, ccirPatch);
 
-      res.json({ success: true, ccir: ccirPatch, resolvedFrom });
+      res.json({ success: true, ccir: ccirPatch, resolvedFrom, fontesTentadas: fontesTentadas.map(f => `${f.fonte} (${f.status})`) });
     } catch (error: any) {
       console.error("[CCIR] Erro:", error);
-      res.status(500).json({ message: error.message || "Erro ao consultar CCIR" });
+      res.status(500).json(payloadFalhaConsulta({
+        fonte: "CCIR — consolidação fundiária (SIGEF + SNCR + CAR)",
+        tierFonte: "T1",
+        motivoFalha: error.message || "Erro ao consultar CCIR",
+      }));
     }
+  });
+
+  app.post("/api/assets/:id/enriquecer-tudo", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const orgId = getOrgId(req);
+      const asset = await storage.getAsset(Number(req.params.id));
+      if (!asset || asset.orgId !== orgId) return res.status(404).json({ message: "Ativo não encontrado" });
+
+      const assetId = asset.id;
+      const isTerraAgro = ["TERRA", "AGRO"].includes(asset.type);
+      const isMinerario = isTipoMinerario(asset.type);
+      const port = parseInt(process.env.PORT || "5000", 10);
+      const baseUrl = `http://127.0.0.1:${port}`;
+      const cookie = req.headers.cookie || "";
+
+      type StepResult = { id: string; label: string; status: "success" | "error"; error?: string };
+      const results: StepResult[] = [];
+
+      // Executa uma rota interna preservando, em falha, o motivo específico
+      // (mensagem do corpo JSON da resposta, timeout ou falha de rede) para
+      // que o resumo do enriquecimento mostre algo acionável.
+      type CallResult = { ok: boolean; error?: string };
+      const resumirErro = (msg: string) => (msg.length > 220 ? `${msg.slice(0, 217)}…` : msg);
+      const callInternal = async (method: string, path: string, body?: any): Promise<CallResult> => {
+        try {
+          const resp = await fetch(`${baseUrl}${path}`, {
+            method,
+            headers: { "Content-Type": "application/json", "Cookie": cookie },
+            body: method === "GET" ? undefined : JSON.stringify(body || {}),
+            signal: AbortSignal.timeout(120000),
+          });
+          if (resp.ok) return { ok: true };
+          let motivo = "";
+          try {
+            const data: any = await resp.json();
+            if (typeof data?.message === "string") motivo = data.message.trim();
+          } catch { /* corpo não-JSON */ }
+          return { ok: false, error: resumirErro(motivo || `serviço respondeu HTTP ${resp.status}`) };
+        } catch (e: any) {
+          if (e?.name === "TimeoutError" || e?.name === "AbortError") {
+            return { ok: false, error: "tempo esgotado (120s) — o serviço demorou para responder" };
+          }
+          return { ok: false, error: resumirErro(`falha de rede interna: ${e?.message || e}`) };
+        }
+      };
+      const stepResult = (id: string, label: string, r: CallResult, fallback: string): StepResult =>
+        r.ok ? { id, label, status: "success" } : { id, label, status: "error", error: r.error || fallback };
+
+      const saveProgress = async (stepResults: StepResult[]) => {
+        try {
+          await storage.mergeAssetCampos(assetId, {
+            enrichmentAllProgress: {
+              steps: stepResults,
+              updatedAt: new Date().toISOString(),
+              running: true,
+            },
+          });
+        } catch {}
+      };
+
+      const allStepDefs = isTerraAgro
+        ? [
+            { id: "sicar", label: "Geo & CAR" },
+            { id: "embrapa_ambiental", label: "Embrapa + Ambiental" },
+            { id: "ccir", label: "CCIR / INCRA" },
+            { id: "deepintel", label: "Deep Intelligence" },
+          ]
+        : isMinerario
+        ? [
+            { id: "sigef_parcelas", label: "Parcelas SIGEF" },
+            { id: "car_imoveis", label: "Imóveis CAR" },
+            { id: "ccir", label: "CCIR / INCRA" },
+            { id: "deepintel", label: "Deep Intelligence" },
+          ]
+        : [
+            { id: "deepintel", label: "Deep Intelligence" },
+          ];
+
+      try {
+        await storage.mergeAssetCampos(assetId, {
+          enrichmentAllProgress: {
+            steps: allStepDefs.map((s, i) => ({ ...s, status: i === 0 ? "running" : "pending" })),
+            updatedAt: new Date().toISOString(),
+            running: true,
+          },
+        });
+      } catch {}
+
+      if (isTerraAgro) {
+        const sicar = await callInternal("POST", `/api/assets/${assetId}/enriquecer-sicar`);
+        results.push(stepResult("sicar", "Geo & CAR", sicar, "Falha na consulta SICAR"));
+        await saveProgress(results);
+
+        const [embrapaRes, completoRes, ambientalRes] = await Promise.allSettled([
+          callInternal("POST", `/api/assets/${assetId}/enriquecer-embrapa`, { force: true }),
+          callInternal("POST", `/api/assets/${assetId}/enriquecer-completo`),
+          callInternal("GET", `/api/assets/${assetId}/ambiental`),
+        ]);
+        const settle = (r: PromiseSettledResult<CallResult>): CallResult =>
+          r.status === "fulfilled" ? r.value : { ok: false, error: "erro interno" };
+        const partes = [
+          { nome: "Embrapa", r: settle(embrapaRes) },
+          { nome: "IBAMA/MapBiomas/NDVI", r: settle(completoRes) },
+          { nome: "Ambiental", r: settle(ambientalRes) },
+        ];
+        const falhas = partes.filter((p) => !p.r.ok);
+        const detalheFalhas = falhas.map((p) => `${p.nome}: ${p.r.error || "falha"}`).join("; ");
+        if (falhas.length === 0) {
+          results.push({ id: "embrapa_ambiental", label: "Embrapa + Ambiental", status: "success" });
+        } else if (falhas.length === partes.length) {
+          results.push({ id: "embrapa_ambiental", label: "Embrapa + Ambiental", status: "error", error: resumirErro(`Todas as consultas falharam — ${detalheFalhas}`) });
+        } else {
+          results.push({ id: "embrapa_ambiental", label: "Embrapa + Ambiental", status: "success", error: resumirErro(`Parcial — ${detalheFalhas}`) });
+        }
+        await saveProgress(results);
+
+        const ccir = await callInternal("POST", `/api/enrichment/ccir/${assetId}`);
+        results.push(stepResult("ccir", "CCIR / INCRA", ccir, "Falha na consulta CCIR"));
+        await saveProgress(results);
+      }
+
+      if (isMinerario) {
+        // Base fundiária em cadeia: SIGEF → CAR → CCIR (a CCIR consome os dois primeiros).
+        // Cada etapa tolera falha individual e é reportada no resumo com o motivo real.
+        const sigef = await callInternal("POST", `/api/assets/${assetId}/sigef-parcelas`);
+        results.push(stepResult("sigef_parcelas", "Parcelas SIGEF", sigef, "Falha na consulta de parcelas SIGEF"));
+        await saveProgress(results);
+
+        // A rota de CAR re-tenta o SICAR internamente e deriva a UF das
+        // parcelas SIGEF recém-salvas quando o cadastro não tem estado.
+        const car = await callInternal("POST", `/api/assets/${assetId}/car-imoveis`);
+        results.push(stepResult("car_imoveis", "Imóveis CAR", car, "Falha na consulta de imóveis CAR"));
+        await saveProgress(results);
+
+        const ccirMina = await callInternal("POST", `/api/enrichment/ccir/${assetId}`);
+        results.push(stepResult("ccir", "CCIR / INCRA", ccirMina, "Falha na consolidação CCIR"));
+        await saveProgress(results);
+      }
+
+      const di = await callInternal("POST", `/api/ai/deep-intel/${assetId}`);
+      results.push(stepResult("deepintel", "Deep Intelligence", di, "Falha na análise inteligente"));
+
+      await storage.mergeAssetCampos(assetId, {
+        enrichmentAllProgress: {
+          steps: results,
+          updatedAt: new Date().toISOString(),
+          running: false,
+          completedAt: new Date().toISOString(),
+        },
+      });
+
+      const errorCount = results.filter(r => r.status === "error").length;
+      res.json({
+        success: errorCount === 0,
+        partial: errorCount > 0 && errorCount < results.length,
+        steps: results,
+        errorCount,
+        totalSteps: results.length,
+      });
+    } catch (error: any) {
+      console.error("[Enriquecer-Tudo] Erro:", error);
+      res.status(500).json({ message: error.message || "Erro no enriquecimento completo" });
+    }
+  });
+
+  // ── Backfill de sobreposição em hectares (admin) ─────────────────────────
+  // Ativos MINA/JAZIDA consultados antes da padronização "X ha (Y%)" têm
+  // sigefParcelas/carImoveis/ccirImoveis persistidos SEM sobreposicaoHa (por
+  // decisão de design nunca inventamos "0 ha"). Esta rotina reexecuta a
+  // consulta SIGEF/CAR + consolidação para esses ativos e grava via merge
+  // atômico apenas as chaves alteradas.
+  type BackfillErro = { assetId: number; nome: string | null; erro: string };
+  let backfillSobreposicao: {
+    running: boolean;
+    startedAt: string | null;
+    finishedAt: string | null;
+    total: number;
+    processados: number;
+    atualizados: number;
+    erros: BackfillErro[];
+  } = { running: false, startedAt: null, finishedAt: null, total: 0, processados: 0, atualizados: 0, erros: [] };
+
+  const faltaHa = (itens: any[] | undefined | null): boolean =>
+    Array.isArray(itens) && itens.length > 0 && itens.some((x: any) => x && x.sobreposicaoHa == null);
+
+  function precisaBackfillSobreposicao(campos: any): boolean {
+    return (
+      faltaHa(campos?.sigefParcelas?.parcelas) ||
+      faltaHa(campos?.carImoveis?.imoveis) ||
+      faltaHa(campos?.ccirImoveis?.imoveis)
+    );
+  }
+
+  // Reprocessa um ativo: reconsulta SIGEF e/ou CAR (só as fontes já persistidas)
+  // e reconsolida a base fundiária, gravando apenas as chaves alteradas.
+  async function backfillSobreposicaoAtivo(asset: any): Promise<boolean> {
+    const assetId = asset.id as number;
+    const campos = (asset.camposEspecificos as any) || {};
+    const temSigef = Array.isArray(campos.sigefParcelas?.parcelas) && campos.sigefParcelas.parcelas.length > 0;
+    const temCar = Array.isArray(campos.carImoveis?.imoveis) && campos.carImoveis.imoveis.length > 0;
+    const temCcir = Array.isArray(campos.ccirImoveis?.imoveis) && campos.ccirImoveis.imoveis.length > 0;
+
+    const geometry = await resolveProcessoGeometry(assetId, asset.orgId, asset);
+    if (!geometry) throw new Error("geometria do processo indisponível");
+
+    const patch: Record<string, any> = {};
+    let sigefAtual = campos.sigefParcelas;
+    let carAtual = campos.carImoveis;
+    let sigefGeometrias: any[] = [];
+    let carGeometrias: any[] = [];
+
+    if (temSigef) {
+      const { consultarParcelasSigef } = await import("../lib/sigef-parcelas");
+      const resultado = await consultarParcelasSigef(geometry);
+      if (!resultado.disponivel) throw new Error(resultado.erro || "serviço SIGEF indisponível");
+      const { geometrias, ...resultadoSemGeometrias } = resultado;
+      sigefGeometrias = geometrias || [];
+      sigefAtual = resultadoSemGeometrias;
+      const updatedAt = new Date().toISOString();
+      patch.sigefParcelas = resultadoSemGeometrias;
+      patch.sigefParcelasUpdatedAt = updatedAt;
+      // preenche o cache de geometrias (mesma chave das rotas .../geometrias)
+      try {
+        const porCodigo = new Map(resultado.parcelas.filter((p) => p.codigoParcela).map((p) => [p.codigoParcela, p]));
+        const parcelasCache = sigefGeometrias
+          .filter((g: any) => g.codigoParcela && porCodigo.has(g.codigoParcela))
+          .map((g: any) => {
+            const p = porCodigo.get(g.codigoParcela)!;
+            return {
+              codigoParcela: g.codigoParcela,
+              nomeArea: p.nomeArea ?? null,
+              detentor: p.detentor ?? null,
+              areaHa: p.areaHa ?? null,
+              sobreposicaoHa: p.sobreposicaoHa ?? null,
+              relacao: p.relacao,
+              geometry: g.geometry,
+            };
+          });
+        await setCached("sigef_geometrias", `${assetId}:${updatedAt}`, { parcelas: parcelasCache });
+      } catch { /* cache é opcional */ }
+    }
+
+    if (temCar) {
+      const ufs = resolveAssetUfs({ ...asset, camposEspecificos: { ...campos, sigefParcelas: sigefAtual } });
+      if (ufs.length === 0) throw new Error("UF do ativo desconhecida — não foi possível reconsultar o CAR");
+      const { consultarImoveisCar } = await import("../lib/car-imoveis");
+      const resultado = await consultarImoveisCar(geometry, ufs);
+      if (!resultado.disponivel) throw new Error(resultado.erro || "GeoServer do SICAR indisponível");
+      const { geometrias, ...resultadoSemGeometrias } = resultado;
+      carGeometrias = geometrias || [];
+      carAtual = resultadoSemGeometrias;
+      const updatedAt = new Date().toISOString();
+      patch.carImoveis = resultadoSemGeometrias;
+      patch.carImoveisUpdatedAt = updatedAt;
+      try {
+        const porCodigo = new Map(resultado.imoveis.filter((i) => i.codImovel).map((i) => [i.codImovel, i]));
+        const imoveisCache = carGeometrias
+          .filter((g: any) => g.codImovel && porCodigo.has(g.codImovel))
+          .map((g: any) => {
+            const i = porCodigo.get(g.codImovel)!;
+            return {
+              codImovel: g.codImovel,
+              municipio: i.municipio ?? null,
+              areaHa: i.areaHa ?? null,
+              sobreposicaoHa: i.sobreposicaoHa ?? null,
+              sobreposicaoPct: i.sobreposicaoPct ?? null,
+              status: i.status ?? null,
+              relacao: i.relacao,
+              geometry: g.geometry,
+            };
+          });
+        await setCached("car_geometrias", `${assetId}:${updatedAt}`, { imoveis: imoveisCache });
+      } catch { /* cache é opcional */ }
+    }
+
+    // Reconsolida a base fundiária (ccirImoveis) quando ela já existia
+    if (temCcir || (temSigef && temCar)) {
+      const parcelasSobrepostas: any[] = (sigefAtual?.parcelas || []).filter((p: any) => p.relacao === "sobreposta");
+      const carSobrepostos: any[] = (carAtual?.imoveis || []).filter((i: any) => i.relacao === "sobreposto");
+      if (parcelasSobrepostas.length > 0 || carSobrepostos.length > 0) {
+        let estadoSncr: "registro_existente" | "consultada_sem_registro" | "nao_consultada" = "consultada_sem_registro";
+        let motivoEstadoSncr: string | null = null;
+        try {
+          const { preencherDetentoresDoCacheSncr } = await import("../lib/sncr-detentores");
+          await preencherDetentoresDoCacheSncr(parcelasSobrepostas);
+        } catch (sncrErr: any) {
+          estadoSncr = "nao_consultada";
+          motivoEstadoSncr = `cache SNCR indisponível: ${sncrErr?.message || String(sncrErr)}`;
+        }
+
+        let parcelaParaCar = new Map<string, string>();
+        let casamentoInfo: { abaixoLimiar: Map<string, { codImovel: string; fracaoPct: number }>; limiarPct: number } | undefined;
+        let casamentoRealizado = false;
+        let casamentoIndisponivelMotivo: string | null = null;
+        try {
+          const { casarParcelasSigefComCar } = await import("../lib/car-imoveis");
+          const casamento = await casarParcelasSigefComCar(
+            geometry,
+            resolveAssetUfs({ ...asset, camposEspecificos: { ...campos, sigefParcelas: sigefAtual, carImoveis: carAtual } }),
+            parcelasSobrepostas.map((p: any) => p.codigoParcela).filter(Boolean),
+            carSobrepostos.map((i: any) => i.codImovel).filter(Boolean),
+            // reutiliza as geometrias das consultas recém-feitas — sem nova ida à rede
+            { parcelas: sigefGeometrias as any, imoveis: carGeometrias as any },
+          );
+          parcelaParaCar = casamento.casados;
+          casamentoInfo = { abaixoLimiar: casamento.abaixoLimiar, limiarPct: casamento.limiarPct };
+          casamentoRealizado = true;
+        } catch (matchErr: any) {
+          console.warn(`[Backfill-Sobreposicao] Casamento SIGEF×CAR indisponível (ativo ${assetId}):`, matchErr.message);
+          casamentoIndisponivelMotivo = `casamento SIGEF×CAR indisponível: ${matchErr?.message || String(matchErr)} — fontes exibidas separadamente`;
+        }
+
+        const { consolidarImoveisFundiarios } = await import("../lib/ccir-fusao");
+        const imoveis = consolidarImoveisFundiarios(parcelasSobrepostas, carSobrepostos, parcelaParaCar, casamentoInfo);
+        const comDetentor = imoveis.filter((i) => i.detentores.length > 0).length;
+        if (estadoSncr !== "nao_consultada") {
+          estadoSncr = comDetentor > 0 ? "registro_existente" : "consultada_sem_registro";
+        }
+        const ccirImoveis: any = {
+          disponivel: true,
+          consultadoEm: new Date().toISOString(),
+          fonte: "SIGEF/INCRA (espelho ArcGIS) + SNCR (detentores) + SICAR (CAR)",
+          // contrato de três estados no nível do módulo consolidado
+          estadoConsulta: imoveis.length > 0 ? "registro_existente" : "consultada_sem_registro",
+          situacaoRegistro: imoveis.length > 0 ? "indeterminada" : null,
+          tierFonte: "T1",
+          janelaCobertura: [sigefAtual?.janelaCobertura, carAtual?.janelaCobertura].filter(Boolean).join(" + ")
+            || "bases SIGEF/SNCR/CAR conforme as consultas de origem persistidas no ativo",
+          identificadorVinculo: { tipo: "geometria", valor: "imóveis sobrepostos ao polígono do processo ANM", proveniencia: "documento_oficial", origem: "SIGMINE + consultas SIGEF/CAR do ativo" },
+          // disponibilidade explícita das etapas de enriquecimento
+          estadoSncr,
+          motivoEstadoSncr,
+          casamentoRealizado,
+          casamentoIndisponivelMotivo,
+          totalImoveis: imoveis.length,
+          comCodigoIncra: imoveis.filter((i) => i.codigoIncra).length,
+          fundidosSigefCar: imoveis.filter((i) => i.origem === "SIGEF+CAR").length,
+          naoConsolidados: imoveis.filter((i) => i.consolidacao === "nao_consolidado").length,
+          comDetentor,
+          observacao: "O CCIR (certificado) é emitido por imóvel no SNCR/INCRA. Os dados acima consolidam as fontes públicas (SIGEF, SNCR e CAR) para os imóveis identificados sobre o processo.",
+          imoveis,
+        };
+        patch.ccirImoveis = ccirImoveis;
+        patch.ccirImoveisUpdatedAt = ccirImoveis.consultadoEm;
+      }
+    }
+
+    if (Object.keys(patch).length === 0) return false;
+    await storage.mergeAssetCampos(assetId, patch);
+    return true;
+  }
+
+  async function executarBackfillSobreposicao(candidatos: any[]) {
+    for (const asset of candidatos) {
+      try {
+        const ok = await backfillSobreposicaoAtivo(asset);
+        if (ok) backfillSobreposicao.atualizados++;
+      } catch (e: any) {
+        backfillSobreposicao.erros.push({ assetId: asset.id, nome: asset.name ?? null, erro: e?.message || String(e) });
+        console.error(`[Backfill-Sobreposicao] Ativo ${asset.id} falhou:`, e?.message || e);
+      } finally {
+        backfillSobreposicao.processados++;
+      }
+      // respeita o rate limit das fontes públicas (SIGEF ArcGIS / SICAR GeoServer)
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    backfillSobreposicao.running = false;
+    backfillSobreposicao.finishedAt = new Date().toISOString();
+    console.log(`[Backfill-Sobreposicao] Concluído: ${backfillSobreposicao.atualizados}/${backfillSobreposicao.total} atualizados, ${backfillSobreposicao.erros.length} erros`);
+  }
+
+  app.post("/api/admin/backfill-sobreposicao", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const user = req.user as any;
+    if (user?.role !== "admin" && user?.role !== "superadmin") {
+      return res.status(403).json({ message: "Acesso restrito a administradores" });
+    }
+    if (backfillSobreposicao.running) {
+      return res.status(409).json({ message: "Backfill de sobreposição já em andamento", status: backfillSobreposicao });
+    }
+    try {
+      const todos = await storage.getAssets();
+      const candidatos = todos.filter(
+        (a: any) => isTipoMinerario(a.type) && precisaBackfillSobreposicao(a.camposEspecificos as any)
+      );
+      if (req.query.dryRun === "1" || req.query.dryRun === "true") {
+        return res.json({
+          dryRun: true,
+          candidatos: candidatos.map((a: any) => ({ id: a.id, nome: a.name ?? null })),
+          total: candidatos.length,
+        });
+      }
+      backfillSobreposicao = {
+        running: candidatos.length > 0,
+        startedAt: new Date().toISOString(),
+        finishedAt: candidatos.length === 0 ? new Date().toISOString() : null,
+        total: candidatos.length,
+        processados: 0,
+        atualizados: 0,
+        erros: [],
+      };
+      if (candidatos.length > 0) {
+        // roda em background, sequencial (respeitando as fontes) — acompanhar via GET .../status
+        executarBackfillSobreposicao(candidatos).catch((e) => {
+          console.error("[Backfill-Sobreposicao] Erro fatal:", e?.message || e);
+          backfillSobreposicao.running = false;
+          backfillSobreposicao.finishedAt = new Date().toISOString();
+        });
+      }
+      res.json({
+        message: candidatos.length > 0
+          ? `Backfill iniciado em background para ${candidatos.length} ativo(s). Acompanhe em GET /api/admin/backfill-sobreposicao/status`
+          : "Nenhum ativo precisa de backfill — todos já têm sobreposição em hectares",
+        total: candidatos.length,
+      });
+    } catch (e: any) {
+      console.error("[Backfill-Sobreposicao] Erro ao iniciar:", e?.message || e);
+      res.status(500).json({ message: "Erro ao iniciar o backfill de sobreposição" });
+    }
+  });
+
+  app.get("/api/admin/backfill-sobreposicao/status", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const user = req.user as any;
+    if (user?.role !== "admin" && user?.role !== "superadmin") {
+      return res.status(403).json({ message: "Acesso restrito a administradores" });
+    }
+    res.json(backfillSobreposicao);
   });
 }

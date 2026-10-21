@@ -2,24 +2,16 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import type { CamposEspecificos } from "@shared/schema";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsContent } from "@/components/ui/tabs";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  ArrowLeft, MapPin, DollarSign, Ruler, Building2, FileText,
-  Pencil, Trash2, Loader2, CheckCircle2, AlertCircle, Clock,
-  TreePine, Pickaxe, Briefcase, Home, Wheat, Factory, Link2,
-  Tag, MessageSquare, Zap, Search, Leaf, Thermometer, Droplets,
-  FlaskConical, RefreshCw, Upload, ExternalLink, Paperclip, X as XIcon,
-  Filter, ChevronRight, Phone, Mail, Handshake, Camera, Image, Users, BarChart3,
-  Brain, Sparkles, FileBarChart, Shield, ChevronDown, ChevronUp, Waves,
-} from "lucide-react";
+import { ArrowLeft, MapPin, Ruler, Building2, FileText, Pencil, Trash2, Loader2, CheckCircle2, AlertCircle, AlertTriangle, Clock, TreePine, Pickaxe, Briefcase, Home, Wheat, Factory, Link2, Tag, MessageSquare, Zap, Search, Leaf, Thermometer, Droplets, RefreshCw, Upload, ExternalLink, Paperclip, X as XIcon, Phone, Mail, Camera, Image, Users, BarChart3, Sparkles, Shield, ChevronDown, ChevronUp, FileDown } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
@@ -33,20 +25,59 @@ import { ptBR } from "date-fns/locale";
 import { AtivoFormDialog } from "./ativos";
 import { Map } from "lucide-react";
 import DocumentsPanel from "@/components/documents-panel";
-import { AnmEnrichmentTabs, MiningAnalysisButton } from "@/components/anm-enrichment-tabs";
+import { AnmEnrichmentTabs, ANM_TAB_GROUPS } from "@/components/anm-enrichment-tabs";
 import DueDiligenceFundiaria from "@/components/due-diligence-fundiaria";
+import { SigefDetentoresDialog } from "@/components/sigef-detentores-dialog";
+import { EnrichmentProgressBar } from "@/components/enrichment-progress-bar";
 
-function AssetPolygonMap({ assetId }: { assetId: number }) {
+function AssetPolygonMap({ assetId, highlightCodigo, onParcelaClick, highlightCarCodigo, onCarClick }: {
+  assetId: number;
+  highlightCodigo?: string | null;
+  onParcelaClick?: (codigoParcela: string) => void;
+  highlightCarCodigo?: string | null;
+  onCarClick?: (codImovel: string) => void;
+}) {
   const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<any>(null);
+  const geoLayerRef = useRef<any>(null);
+  const sigefLayerRef = useRef<any>(null);
+  const carLayerRef = useRef<any>(null);
+  const parcelaLayersRef = useRef<Record<string, { layer: any; sobreposta: boolean }>>({});
+  const carLayersRef = useRef<Record<string, { layer: any; sobreposto: boolean }>>({});
+  const onParcelaClickRef = useRef(onParcelaClick);
+  onParcelaClickRef.current = onParcelaClick;
+  const onCarClickRef = useRef(onCarClick);
+  onCarClickRef.current = onCarClick;
   const [mapReady, setMapReady] = useState(false);
   const [noGeom, setNoGeom] = useState(false);
 
+  // Geometrias das parcelas SIGEF já consultadas (vazio se a consulta nunca rodou)
+  const { data: sigefGeoms } = useQuery<{ parcelas: any[] }>({
+    queryKey: ["/api/assets", String(assetId), "sigef-parcelas-geometrias"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/assets/${assetId}/sigef-parcelas/geometrias`);
+      if (!res.ok) return { parcelas: [] };
+      return res.json();
+    },
+    staleTime: 10 * 60 * 1000,
+  });
+
+  // Geometrias dos imóveis CAR já consultados (vazio se a consulta nunca rodou)
+  const { data: carGeoms } = useQuery<{ imoveis: any[] }>({
+    queryKey: ["/api/assets", String(assetId), "car-imoveis-geometrias"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/assets/${assetId}/car-imoveis/geometrias`);
+      if (!res.ok) return { imoveis: [] };
+      return res.json();
+    },
+    staleTime: 10 * 60 * 1000,
+  });
+
   useEffect(() => {
     let cancelled = false;
-    let mapInstance: any = null;
     (async () => {
       try {
-        const res = await apiRequest("GET", `/api/matching/assets/${assetId}/geometry`);
+        const res = await apiRequest("GET", `/api/assets/${assetId}/geometry`);
         if (!res.ok || cancelled) return;
         const data = await res.json();
         if (!data.geometry || cancelled) { setNoGeom(true); return; }
@@ -55,27 +86,205 @@ function AssetPolygonMap({ assetId }: { assetId: number }) {
         await import("leaflet/dist/leaflet.css");
         if (cancelled || !mapRef.current) return;
 
-        mapInstance = L.map(mapRef.current, { zoomControl: true, attributionControl: false });
+        const m = L.map(mapRef.current, { zoomControl: true, attributionControl: false });
         L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
           maxZoom: 18,
           attribution: "Tiles &copy; Esri",
-        }).addTo(mapInstance);
+        }).addTo(m);
 
-        const geoLayer = L.geoJSON(data.geometry, {
+        const gl = L.geoJSON(data.geometry, {
           style: { color: "#16a34a", weight: 2, fillColor: "#22c55e", fillOpacity: 0.25 },
-        }).addTo(mapInstance);
+          // não intercepta cliques — os cliques devem chegar às parcelas SIGEF por baixo
+          interactive: false,
+        }).addTo(m);
 
+        mapInstanceRef.current = m;
+        geoLayerRef.current = gl;
         setMapReady(true);
         setTimeout(() => {
-          if (!cancelled && mapInstance) {
-            mapInstance.invalidateSize();
-            mapInstance.fitBounds(geoLayer.getBounds(), { padding: [30, 30] });
+          if (!cancelled && m) {
+            m.invalidateSize();
+            m.fitBounds(gl.getBounds(), { padding: [30, 30] });
           }
         }, 200);
       } catch { if (!cancelled) setNoGeom(true); }
     })();
-    return () => { cancelled = true; if (mapInstance) mapInstance.remove(); };
+    return () => { cancelled = true; if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; } };
   }, [assetId]);
+
+  // Sobrepõe as parcelas SIGEF no mapa (sobrepostas em laranja, vizinhas esmaecidas)
+  useEffect(() => {
+    if (!mapReady || !mapInstanceRef.current) return;
+    const parcelas = sigefGeoms?.parcelas || [];
+    let cancelled = false;
+    (async () => {
+      const L = (await import("leaflet")).default;
+      if (cancelled || !mapInstanceRef.current) return;
+      if (sigefLayerRef.current) {
+        try { mapInstanceRef.current.removeLayer(sigefLayerRef.current); } catch {}
+        sigefLayerRef.current = null;
+      }
+      parcelaLayersRef.current = {};
+      if (parcelas.length === 0) return;
+      const group = L.layerGroup();
+      const fmtHa = (v: any) => (v == null ? "—" : Number(v).toLocaleString("pt-BR", { maximumFractionDigits: 2 }));
+      for (const p of parcelas) {
+        const sobreposta = p.relacao === "sobreposta";
+        const layer = L.geoJSON(p.geometry, {
+          style: sobreposta
+            ? { color: "#f97316", weight: 2, fillColor: "#fb923c", fillOpacity: 0.35 }
+            : { color: "#cbd5e1", weight: 1, dashArray: "4 3", fillColor: "#94a3b8", fillOpacity: 0.12 },
+        });
+        // Tooltip montado via DOM + textContent (nunca innerHTML) — dados
+        // externos (código, denominação, detentor) não podem injetar HTML.
+        const tip = document.createElement("div");
+        tip.style.cssText = "font-size:11px;line-height:1.4";
+        const addLine = (text: string, style?: string) => {
+          const div = document.createElement("div");
+          if (style) div.style.cssText = style;
+          div.textContent = text;
+          tip.appendChild(div);
+        };
+        addLine(p.codigoParcela || "—", "font-family:monospace");
+        addLine(p.nomeArea || "Sem denominação", "font-weight:bold");
+        if (p.detentor) addLine(p.detentor);
+        addLine(`Área: ${fmtHa(p.areaHa)} ha${sobreposta ? ` · ${fmtHa(p.sobreposicaoHa)} ha sobre o processo` : " (vizinha)"}`);
+        layer.bindTooltip(tip, { sticky: true });
+        if (p.codigoParcela) {
+          parcelaLayersRef.current[p.codigoParcela] = { layer, sobreposta };
+          layer.on("click", () => onParcelaClickRef.current?.(p.codigoParcela));
+        }
+        group.addLayer(layer);
+      }
+      group.addTo(mapInstanceRef.current);
+      // mantém o polígono do processo por cima das parcelas
+      try { geoLayerRef.current?.bringToFront(); } catch {}
+      sigefLayerRef.current = group;
+    })();
+    return () => { cancelled = true; };
+  }, [mapReady, sigefGeoms]);
+
+  // Sobrepõe os imóveis CAR no mapa (sobrepostos em violeta, vizinhos esmaecidos)
+  useEffect(() => {
+    if (!mapReady || !mapInstanceRef.current) return;
+    const imoveis = carGeoms?.imoveis || [];
+    let cancelled = false;
+    (async () => {
+      const L = (await import("leaflet")).default;
+      if (cancelled || !mapInstanceRef.current) return;
+      if (carLayerRef.current) {
+        try { mapInstanceRef.current.removeLayer(carLayerRef.current); } catch {}
+        carLayerRef.current = null;
+      }
+      carLayersRef.current = {};
+      if (imoveis.length === 0) return;
+      const group = L.layerGroup();
+      const fmtHa = (v: any) => (v == null ? "—" : Number(v).toLocaleString("pt-BR", { maximumFractionDigits: 2 }));
+      for (const i of imoveis) {
+        const sobreposto = i.relacao === "sobreposto";
+        const layer = L.geoJSON(i.geometry, {
+          style: sobreposto
+            ? { color: "#8b5cf6", weight: 2, fillColor: "#a78bfa", fillOpacity: 0.3 }
+            : { color: "#ddd6fe", weight: 1, dashArray: "4 3", fillColor: "#c4b5fd", fillOpacity: 0.1 },
+        });
+        // Tooltip via DOM + textContent (nunca innerHTML) — dados externos não podem injetar HTML.
+        const tip = document.createElement("div");
+        tip.style.cssText = "font-size:11px;line-height:1.4";
+        const addLine = (text: string, style?: string) => {
+          const div = document.createElement("div");
+          if (style) div.style.cssText = style;
+          div.textContent = text;
+          tip.appendChild(div);
+        };
+        addLine(i.codImovel || "—", "font-family:monospace");
+        addLine(`CAR${i.municipio ? ` · ${i.municipio}` : ""}${i.status ? ` · ${i.status}` : ""}`, "font-weight:bold");
+        addLine(`Área: ${fmtHa(i.areaHa)} ha${sobreposto ? ` · ${fmtHa(i.sobreposicaoHa)} ha sobre o processo (${fmtHa(i.sobreposicaoPct)}%)` : " (vizinho)"}`);
+        layer.bindTooltip(tip, { sticky: true });
+        if (i.codImovel) {
+          carLayersRef.current[i.codImovel] = { layer, sobreposto };
+          layer.on("click", () => onCarClickRef.current?.(i.codImovel));
+        }
+        group.addLayer(layer);
+      }
+      group.addTo(mapInstanceRef.current);
+      // ordem: CAR abaixo, parcelas SIGEF acima, polígono do processo por cima
+      try { geoLayerRef.current?.bringToFront(); } catch {}
+      carLayerRef.current = group;
+    })();
+    return () => { cancelled = true; };
+  }, [mapReady, carGeoms]);
+
+  // Destaca no mapa o imóvel CAR selecionado/hover da tabela
+  useEffect(() => {
+    const entries = carLayersRef.current;
+    for (const [codigo, { layer, sobreposto }] of Object.entries(entries)) {
+      const highlighted = highlightCarCodigo != null && codigo === highlightCarCodigo;
+      try {
+        layer.setStyle(
+          highlighted
+            ? { color: "#7c3aed", weight: 3, dashArray: undefined, fillColor: "#8b5cf6", fillOpacity: 0.5 }
+            : sobreposto
+              ? { color: "#8b5cf6", weight: 2, dashArray: undefined, fillColor: "#a78bfa", fillOpacity: 0.3 }
+              : { color: "#ddd6fe", weight: 1, dashArray: "4 3", fillColor: "#c4b5fd", fillOpacity: 0.1 },
+        );
+        if (highlighted) {
+          layer.bringToFront?.();
+          const b = layer.getBounds?.();
+          if (b?.isValid?.() && mapInstanceRef.current && !mapInstanceRef.current.getBounds().contains(b)) {
+            mapInstanceRef.current.fitBounds(b, { padding: [40, 40] });
+          }
+        }
+      } catch {}
+    }
+    try { geoLayerRef.current?.bringToFront(); } catch {}
+    if (highlightCarCodigo && entries[highlightCarCodigo]) {
+      try { entries[highlightCarCodigo].layer.bringToFront?.(); } catch {}
+    }
+  }, [highlightCarCodigo, mapReady, carGeoms]);
+
+  // Destaca no mapa a parcela selecionada/hover da tabela SIGEF
+  useEffect(() => {
+    const entries = parcelaLayersRef.current;
+    for (const [codigo, { layer, sobreposta }] of Object.entries(entries)) {
+      const highlighted = highlightCodigo != null && codigo === highlightCodigo;
+      try {
+        layer.setStyle(
+          highlighted
+            ? { color: "#eab308", weight: 3, dashArray: undefined, fillColor: "#facc15", fillOpacity: 0.5 }
+            : sobreposta
+              ? { color: "#f97316", weight: 2, dashArray: undefined, fillColor: "#fb923c", fillOpacity: 0.35 }
+              : { color: "#cbd5e1", weight: 1, dashArray: "4 3", fillColor: "#94a3b8", fillOpacity: 0.12 },
+        );
+        if (highlighted) {
+          layer.bringToFront?.();
+          const b = layer.getBounds?.();
+          if (b?.isValid?.() && mapInstanceRef.current && !mapInstanceRef.current.getBounds().contains(b)) {
+            mapInstanceRef.current.fitBounds(b, { padding: [40, 40] });
+          }
+        }
+      } catch {}
+    }
+    // polígono do processo abaixo, parcela destacada por cima
+    try { geoLayerRef.current?.bringToFront(); } catch {}
+    if (highlightCodigo && entries[highlightCodigo]) {
+      try { entries[highlightCodigo].layer.bringToFront?.(); } catch {}
+    }
+  }, [highlightCodigo, mapReady, sigefGeoms]);
+
+  useEffect(() => {
+    const el = mapRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting && mapInstanceRef.current) {
+        mapInstanceRef.current.invalidateSize();
+        if (geoLayerRef.current) {
+          try { mapInstanceRef.current.fitBounds(geoLayerRef.current.getBounds(), { padding: [30, 30] }); } catch {}
+        }
+      }
+    }, { threshold: 0.1 });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [mapReady]);
 
   if (noGeom) return null;
 
@@ -98,6 +307,34 @@ function AssetPolygonMap({ assetId }: { assetId: number }) {
           className="rounded-lg overflow-hidden"
           style={{ height: 300, width: "100%" }}
         />
+        {mapReady && (sigefGeoms?.parcelas?.length ?? 0) > 0 && (
+          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[11px] text-muted-foreground" data-testid="legend-sigef-parcelas">
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-3 h-3 rounded-sm border-2" style={{ backgroundColor: "rgba(34,197,94,0.25)", borderColor: "#16a34a" }} />
+              Polígono do processo
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-3 h-3 rounded-sm border-2" style={{ backgroundColor: "rgba(251,146,60,0.35)", borderColor: "#f97316" }} />
+              Parcela SIGEF sobre o processo
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-3 h-3 rounded-sm border border-dashed" style={{ backgroundColor: "rgba(148,163,184,0.12)", borderColor: "#94a3b8" }} />
+              Parcela vizinha
+            </span>
+          </div>
+        )}
+        {mapReady && (carGeoms?.imoveis?.length ?? 0) > 0 && (
+          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-[11px] text-muted-foreground" data-testid="legend-car-imoveis">
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-3 h-3 rounded-sm border-2" style={{ backgroundColor: "rgba(167,139,250,0.3)", borderColor: "#8b5cf6" }} />
+              Imóvel CAR sobre o processo
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-3 h-3 rounded-sm border border-dashed" style={{ backgroundColor: "rgba(196,181,253,0.1)", borderColor: "#ddd6fe" }} />
+              Imóvel CAR vizinho
+            </span>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -156,90 +393,82 @@ function LandUseTimeline({ historico }: { historico: Array<{ ano: number; classe
   );
 }
 
-function CCIRTab({ assetId, camposEspecificos }: { assetId: number; camposEspecificos: CamposEspecificos | null }) {
-  const { toast } = useToast();
-  const qc = useQueryClient();
+function CCIRTab({ assetId, camposEspecificos, ccirState, onStartCcir, onCancelCcir }: {
+  assetId: number;
+  camposEspecificos: CamposEspecificos | null;
+  ccirState: { loading: boolean; error: string | null; startedAt: number | null };
+  onStartCcir: (cpfCnpj?: string) => void;
+  onCancelCcir: () => void;
+}) {
   const [cpfCnpjInput, setCpfCnpjInput] = useState("");
-  const [autoTriggered, setAutoTriggered] = useState(false);
-
-  const consultarMutation = useMutation({
-    mutationFn: async (cpfCnpj?: string) => {
-      const body = cpfCnpj ? { cpfCnpj } : {};
-      const res = await apiRequest("POST", `/api/enrichment/ccir/${assetId}`, body);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ message: "Erro na consulta" }));
-        throw new Error(err.message);
-      }
-      return res.json();
-    },
-    onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: ["/api/matching/assets", assetId] });
-      toast({ title: "Consulta CCIR concluída" });
-    },
-    onError: (err: Error) => {
-      if (!autoTriggered || !err.message.includes("automaticamente")) {
-        toast({ title: "Erro na consulta CCIR", description: err.message, variant: "destructive" });
-      }
-    },
-  });
+  const autoStartedRef = useRef(false);
+  const prevAssetIdRef = useRef(assetId);
 
   const campos = camposEspecificos ?? {};
   const hasData = !!campos.ccirConsultadoEm;
 
   useEffect(() => {
-    if (!hasData && !autoTriggered && !consultarMutation.isPending) {
-      setAutoTriggered(true);
-      consultarMutation.mutate(undefined);
+    if (prevAssetIdRef.current !== assetId) {
+      prevAssetIdRef.current = assetId;
+      autoStartedRef.current = false;
     }
-  }, [hasData, autoTriggered, consultarMutation.isPending]);
+  }, [assetId]);
+
+  useEffect(() => {
+    if (!hasData && !ccirState.loading && !ccirState.error && !ccirState.startedAt && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      onStartCcir();
+    }
+  }, [hasData, ccirState.loading, ccirState.error, ccirState.startedAt, onStartCcir]);
+
+  if (!hasData && (ccirState.loading || (!ccirState.error && !ccirState.startedAt))) {
+    return (
+      <EnrichmentProgressBar
+        message="Consultando dados CCIR / INCRA..."
+        icon={<FileText className="w-4 h-4" />}
+      />
+    );
+  }
 
   if (!hasData) {
-    if (consultarMutation.isPending) {
-      return (
-        <Card>
-          <CardContent className="p-6 text-center space-y-4">
-            <Loader2 className="w-10 h-10 mx-auto text-primary animate-spin" />
-            <p className="text-sm font-medium" data-testid="text-ccir-auto-loading">
-              Consultando CCIR automaticamente...
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Buscando dados do proprietário a partir das informações do ativo
-            </p>
-          </CardContent>
-        </Card>
-      );
-    }
-
     return (
       <Card>
         <CardContent className="p-6 text-center space-y-4">
           <FileText className="w-10 h-10 mx-auto text-muted-foreground opacity-30" />
           <p className="text-sm text-muted-foreground" data-testid="text-ccir-vazio">
-            {autoTriggered
-              ? "Consulta automática não encontrou dados. Informe o CPF/CNPJ manualmente."
-              : "Dados do CCIR ainda não consultados para este ativo"}
+            {ccirState.error || "Dados do CCIR ainda não consultados para este ativo"}
           </p>
-          <p className="text-xs text-muted-foreground">
-            Informe o CPF ou CNPJ do proprietário para consultar dados do INCRA (CCIR)
-          </p>
-          <div className="flex items-center justify-center gap-2 max-w-sm mx-auto">
-            <Input
-              placeholder="CPF ou CNPJ do proprietário"
-              value={cpfCnpjInput}
-              onChange={(e) => setCpfCnpjInput(e.target.value)}
-              data-testid="input-ccir-cpfcnpj"
-              className="text-sm"
-            />
-            <Button
-              size="sm"
-              disabled={consultarMutation.isPending || cpfCnpjInput.replace(/\D/g, "").length < 11}
-              onClick={() => consultarMutation.mutate(cpfCnpjInput)}
-              data-testid="button-consultar-ccir"
-            >
-              {consultarMutation.isPending
-                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Consultando...</>
-                : <><Search className="w-3.5 h-3.5" /> Consultar CCIR</>}
-            </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={ccirState.loading}
+            onClick={() => onStartCcir()}
+            data-testid="button-retry-ccir"
+            className="mx-auto"
+          >
+            <RefreshCw className="w-3.5 h-3.5 mr-1" /> Tentar novamente
+          </Button>
+          <div className="border-t pt-3 mt-1">
+            <p className="text-xs text-muted-foreground mb-2">
+              Ou informe o CPF/CNPJ do proprietário para busca direta
+            </p>
+            <div className="flex items-center justify-center gap-2 max-w-sm mx-auto">
+              <Input
+                placeholder="CPF ou CNPJ do proprietário"
+                value={cpfCnpjInput}
+                onChange={(e) => setCpfCnpjInput(e.target.value)}
+                data-testid="input-ccir-cpfcnpj"
+                className="text-sm"
+              />
+              <Button
+                size="sm"
+                disabled={cpfCnpjInput.replace(/\D/g, "").length < 11}
+                onClick={() => onStartCcir(cpfCnpjInput)}
+                data-testid="button-consultar-ccir"
+              >
+                <Search className="w-3.5 h-3.5 mr-1" /> Consultar
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -270,11 +499,11 @@ function CCIRTab({ assetId, camposEspecificos }: { assetId: number; camposEspeci
             />
             <Button
               size="sm" variant="outline"
-              disabled={consultarMutation.isPending || cpfCnpjInput.replace(/\D/g, "").length < 11}
-              onClick={() => consultarMutation.mutate(cpfCnpjInput)}
+              disabled={ccirState.loading || cpfCnpjInput.replace(/\D/g, "").length < 11}
+              onClick={() => onStartCcir(cpfCnpjInput)}
               data-testid="button-reconsultar-ccir"
             >
-              {consultarMutation.isPending
+              {ccirState.loading
                 ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 : <RefreshCw className="w-3.5 h-3.5" />}
             </Button>
@@ -384,12 +613,12 @@ function AmbientalTab({ assetId, camposEspecificos }: { assetId: number; camposE
 
   const consultarMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("GET", `/api/matching/assets/${assetId}/ambiental`);
+      const res = await apiRequest("GET", `/api/assets/${assetId}/ambiental`);
       if (!res.ok) throw new Error("Falha na consulta");
       return res.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/matching/assets", assetId] });
+      qc.invalidateQueries({ queryKey: ["/api/assets", String(assetId)] });
       toast({ title: "Consulta ambiental concluída" });
     },
     onError: () => {
@@ -711,66 +940,459 @@ const DOCS_STATUS: Record<string, { label: string; icon: any; color: string }> =
 const ABAS_POR_TIPO: Record<string, Array<{id: string, label: string}>> = {
   TERRA: [
     { id: "info",       label: "Informações" },
-    { id: "enriquecimento", label: "Onboarding" },
-    { id: "matches",    label: "Matches" },
+    // { id: "matches",    label: "Matches" },
     { id: "geo",        label: "Geo & CAR" },
     { id: "ccir",       label: "CCIR" },
     { id: "embrapa",    label: "Embrapa" },
     { id: "ambiental",  label: "Ambiental" },
     { id: "duediligence", label: "Due Diligence" },
-    { id: "caf",        label: "CAF / PRONAF" },
-    { id: "empresa",    label: "Empresa" },
     { id: "ia",         label: "IA" },
   ],
   AGRO: [
     { id: "info",       label: "Informações" },
-    { id: "enriquecimento", label: "Onboarding" },
-    { id: "matches",    label: "Matches" },
+    // { id: "matches",    label: "Matches" },
     { id: "geo",        label: "Geo & CAR" },
     { id: "ccir",       label: "CCIR" },
     { id: "embrapa",    label: "Embrapa" },
     { id: "ambiental",  label: "Ambiental" },
     { id: "duediligence", label: "Due Diligence" },
-    { id: "caf",        label: "CAF / PRONAF" },
-    { id: "empresa",    label: "Empresa" },
     { id: "ia",         label: "IA" },
   ],
   MINA: [
     { id: "info",       label: "Informações" },
-    { id: "enriquecimento", label: "Onboarding" },
-    { id: "matches",    label: "Matches" },
+    // { id: "matches",    label: "Matches" },
+    // Enriquecimento ANM dividido em 3 abas (grupos de ANM_TAB_GROUPS)
     { id: "anm",        label: "ANM" },
+    { id: "titular-financas", label: "Titular & Finanças" },
+    { id: "territorio", label: "Território" },
     { id: "geo",        label: "Geo" },
-    { id: "empresa",    label: "Empresa" },
     { id: "ia",         label: "IA" },
   ],
   NEGOCIO: [
     { id: "info",       label: "Informações" },
-    { id: "enriquecimento", label: "Onboarding" },
-    { id: "matches",    label: "Matches" },
+    // { id: "enriquecimento", label: "Onboarding" },
+    // { id: "matches",    label: "Matches" },
     { id: "empresa",    label: "Empresa" },
     { id: "ia",         label: "IA" },
   ],
   FII_CRI: [
     { id: "info",       label: "Informações" },
-    { id: "enriquecimento", label: "Onboarding" },
-    { id: "matches",    label: "Matches" },
+    // { id: "enriquecimento", label: "Onboarding" },
+    // { id: "matches",    label: "Matches" },
     { id: "cvm",        label: "CVM / ANBIMA" },
     { id: "empresa",    label: "Empresa" },
     { id: "ia",         label: "IA" },
   ],
   DESENVOLVIMENTO: [
     { id: "info",       label: "Informações" },
-    { id: "enriquecimento", label: "Onboarding" },
-    { id: "matches",    label: "Matches" },
+    // { id: "enriquecimento", label: "Onboarding" },
+    // { id: "matches",    label: "Matches" },
     { id: "geo",        label: "Geo" },
     { id: "empresa",    label: "Empresa" },
     { id: "ia",         label: "IA" },
   ],
 };
+// JAZIDA compartilha as mesmas abas do ativo minerário MINA
+ABAS_POR_TIPO["JAZIDA"] = ABAS_POR_TIPO["MINA"];
+
+// Ativos minerários (MINA/JAZIDA) compartilham polígono ANM, base fundiária etc.
+const isTipoMinerario = (t?: string | null) => t === "MINA" || t === "JAZIDA";
 
 function formatBRL(v: number): string {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+// ── Parcelas certificadas SIGEF/INCRA sobre o processo (ativo MINA) ──
+function SigefParcelasCard({ ativoId, savedData, selecionada, onSelect, onHover }: {
+  ativoId: number;
+  savedData?: any;
+  selecionada?: string | null;
+  onSelect?: (codigoParcela: string | null) => void;
+  onHover?: (codigoParcela: string | null) => void;
+}) {
+  const { toast } = useToast();
+  const [detentoresOpen, setDetentoresOpen] = useState(false);
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
+
+  // Quando a seleção vem do mapa, rola até a linha correspondente
+  useEffect(() => {
+    if (!selecionada) return;
+    const row = rowRefs.current[selecionada];
+    if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [selecionada]);
+  const consultarMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/assets/${ativoId}/sigef-parcelas`);
+      return await res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", String(ativoId)] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", ativoId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", String(ativoId), "sigef-parcelas-geometrias"] });
+      toast({
+        title: "Consulta SIGEF concluída",
+        description: data.totalSobrepostas > 0
+          ? `${data.totalSobrepostas} parcela(s) certificada(s) sobre o processo`
+          : "Nenhuma parcela certificada sobre o processo",
+      });
+    },
+    onError: (e: any) => {
+      toast({ title: "Falha na consulta SIGEF", description: e?.message || "Serviço indisponível", variant: "destructive" });
+    },
+  });
+
+  const data = consultarMutation.data || savedData;
+  const sobrepostas = (data?.parcelas || []).filter((p: any) => p.relacao === "sobreposta");
+  const vizinhas = (data?.parcelas || []).filter((p: any) => p.relacao === "vizinha");
+  const semDetentor = (data?.parcelas || []).filter((p: any) => !p.detentor && p.codigoImovel).length;
+
+  const tabela = (parcelas: any[], testId: string) => (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs" data-testid={testId}>
+        <thead>
+          <tr className="text-left text-muted-foreground border-b">
+            <th className="py-1.5 pr-2 font-medium">Código da parcela</th>
+            <th className="py-1.5 pr-2 font-medium">Denominação</th>
+            <th className="py-1.5 pr-2 font-medium">Detentor</th>
+            <th className="py-1.5 pr-2 font-medium text-right">Área (ha)</th>
+            <th className="py-1.5 pr-2 font-medium text-right">Sobrepos. (%)</th>
+            <th className="py-1.5 font-medium">Situação</th>
+          </tr>
+        </thead>
+        <tbody>
+          {parcelas.map((p: any, i: number) => (
+            <tr
+              key={p.codigoParcela || i}
+              ref={(el) => { if (p.codigoParcela) rowRefs.current[p.codigoParcela] = el; }}
+              className={cn(
+                "border-b last:border-0",
+                p.codigoParcela && "cursor-pointer hover:bg-muted/50",
+                p.codigoParcela && selecionada === p.codigoParcela && "bg-amber-100 dark:bg-amber-900/40",
+              )}
+              onClick={() => { if (p.codigoParcela) onSelect?.(selecionada === p.codigoParcela ? null : p.codigoParcela); }}
+              onMouseEnter={() => { if (p.codigoParcela) onHover?.(p.codigoParcela); }}
+              onMouseLeave={() => onHover?.(null)}
+              data-testid={`row-sigef-parcela-${p.codigoParcela || i}`}
+            >
+              <td className="py-1.5 pr-2 font-mono text-[11px]">{p.codigoParcela || "—"}</td>
+              <td className="py-1.5 pr-2">{p.nomeArea || "—"}</td>
+              <td className="py-1.5 pr-2" data-testid={`text-sigef-detentor-${i}`}>{p.detentor || "—"}</td>
+              <td className="py-1.5 pr-2 text-right">{p.areaHa != null ? p.areaHa.toLocaleString("pt-BR") : "—"}</td>
+              <td className="py-1.5 pr-2 text-right">{p.sobreposicaoPct != null ? `${p.sobreposicaoPct.toLocaleString("pt-BR")}%` : "—"}</td>
+              <td className="py-1.5">{p.situacao || p.status || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-sm">Propriedades sobre o processo (SIGEF)</CardTitle>
+          <div className="flex items-center gap-1.5">
+            {data && semDetentor > 0 && (
+              <Button size="sm" variant="outline" className="gap-1.5"
+                onClick={() => setDetentoresOpen(true)} data-testid="button-buscar-detentores">
+                <Users className="w-3.5 h-3.5" /> Buscar detentores
+              </Button>
+            )}
+            <Button size="sm" variant="outline" className="gap-1.5" disabled={consultarMutation.isPending}
+              onClick={() => consultarMutation.mutate()} data-testid="button-consultar-sigef">
+              {consultarMutation.isPending
+                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Consultando...</>
+                : <><Search className="w-3.5 h-3.5" /> {data ? "Atualizar" : "Consultar SIGEF"}</>}
+            </Button>
+          </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground mt-1">
+          Parcelas georreferenciadas certificadas (SIGEF/INCRA) que intersectam o polígono do processo — indica com quem negociar acesso, servidão ou compra da superfície.
+        </p>
+      </CardHeader>
+      {data && (
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline" data-testid="badge-sigef-sobrepostas">{data.totalSobrepostas} sobre o processo</Badge>
+            <Badge variant="outline" data-testid="badge-sigef-vizinhas">{data.totalVizinhas} vizinha(s)</Badge>
+            {data.coberturaPct != null && (
+              <Badge variant="outline">{Number(data.coberturaPct).toLocaleString("pt-BR")}% do processo coberto por área certificada</Badge>
+            )}
+            {data.truncado && (
+              <Badge variant="outline" className="border-amber-400 text-amber-700">Lista parcial — muitas parcelas na região</Badge>
+            )}
+          </div>
+          {data.avisoDataBase && (
+            <div className="p-3 rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-xs text-amber-800 dark:text-amber-200" data-testid="text-sigef-base-defasada">
+              {data.avisoDataBase}
+            </div>
+          )}
+          {sobrepostas.length > 0 ? (
+            <div>
+              <p className="text-xs font-semibold mb-1">Parcelas sobre o processo</p>
+              {tabela(sobrepostas, "table-sigef-sobrepostas")}
+            </div>
+          ) : (
+            <div className="p-3 rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-xs text-amber-800 dark:text-amber-200" data-testid="text-sigef-vazio">
+              Nenhuma parcela certificada sobre o processo — a área possivelmente não está georreferenciada no SIGEF (sinal de informalidade fundiária). Isso não significa ausência de proprietário: verifique matrículas em cartório.
+            </div>
+          )}
+          {vizinhas.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold mb-1">Parcelas vizinhas imediatas</p>
+              {tabela(vizinhas, "table-sigef-vizinhas")}
+            </div>
+          )}
+          <p className="text-[10px] text-muted-foreground">
+            Fonte: {data.fonte} · base {data.dataBase} · consultado em {data.consultadoEm ? new Date(data.consultadoEm).toLocaleString("pt-BR") : "—"}. Detentores via Consulta Pública do SNCR (sem CPF completo).
+          </p>
+        </CardContent>
+      )}
+      <SigefDetentoresDialog ativoId={ativoId} open={detentoresOpen} onOpenChange={setDetentoresOpen} />
+    </Card>
+  );
+}
+
+// ── Imóveis CAR sobrepostos ao processo (ativo MINA) ──
+function CarImoveisCard({ ativoId, savedData, selecionado, onSelect, onHover }: {
+  ativoId: number;
+  savedData?: any;
+  selecionado?: string | null;
+  onSelect?: (codImovel: string | null) => void;
+  onHover?: (codImovel: string | null) => void;
+}) {
+  const { toast } = useToast();
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
+
+  useEffect(() => {
+    if (!selecionado) return;
+    const row = rowRefs.current[selecionado];
+    if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [selecionado]);
+
+  const consultarMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/assets/${ativoId}/car-imoveis`);
+      return await res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", String(ativoId)] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", ativoId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", String(ativoId), "car-imoveis-geometrias"] });
+      toast({
+        title: "Consulta CAR concluída",
+        description: data.totalSobrepostos > 0
+          ? `${data.totalSobrepostos} imóvel(is) CAR sobre o processo`
+          : "Nenhum imóvel CAR sobre o processo",
+      });
+    },
+    onError: (e: any) => {
+      toast({ title: "Falha na consulta CAR", description: e?.message || "GeoServer do SICAR indisponível", variant: "destructive" });
+    },
+  });
+
+  const data = consultarMutation.data || savedData;
+  const sobrepostos = (data?.imoveis || []).filter((i: any) => i.relacao === "sobreposto");
+  const vizinhos = (data?.imoveis || []).filter((i: any) => i.relacao === "vizinho");
+
+  const tabela = (imoveis: any[], testId: string) => (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs" data-testid={testId}>
+        <thead>
+          <tr className="text-left text-muted-foreground border-b">
+            <th className="py-1.5 pr-2 font-medium">Código CAR</th>
+            <th className="py-1.5 pr-2 font-medium">Município/UF</th>
+            <th className="py-1.5 pr-2 font-medium text-right">Área (ha)</th>
+            <th className="py-1.5 pr-2 font-medium">Status</th>
+            <th className="py-1.5 pr-2 font-medium">Tipo</th>
+            <th className="py-1.5 font-medium text-right">Sobrepos. (%)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {imoveis.map((i: any, idx: number) => (
+            <tr
+              key={i.codImovel || idx}
+              ref={(el) => { if (i.codImovel) rowRefs.current[i.codImovel] = el; }}
+              className={cn(
+                "border-b last:border-0",
+                i.codImovel && "cursor-pointer hover:bg-muted/50",
+                i.codImovel && selecionado === i.codImovel && "bg-violet-100 dark:bg-violet-900/40",
+              )}
+              onClick={() => { if (i.codImovel) onSelect?.(selecionado === i.codImovel ? null : i.codImovel); }}
+              onMouseEnter={() => { if (i.codImovel) onHover?.(i.codImovel); }}
+              onMouseLeave={() => onHover?.(null)}
+              data-testid={`row-car-imovel-${i.codImovel || idx}`}
+            >
+              <td className="py-1.5 pr-2 font-mono text-[11px]">{i.codImovel || "—"}</td>
+              <td className="py-1.5 pr-2">{[i.municipio, i.uf].filter(Boolean).join("/") || "—"}</td>
+              <td className="py-1.5 pr-2 text-right">{i.areaHa != null ? i.areaHa.toLocaleString("pt-BR") : "—"}</td>
+              <td className="py-1.5 pr-2">{i.status || "—"}{i.condicao ? ` · ${i.condicao}` : ""}</td>
+              <td className="py-1.5 pr-2">{i.tipo || "—"}</td>
+              <td className="py-1.5 text-right">{i.sobreposicaoPct != null ? `${i.sobreposicaoPct.toLocaleString("pt-BR")}%` : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-sm">Imóveis CAR sobre o processo (SICAR)</CardTitle>
+          <Button size="sm" variant="outline" className="gap-1.5" disabled={consultarMutation.isPending}
+            onClick={() => consultarMutation.mutate()} data-testid="button-consultar-car">
+            {consultarMutation.isPending
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Consultando...</>
+              : <><Search className="w-3.5 h-3.5" /> {data ? "Atualizar" : "Consultar CAR"}</>}
+          </Button>
+        </div>
+        <p className="text-[11px] text-muted-foreground mt-1">
+          Imóveis declarados no Cadastro Ambiental Rural que intersectam o polígono do processo — revela ocupantes/posseiros declarados mesmo onde não há parcela certificada no SIGEF.
+        </p>
+      </CardHeader>
+      {data && (
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline" data-testid="badge-car-sobrepostos">{data.totalSobrepostos} sobre o processo</Badge>
+            <Badge variant="outline" data-testid="badge-car-vizinhos">{data.totalVizinhos} vizinho(s)</Badge>
+            {data.coberturaPct != null && (
+              <Badge variant="outline">{Number(data.coberturaPct).toLocaleString("pt-BR")}% do processo coberto por imóveis CAR</Badge>
+            )}
+            {data.truncado && (
+              <Badge variant="outline" className="border-amber-400 text-amber-700">Lista parcial — muitos imóveis na região</Badge>
+            )}
+          </div>
+          {sobrepostos.length > 0 ? (
+            <div>
+              <p className="text-xs font-semibold mb-1">Imóveis sobre o processo</p>
+              {tabela(sobrepostos, "table-car-sobrepostos")}
+            </div>
+          ) : (
+            <div className="p-3 rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-xs text-amber-800 dark:text-amber-200" data-testid="text-car-vazio">
+              Nenhum imóvel CAR sobre o processo — ausência de declaração no CAR não significa ausência de ocupantes. Verifique em campo e em cartório.
+            </div>
+          )}
+          {vizinhos.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold mb-1">Imóveis vizinhos imediatos</p>
+              {tabela(vizinhos, "table-car-vizinhos")}
+            </div>
+          )}
+          <p className="text-[10px] text-muted-foreground">
+            Fonte: {data.fonte} · consultado em {data.consultadoEm ? new Date(data.consultadoEm).toLocaleString("pt-BR") : "—"}. Status/condição refletem a análise do CAR pelo órgão estadual.
+          </p>
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
+// ── CCIR / base fundiária por imóvel identificado (ativo MINA) ──
+function CcirMinaCard({ ativoId, savedData, temInsumos }: {
+  ativoId: number;
+  savedData?: any;
+  temInsumos: boolean;
+}) {
+  const { toast } = useToast();
+
+  const consultarMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/enrichment/ccir/${ativoId}`);
+      return await res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", String(ativoId)] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", ativoId] });
+      toast({
+        title: "Base fundiária consolidada",
+        description: `${data.ccirImoveis?.totalImoveis ?? 0} imóvel(is) identificado(s) sobre o processo`,
+      });
+    },
+    onError: (e: any) => {
+      toast({ title: "Falha na consolidação CCIR", description: e?.message || "Serviço indisponível", variant: "destructive" });
+    },
+  });
+
+  const data = consultarMutation.data?.ccirImoveis || savedData;
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-sm">CCIR / Base fundiária por imóvel</CardTitle>
+          <Button size="sm" variant="outline" className="gap-1.5" disabled={consultarMutation.isPending || !temInsumos}
+            onClick={() => consultarMutation.mutate()} data-testid="button-consultar-ccir-mina">
+            {consultarMutation.isPending
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Consolidando...</>
+              : <><Search className="w-3.5 h-3.5" /> {data ? "Atualizar" : "Consolidar"}</>}
+          </Button>
+        </div>
+        <p className="text-[11px] text-muted-foreground mt-1">
+          Consolida por imóvel os dados de CCIR/SNCR disponíveis (código INCRA, denominação, detentores, situação, área) a partir das parcelas SIGEF e dos imóveis CAR sobre o processo.
+        </p>
+        {!temInsumos && (
+          <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-1" data-testid="text-ccir-mina-sem-insumos">
+            Consulte primeiro as parcelas SIGEF e/ou os imóveis CAR acima.
+          </p>
+        )}
+      </CardHeader>
+      {data && (
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline" data-testid="badge-ccir-total">{data.totalImoveis} imóvel(is)</Badge>
+            <Badge variant="outline" data-testid="badge-ccir-incra">{data.comCodigoIncra} com código INCRA</Badge>
+            <Badge variant="outline" data-testid="badge-ccir-detentor">{data.comDetentor} com detentor</Badge>
+            {data.municipiosPendentesSncr > 0 && (
+              <Badge variant="outline" className="border-amber-400 text-amber-700">
+                {data.municipiosPendentesSncr} município(s) SNCR pendente(s) — use "Buscar detentores" no card SIGEF
+              </Badge>
+            )}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs" data-testid="table-ccir-imoveis">
+              <thead>
+                <tr className="text-left text-muted-foreground border-b">
+                  <th className="py-1.5 pr-2 font-medium">Código INCRA</th>
+                  <th className="py-1.5 pr-2 font-medium">Código CAR</th>
+                  <th className="py-1.5 pr-2 font-medium">Denominação</th>
+                  <th className="py-1.5 pr-2 font-medium">Detentores</th>
+                  <th className="py-1.5 pr-2 font-medium text-right">Área (ha)</th>
+                  <th className="py-1.5 pr-2 font-medium text-right">Sobrepos. (%)</th>
+                  <th className="py-1.5 pr-2 font-medium">Situação</th>
+                  <th className="py-1.5 font-medium">Origem</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(data.imoveis || []).map((i: any, idx: number) => (
+                  <tr key={idx} className="border-b last:border-0" data-testid={`row-ccir-imovel-${idx}`}>
+                    <td className="py-1.5 pr-2 font-mono text-[11px]">{i.codigoIncra || "—"}</td>
+                    <td className="py-1.5 pr-2 font-mono text-[11px] max-w-[180px] truncate" title={i.codigoCar || undefined}>{i.codigoCar || "—"}</td>
+                    <td className="py-1.5 pr-2">{i.denominacao || "—"}</td>
+                    <td className="py-1.5 pr-2">{Array.isArray(i.detentores) && i.detentores.length > 0 ? i.detentores.join("; ") : "—"}</td>
+                    <td className="py-1.5 pr-2 text-right">{i.areaHa != null ? Number(i.areaHa).toLocaleString("pt-BR") : "—"}</td>
+                    <td className="py-1.5 pr-2 text-right">{i.sobreposicaoPct != null ? `${Number(i.sobreposicaoPct).toLocaleString("pt-BR")}%` : "—"}</td>
+                    <td className="py-1.5 pr-2">{i.situacao || "—"}</td>
+                    <td className="py-1.5">
+                      <Badge variant="outline" className="text-[10px]">{i.origem}</Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {data.observacao && (
+            <p className="text-[10px] text-muted-foreground">{data.observacao}</p>
+          )}
+          <p className="text-[10px] text-muted-foreground">
+            Fonte: {data.fonte} · consultado em {data.consultadoEm ? new Date(data.consultadoEm).toLocaleString("pt-BR") : "—"}.
+          </p>
+        </CardContent>
+      )}
+    </Card>
+  );
 }
 
 function AnmLiveQuery({ processoAnm, onSave, savedData }: { processoAnm?: string | null; onSave?: (data: any) => void; savedData?: any }) {
@@ -865,12 +1487,6 @@ function AnmLiveQuery({ processoAnm, onSave, savedData }: { processoAnm?: string
                     <div>
                       <p className="text-xs text-muted-foreground">Área (ha)</p>
                       <p className="font-medium">{Number(f.AREA_HA).toLocaleString("pt-BR")}</p>
-                    </div>
-                  )}
-                  {f.ULT_EVENTO && (
-                    <div className="col-span-2">
-                      <p className="text-xs text-muted-foreground">Último Evento</p>
-                      <p className="font-medium text-xs" data-testid={`text-anm-live-evento-${idx}`}>{f.ULT_EVENTO}</p>
                     </div>
                   )}
                 </CardContent>
@@ -1083,13 +1699,14 @@ function ChecklistSection({ title, items, savedChecks, ativoId, checkKey, campos
     const newChecks = { ...localChecks, [item]: !localChecks[item] };
     setLocalChecks(newChecks);
     try {
-      await apiRequest("PATCH", `/api/matching/assets/${ativoId}`, {
+      // Só o delta do checklist — o servidor faz merge atômico e preserva
+      // enriquecimentos salvos em paralelo.
+      await apiRequest("PATCH", `/api/assets/${ativoId}`, {
         camposEspecificos: {
-          ...camposEspecificos,
           [checkKey]: newChecks,
         },
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", String(ativoId)] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", String(ativoId)] });
     } catch {
       toast({ title: "Erro ao salvar checklist", variant: "destructive" });
       setLocalChecks(localChecks);
@@ -1143,8 +1760,8 @@ function AssetPhotosSection({ ativo, assetId }: { ativo: any; assetId: number })
       }
       const { urls } = await uploadRes.json();
       const novasFotos = [...fotos, ...urls];
-      await apiRequest("PATCH", `/api/matching/assets/${assetId}`, { fotos: novasFotos });
-      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", String(assetId)] });
+      await apiRequest("PATCH", `/api/assets/${assetId}`, { fotos: novasFotos });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", String(assetId)] });
       toast({ title: `${urls.length} foto(s) enviada(s)` });
     } catch (err: any) {
       toast({ title: err.message || "Erro ao enviar fotos", variant: "destructive" });
@@ -1157,8 +1774,8 @@ function AssetPhotosSection({ ativo, assetId }: { ativo: any; assetId: number })
   const handleRemove = async (url: string) => {
     const novasFotos = fotos.filter((f: string) => f !== url);
     try {
-      await apiRequest("PATCH", `/api/matching/assets/${assetId}`, { fotos: novasFotos });
-      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", String(assetId)] });
+      await apiRequest("PATCH", `/api/assets/${assetId}`, { fotos: novasFotos });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", String(assetId)] });
       toast({ title: "Foto removida" });
     } catch {
       toast({ title: "Erro ao remover foto", variant: "destructive" });
@@ -1331,6 +1948,7 @@ const ENRICHMENT_FIELDS_CONFIG: Record<string, Array<{
     { key: "observacoesQualitativas", label: "Observações qualitativas", type: "textarea" },
   ],
 };
+ENRICHMENT_FIELDS_CONFIG["JAZIDA"] = ENRICHMENT_FIELDS_CONFIG["MINA"];
 
 const ONBOARDING_CHECKLIST: Record<string, Array<{ item: string; obrigatorio: boolean }>> = {
   TERRA: [
@@ -1385,13 +2003,14 @@ const ONBOARDING_CHECKLIST: Record<string, Array<{ item: string; obrigatorio: bo
     { item: "Estudo de viabilidade (VGV)", obrigatorio: false },
   ],
 };
+ONBOARDING_CHECKLIST["JAZIDA"] = ONBOARDING_CHECKLIST["MINA"];
 
 function EnrichmentTab({ ativo, assetId }: { ativo: any; assetId: string }) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const tipo = ativo.type as string;
   const fields = ENRICHMENT_FIELDS_CONFIG[tipo] || ENRICHMENT_FIELDS_CONFIG["NEGOCIO"];
-  const existingEnrich = ativo.camposEspecificos?.enrichment || {};
+  const existingEnrich = ativo?.camposEspecificos?.enrichment || {};
   const [activeSection, setActiveSection] = useState<"dados" | "documentos">("dados");
 
   const [formData, setFormData] = useState<Record<string, any>>(() => {
@@ -1411,7 +2030,7 @@ function EnrichmentTab({ ativo, assetId }: { ativo: any; assetId: string }) {
       updated[f.key] = enrich[f.key] ?? (f.type === "boolean" ? false : f.type === "multiselect" ? [] : f.type === "number" ? "" : "");
     }
     setFormData(updated);
-  }, [ativo.id, ativo.camposEspecificos]);
+  }, [ativo?.id, ativo?.camposEspecificos]);
 
   const filledCount = fields.filter(f => {
     const val = formData[f.key];
@@ -1437,9 +2056,9 @@ function EnrichmentTab({ ativo, assetId }: { ativo: any; assetId: string }) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await apiRequest("PATCH", `/api/matching/assets/${assetId}/enrichment`, formData);
+      const res = await apiRequest("PATCH", `/api/assets/${assetId}/enrichment`, formData);
       if (!res.ok) throw new Error("Erro ao salvar");
-      qc.invalidateQueries({ queryKey: ["/api/matching/assets", assetId] });
+      qc.invalidateQueries({ queryKey: ["/api/assets", String(assetId)] });
       toast({ title: "Enriquecimento salvo", description: `${progress}% preenchido` });
     } catch {
       toast({ title: "Erro ao salvar enriquecimento", variant: "destructive" });
@@ -1735,40 +2354,398 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
   const [editOpen, setEditOpen] = useState(false);
 
   const { data: ativoData, isLoading, error } = useQuery({
-    queryKey: ["/api/matching/assets", id],
-    queryFn: () => apiRequest("GET", `/api/matching/assets/${id}`).then(r => {
+    queryKey: ["/api/assets", id],
+    queryFn: () => apiRequest("GET", `/api/assets/${id}`).then(r => {
       if (!r.ok) throw new Error("not found");
       return r.json();
     }),
   });
 
   const ativo = ativoData;
-  const linkedDeals = (ativoData?.linkedDeals || []) as any[];
-  const emNegociacao = ativoData?.emNegociacao || false;
 
-  const { data: matchesInternos = [], isLoading: matchesLoading } = useQuery({
-    queryKey: ["/api/matching/assets", id, "suggestions"],
-    queryFn: () =>
-      apiRequest("GET", `/api/matching/assets/${id}/suggestions`)
-        .then(r => r.json()),
-  });
-
-  const [abaAtiva, setAbaAtiva] = useState("info");
-  const [buscandoCompradores, setBuscandoCompradores] = useState(false);
-  const [compradores, setCompradores] = useState<any[]>([]);
-  const [totalEncontrados, setTotalEncontrados] = useState<number | null>(null);
-  const [buscaRealizada, setBuscaRealizada] = useState(false);
-  const [primaryCount, setPrimaryCount] = useState(0);
-  const [secondaryCount, setSecondaryCount] = useState(0);
-  const [showFiltros, setShowFiltros] = useState(false);
-  const [filtroPorte, setFiltroPorte] = useState("auto");
-  const [filtroEstado, setFiltroEstado] = useState("auto");
-  const [ocultarCrm, setOcultarCrm] = useState(false);
-  const [analisandoIA, setAnalisandoIA] = useState(false);
-  const [iaRankings, setIaRankings] = useState<Record<string, any>>({});
+  const searchStr = useSearch();
+  const tabParam = new URLSearchParams(searchStr).get("tab");
+  const [abaAtiva, setAbaAtiva] = useState(tabParam || "info");
+  const [anmSubTab, setAnmSubTab] = useState("processo");
+  // Ligação mapa ↔ tabela SIGEF: parcela selecionada (clique) e sob hover na tabela
+  const [sigefSelecionada, setSigefSelecionada] = useState<string | null>(null);
+  const [sigefHover, setSigefHover] = useState<string | null>(null);
+  const [carSelecionado, setCarSelecionado] = useState<string | null>(null);
+  const [carHover, setCarHover] = useState<string | null>(null);
 
   const [enriquecendo, setEnriquecendo] = useState(false);
   const [enriquecendoCompleto, setEnriquecendoCompleto] = useState(false);
+
+  type EnrichStepStatus = "pending" | "running" | "success" | "error";
+  interface EnrichStep {
+    id: string;
+    label: string;
+    status: EnrichStepStatus;
+    error?: string;
+  }
+  const [enrichAllRunning, setEnrichAllRunning] = useState(false);
+  const [enrichAllSteps, setEnrichAllSteps] = useState<EnrichStep[]>([]);
+  const [enrichAllDone, setEnrichAllDone] = useState(false);
+
+  // ── Exportação de PDF completo (todas as abas) ──
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportProgress, setExportProgress] = useState("");
+  const pdfContentRef = useRef<HTMLDivElement>(null);
+
+  const waitForTabRender = async (tabId: string) => {
+    // espera base para montar o conteúdo e disparar as queries da aba
+    await new Promise(r => setTimeout(r, 700));
+    // aguarda sumirem os spinners de carregamento dentro do conteúdo
+    const start = Date.now();
+    while (Date.now() - start < 9000) {
+      const el = pdfContentRef.current;
+      const spinners = el ? el.querySelectorAll(".animate-spin").length : 0;
+      if (spinners === 0) break;
+      await new Promise(r => setTimeout(r, 400));
+    }
+    // tempo extra para mapas (Leaflet) e gráficos renderizarem
+    await new Promise(r => setTimeout(r, tabId === "geo" ? 2400 : 600));
+    window.scrollTo(0, 0);
+    await new Promise(r => setTimeout(r, 150));
+  };
+
+  const exportarPdfCompleto = async () => {
+    if (!ativo || exportingPdf) return;
+
+    // 1ª opção: relatório gerado no servidor a partir dos dados (texto selecionável,
+    // sem cortes). Se falhar, cai no método antigo de captura de tela.
+    setExportingPdf(true);
+    setExportProgress("Gerando relatório...");
+    try {
+      const resp = await fetch(`/api/assets/${ativo.id}/relatorio.pdf`, { credentials: "include" });
+      if (resp.ok && resp.headers.get("content-type")?.includes("pdf")) {
+        const blob = await resp.blob();
+        const safeName = (ativo.title || "ativo").replace(/[^\w\-]+/g, "_").slice(0, 60);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `Relatorio_${safeName}_${format(new Date(), "yyyy-MM-dd")}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        // O servidor sinaliza via header quando o parecer de IA não pôde ser
+        // gerado nesta exportação: avisa na hora, em vez de o usuário só
+        // descobrir lendo o PDF (o download acontece normalmente).
+        if (resp.headers.get("x-parecer-ia") === "indisponivel") {
+          toast({
+            title: "PDF gerado sem o parecer de IA",
+            description: "O parecer consolidado (IA) não pôde ser gerado nesta exportação — as demais seções saíram completas. Exporte novamente em instantes para tentar de novo.",
+            variant: "destructive",
+          });
+        } else {
+          toast({ title: "PDF gerado", description: "O relatório completo foi baixado." });
+        }
+        // a geração do relatório completa e persiste camadas de restrição no
+        // servidor — recarrega o ativo para a aba Restrições refletir sem reconsulta
+        queryClient.invalidateQueries({ queryKey: ["/api/assets", id] });
+        setExportProgress("");
+        setExportingPdf(false);
+        return;
+      }
+      if (resp.status === 409) {
+        const erro = await resp.json().catch(() => null);
+        toast({
+          title: "Relatório bloqueado por datas conflitantes",
+          description: erro?.message || "A vigência do alvará diverge entre as seções. Corrija os dados antes de exportar.",
+          variant: "destructive",
+        });
+        setExportProgress("");
+        setExportingPdf(false);
+        return;
+      }
+    } catch {
+      // servidor indisponível — segue para o fallback de captura de tela
+    }
+    setExportProgress("");
+    setExportingPdf(false);
+
+    await exportarPdfCapturaTela();
+  };
+
+  // Método antigo (fallback): captura de tela aba por aba com html2canvas
+  const exportarPdfCapturaTela = async () => {
+    if (!ativo || exportingPdf) return;
+    const abas = (ABAS_POR_TIPO[ativo.type] || []).filter(a => a.id !== "matches");
+    if (abas.length === 0) return;
+    const abaOriginal = abaAtiva;
+    const anmSubOriginal = anmSubTab;
+    setExportingPdf(true);
+    try {
+      const { default: jsPDF } = await import("jspdf");
+      const { default: html2canvas } = await import("html2canvas");
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const margin = 8;
+      const contentW = pageW - margin * 2;
+
+      // ── Capa ──
+      pdf.setFillColor(4, 47, 46);
+      pdf.rect(0, 0, pageW, 55, "F");
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(20);
+      pdf.text("Relatório de Ativo", margin, 26);
+      pdf.setFontSize(12);
+      pdf.setTextColor(200, 230, 220);
+      pdf.text("Mavrion Connect", margin, 36);
+      pdf.setTextColor(30, 30, 30);
+      pdf.setFontSize(16);
+      const titleLines = pdf.splitTextToSize(ativo.title || "Ativo", contentW);
+      pdf.text(titleLines, margin, 74);
+      let cy = 74 + titleLines.length * 7 + 6;
+      pdf.setFontSize(10);
+      pdf.setTextColor(90, 90, 90);
+      [`Tipo: ${ativo.type}`, `Gerado em: ${format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`]
+        .forEach(m => { pdf.text(m, margin, cy); cy += 6; });
+
+      const topOffset = 16;
+      const availFirst = pageH - topOffset - margin;
+      const drawSectionHeader = (label: string) => {
+        pdf.addPage();
+        pdf.setFillColor(4, 47, 46);
+        pdf.rect(0, 0, pageW, 12, "F");
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(11);
+        pdf.text(label, margin, 8);
+      };
+
+      const falhas: string[] = [];
+      const capturarSecao = async (label: string, tabId: string) => {
+        try {
+          await waitForTabRender(tabId);
+          const el = pdfContentRef.current;
+          if (!el) throw new Error("conteúdo indisponível");
+          const canvas = await html2canvas(el, {
+            scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false,
+          });
+          if (!canvas.width || !canvas.height) throw new Error("captura vazia");
+          const imgH = (canvas.height * contentW) / canvas.width;
+          drawSectionHeader(label);
+          if (imgH <= availFirst) {
+            pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", margin, topOffset, contentW, imgH);
+          } else {
+            // paginação vertical: fatia o canvas em páginas
+            const pxPerMm = canvas.height / imgH;
+            let sourceY = 0;
+            let isFirst = true;
+            while (sourceY < canvas.height - 1) {
+              const availMm = isFirst ? availFirst : (pageH - margin * 2);
+              const sliceHpx = Math.min(Math.floor(availMm * pxPerMm), canvas.height - sourceY);
+              const slice = document.createElement("canvas");
+              slice.width = canvas.width;
+              slice.height = sliceHpx;
+              const ctx = slice.getContext("2d");
+              if (ctx) {
+                ctx.fillStyle = "#ffffff";
+                ctx.fillRect(0, 0, slice.width, slice.height);
+                ctx.drawImage(canvas, 0, sourceY, canvas.width, sliceHpx, 0, 0, canvas.width, sliceHpx);
+              }
+              const sliceHmm = sliceHpx / pxPerMm;
+              if (!isFirst) pdf.addPage();
+              pdf.addImage(slice.toDataURL("image/jpeg", 0.92), "JPEG", margin, isFirst ? topOffset : margin, contentW, sliceHmm);
+              sourceY += sliceHpx;
+              isFirst = false;
+            }
+          }
+        } catch {
+          // uma seção com falha (ex.: mapa) não deve abortar o PDF inteiro
+          falhas.push(label);
+          drawSectionHeader(label);
+          pdf.setTextColor(150, 60, 60);
+          pdf.setFontSize(10);
+          pdf.text("Não foi possível capturar esta seção automaticamente.", margin, topOffset + 8);
+        }
+      };
+
+      for (const aba of abas) {
+        setAbaAtiva(aba.id);
+        const grupoAnm = ANM_TAB_GROUPS.find(g => g.id === aba.id);
+        if (grupoAnm) {
+          // Abas do enriquecimento ANM têm seções: captura cada uma como seção própria
+          for (const sec of grupoAnm.sections) {
+            const label = `${aba.label} — ${sec.label}`;
+            setExportProgress(label);
+            setAnmSubTab(sec.id);
+            await capturarSecao(label, aba.id);
+          }
+          setAnmSubTab(anmSubOriginal);
+        } else {
+          setExportProgress(aba.label);
+          await capturarSecao(aba.label, aba.id);
+        }
+      }
+
+      const safeName = (ativo.title || "ativo").replace(/[^\w\-]+/g, "_").slice(0, 60);
+      pdf.save(`Ativo_${safeName}_${format(new Date(), "yyyy-MM-dd")}.pdf`);
+      toast({
+        title: "PDF gerado",
+        description: falhas.length > 0
+          ? `Relatório baixado. Não foi possível capturar: ${falhas.join(", ")}.`
+          : "O relatório completo foi baixado.",
+      });
+    } catch (e: any) {
+      toast({ title: "Erro ao gerar PDF", description: e?.message || "Tente novamente.", variant: "destructive" });
+    } finally {
+      setAbaAtiva(abaOriginal);
+      setAnmSubTab(anmSubOriginal);
+      setExportProgress("");
+      setExportingPdf(false);
+    }
+  };
+
+  const autoAnalyzeTriggered = useRef(false);
+  useEffect(() => {
+    if (!ativo || ativo.type !== 'TERRA' || ativo.geoScore != null || autoAnalyzeTriggered.current) return;
+    autoAnalyzeTriggered.current = true;
+    apiRequest("POST", "/api/geo/auto-analyze", { assetId: ativo.id })
+      .then(r => r.json())
+      .then(data => {
+        if (data.triggered) {
+          setTimeout(() => queryClient.invalidateQueries({ queryKey: ["/api/assets", id] }), 15000);
+        }
+      })
+      .catch(() => {});
+  }, [ativo, id, queryClient]);
+
+  const ccirAbortRef = useRef<AbortController | null>(null);
+  const [ccirState, setCcirState] = useState<{ loading: boolean; error: string | null; startedAt: number | null }>({ loading: false, error: null, startedAt: null });
+
+  const handleStartCcir = useCallback(async (cpfCnpj?: string) => {
+    if (ccirState.loading) return;
+    if (!ativo || (ativo.type !== "TERRA" && ativo.type !== "AGRO")) return;
+    if (ccirAbortRef.current) ccirAbortRef.current.abort();
+    const abort = new AbortController();
+    ccirAbortRef.current = abort;
+    const startTime = Date.now();
+    setCcirState({ loading: true, error: null, startedAt: startTime });
+    try {
+      const body = cpfCnpj ? { cpfCnpj } : {};
+      const res = await fetch(`/api/enrichment/ccir/${id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "include",
+        signal: abort.signal,
+      });
+      const elapsed = Date.now() - startTime;
+      const minDelay = 1500;
+      if (elapsed < minDelay) await new Promise(r => setTimeout(r, minDelay - elapsed));
+      if (abort.signal.aborted) return;
+      if (!res.ok) {
+        const ct = res.headers.get("content-type") || "";
+        let msg: string;
+        if (ct.includes("application/json")) {
+          const err = await res.json().catch(() => ({ message: `Erro ${res.status}` }));
+          msg = err.message;
+        } else {
+          msg = `Serviço CCIR indisponível (erro ${res.status}). Tente novamente em alguns minutos.`;
+        }
+        setCcirState({ loading: false, error: msg, startedAt: null });
+        toast({ title: "Erro na consulta CCIR", description: msg, variant: "destructive" });
+        return;
+      }
+      await res.json();
+      await queryClient.invalidateQueries({ queryKey: ["/api/assets", id] });
+      setCcirState({ loading: false, error: null, startedAt: null });
+      toast({ title: "Consulta CCIR concluída" });
+    } catch (err: any) {
+      if (err.name === "AbortError") {
+        setCcirState({ loading: false, error: "Consulta cancelada.", startedAt: null });
+        return;
+      }
+      const msg = err.message || "Erro inesperado";
+      setCcirState({ loading: false, error: msg, startedAt: null });
+      toast({ title: "Erro na consulta CCIR", description: msg, variant: "destructive" });
+    }
+  }, [id, ativo, ccirState.loading, toast, queryClient]);
+
+  const handleCancelCcir = useCallback(() => {
+    if (ccirAbortRef.current) {
+      ccirAbortRef.current.abort();
+      ccirAbortRef.current = null;
+    }
+    setCcirState({ loading: false, error: "Consulta cancelada.", startedAt: null });
+  }, []);
+
+  const runEnrichAll = useCallback(async () => {
+    if (!ativo || enrichAllRunning) return;
+    const isTerraAgro = ["TERRA", "AGRO"].includes(ativo.type);
+
+    const initialSteps: EnrichStep[] = [];
+    if (isTerraAgro) {
+      initialSteps.push({ id: "sicar", label: "Geo & CAR", status: "pending" });
+      initialSteps.push({ id: "embrapa_ambiental", label: "Embrapa + Ambiental", status: "pending" });
+      initialSteps.push({ id: "ccir", label: "CCIR / INCRA", status: "pending" });
+    }
+    initialSteps.push({ id: "deepintel", label: "Deep Intelligence", status: "pending" });
+
+    setEnrichAllSteps(initialSteps);
+    setEnrichAllRunning(true);
+    setEnrichAllDone(false);
+
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    try {
+      pollTimer = setInterval(async () => {
+        try {
+          const pollRes = await apiRequest("GET", `/api/assets/${ativo.id}`);
+          if (!pollRes.ok) return;
+          const data = await pollRes.json();
+          const progress = data?.camposEspecificos?.enrichmentAllProgress;
+          if (progress?.steps) {
+            setEnrichAllSteps(prev => prev.map(s => {
+              const server = progress.steps.find((ss: any) => ss.id === s.id);
+              if (server) return { ...s, status: server.status, error: server.error };
+              const idx = progress.steps.length;
+              const myIdx = prev.findIndex(p => p.id === s.id);
+              if (myIdx === idx) return { ...s, status: "running" };
+              return s;
+            }));
+          }
+        } catch {}
+      }, 5000);
+
+      const res = await apiRequest("POST", `/api/assets/${ativo.id}/enriquecer-tudo`, {});
+      if (pollTimer) clearInterval(pollTimer);
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Erro" }));
+        throw new Error(err.message || "Erro no enriquecimento");
+      }
+
+      const result = await res.json();
+
+      if (result.steps) {
+        setEnrichAllSteps(result.steps.map((s: any) => ({
+          id: s.id,
+          label: s.label,
+          status: s.status as EnrichStepStatus,
+          error: s.error,
+        })));
+      }
+
+      if (result.errorCount === 0) {
+        toast({ title: "Enriquecimento completo finalizado com sucesso" });
+      } else if (result.errorCount === result.totalSteps) {
+        toast({ title: "Todas as etapas falharam", variant: "destructive" });
+      } else {
+        toast({ title: `Enriquecimento finalizado — ${result.errorCount} etapa(s) com erro`, variant: "default" });
+      }
+    } catch (err: any) {
+      if (pollTimer) clearInterval(pollTimer);
+      toast({ title: "Erro no enriquecimento", description: err.message, variant: "destructive" });
+    } finally {
+      if (pollTimer) clearInterval(pollTimer);
+      setEnrichAllRunning(false);
+      setEnrichAllDone(true);
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", id] });
+    }
+  }, [ativo, enrichAllRunning, id, queryClient, toast]);
   const [certidoesLoading, setCertidoesLoading] = useState(false);
   const [certidoesData, setCertidoesData] = useState<any>(null);
   const [cnpjaData, setCnpjaData] = useState<any>(null);
@@ -1780,19 +2757,17 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
   const [sicorData, setSicorData] = useState<any>(null);
   const [sicorLoading, setSicorLoading] = useState(false);
   const [sicorFetched, setSicorFetched] = useState(false);
-  const [cafProdutores, setCafProdutores] = useState<any[]>([]);
-  const [cafLoading, setCafLoading] = useState(false);
-  const [cafSearched, setCafSearched] = useState(false);
-  const [cafEnriching, setCafEnriching] = useState(false);
   const [contextoLoading, setContextoLoading] = useState(false);
 
   const salvarEnrichment = async (key: string, value: any) => {
     if (!ativo) return;
-    const campos = (ativo.camposEspecificos ?? {});
-    await apiRequest("PATCH", `/api/matching/assets/${ativo.id}`, {
-      camposEspecificos: { ...campos, [key]: value, [`${key}UpdatedAt`]: new Date().toISOString() },
+    // Envia só o delta — o servidor faz merge atômico. Espalhar o objeto
+    // inteiro (cópia possivelmente desatualizada) apagava dados salvos por
+    // consultas paralelas de outras sub-abas.
+    await apiRequest("PATCH", `/api/assets/${ativo.id}`, {
+      camposEspecificos: { [key]: value, [`${key}UpdatedAt`]: new Date().toISOString() },
     });
-    queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", id] });
+    queryClient.invalidateQueries({ queryKey: ["/api/assets", id] });
   };
 
   useEffect(() => {
@@ -1805,23 +2780,12 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
       setSicorData(campos.sicorData);
       setSicorFetched(true);
     }
-    if (campos.cafProdutores?.length && cafProdutores.length === 0 && !cafSearched) {
-      setCafProdutores(campos.cafProdutores);
-      setCafSearched(true);
-    }
-    if (campos.cafData?.produtores?.length && cafProdutores.length === 0 && !cafSearched) {
-      setCafProdutores(campos.cafData.produtores);
-      setCafSearched(true);
-    }
   }, [ativo]);
 
   useEffect(() => {
     setSicorData(null);
     setSicorFetched(false);
     setSicorLoading(false);
-    setCafProdutores([]);
-    setCafSearched(false);
-    setCafLoading(false);
     setCnpjaData(null);
     setCertidoesData(null);
     setCvmData(null);
@@ -1846,30 +2810,11 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
       .finally(() => setSicorLoading(false));
   }, [ativo, sicorData, sicorFetched]);
 
-  useEffect(() => {
-    if (!ativo || !ativo.estado || cafSearched) return;
-    setCafSearched(true);
-    setCafLoading(true);
-    const params = new URLSearchParams({ uf: ativo.estado, pageSize: "10" });
-    if (ativo.municipio) params.set("busca", ativo.municipio);
-    apiRequest("GET", `/api/caf-extrator/registros?${params}`)
-      .then(async (res) => {
-        if (res.ok) {
-          const json = await res.json();
-          const items = Array.isArray(json) ? json : json.data || [];
-          setCafProdutores(items);
-          if (items.length > 0) salvarEnrichment("cafProdutores", items);
-        }
-      })
-      .catch(() => {})
-      .finally(() => setCafLoading(false));
-  }, [ativo, cafSearched]);
-
   const enriquecerMutation = useMutation({
     mutationFn: () =>
-      apiRequest("POST", `/api/matching/assets/${id}/enriquecer-embrapa`, {}).then(r => r.json()),
+      apiRequest("POST", `/api/assets/${id}/enriquecer-embrapa`, {}).then(r => r.json()),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", id] });
       toast({ title: "✅ Dados Embrapa carregados!", description: "Análise agronômica atualizada." });
     },
     onError: (err: any) => {
@@ -1883,7 +2828,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
     if (!ativo) return;
     setSicarConsulting(true);
     try {
-      const res = await fetch(`/api/matching/assets/${ativo.id}/enriquecer-sicar`, {
+      const res = await fetch(`/api/assets/${ativo.id}/enriquecer-sicar`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -1891,7 +2836,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", id] });
+        queryClient.invalidateQueries({ queryKey: ["/api/assets", id] });
         toast({ title: "Dados SICAR atualizados!", description: `${data.sicar?.municipio || ""} / ${data.sicar?.uf || ""} — ${data.sicar?.condicao || ""}` });
       } else {
         toast({ title: data.message || "Erro ao consultar SICAR", variant: "destructive" });
@@ -1907,7 +2852,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
     if (!ativo) return;
     setGeoAnalyzing(true);
     try {
-      const geomRes = await apiRequest("GET", `/api/matching/assets/${ativo.id}/geometry`);
+      const geomRes = await apiRequest("GET", `/api/assets/${ativo.id}/geometry`);
       if (!geomRes.ok) throw new Error("Falha ao buscar geometria");
       const geomData = await geomRes.json();
       if (!geomData.geometry) {
@@ -1920,7 +2865,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
       const analysis = await analysisRes.json();
       const persistRes = await apiRequest("POST", "/api/geo/persist-analysis", { assetId: ativo.id, analysis });
       if (!persistRes.ok) throw new Error("Falha ao salvar análise");
-      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets", id] });
       toast({ title: "Análise geográfica atualizada!" });
     } catch (err: any) {
       toast({ title: "Erro na análise geo", description: err.message, variant: "destructive" });
@@ -1929,171 +2874,10 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
   };
 
   const handleDelete = async () => {
-    await apiRequest("DELETE", `/api/matching/assets/${id}`);
-    queryClient.invalidateQueries({ queryKey: ["/api/matching/assets"] });
+    await apiRequest("DELETE", `/api/assets/${id}`);
+    queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
     toast({ title: "Ativo excluído" });
     navigate("/ativos");
-  };
-
-  const buscarCompradores = async () => {
-    if (!ativo) return;
-    setBuscandoCompradores(true);
-    setIaRankings({});
-    try {
-      const params = new URLSearchParams({ tipo: ativo.type, assetId: String(id) });
-      if (ativo.estado) params.set("estado", ativo.estado);
-      if (ativo.priceAsking) params.set("preco", String(ativo.priceAsking));
-
-      const campos = ativo.camposEspecificos ?? {};
-      if (ativo.type === "TERRA" || ativo.type === "AGRO") {
-        const aptidao = campos.aptidaoAgricola || campos.culturas || "";
-        if (aptidao) params.set("aptidao", aptidao);
-        if (ativo.areaHa) params.set("areaHa", String(ativo.areaHa));
-        if (ativo.geoScore) params.set("geoScore", String(ativo.geoScore));
-        if ((ativo as any).geoTemRio || (ativo as any).geoTemLago) params.set("temAgua", "true");
-      }
-
-      if (ativo.type === "MINA") {
-        const attrs = (ativo.attributesJson as any) || {};
-        const sub = campos.substancia || attrs.anmSubstancia || campos.anmSubstancia;
-        if (sub) params.set("substancia", sub);
-      }
-      if (filtroPorte  !== "auto") params.set("porteOverride",  filtroPorte);
-      if (filtroEstado !== "auto") params.set("estadoOverride", filtroEstado);
-      if (ocultarCrm)              params.set("ocultarCrm",     "true");
-      const res = await apiRequest("GET", `/api/prospeccao/reversa?${params.toString()}`);
-      const data = await res.json();
-      const results = data.results || [];
-      setCompradores(results);
-      setTotalEncontrados(data.count ?? null);
-      setPrimaryCount(data.primaryCount ?? 0);
-      setSecondaryCount(data.secondaryCount ?? 0);
-      setBuscaRealizada(true);
-      setBuscandoCompradores(false);
-
-      if (results.length > 0) {
-        setAnalisandoIA(true);
-        try {
-          const aiRes = await apiRequest("POST", "/api/prospeccao/reversa/ai-rank", {
-            assetId: Number(id),
-            candidates: results.slice(0, 20).map((r: any) => ({
-              taxId: r.taxId,
-              legalName: r.legalName,
-              tradeName: r.tradeName,
-              cnaePrincipal: r.cnaePrincipal,
-              cnaeCode: r.cnaeCode,
-              porte: r.porte,
-              city: r.city,
-              state: r.state,
-              equity: r.equity,
-              founded: r.founded,
-              camada: r.camada,
-              intelligentScore: r.intelligentScore,
-              intelligentReason: r.intelligentReason,
-            })),
-          });
-          const aiData = await aiRes.json();
-          if (aiData.rankings && Array.isArray(aiData.rankings)) {
-            const rankMap: Record<string, any> = {};
-            aiData.rankings.forEach((r: any) => { rankMap[r.taxId] = r; });
-            setIaRankings(rankMap);
-            setCompradores(prev => {
-              const updated = prev.map(c => {
-                const ia = rankMap[c.taxId];
-                return ia ? { ...c, iaScoreIA: ia.scoreIA, iaRecomendado: ia.recomendado } : c;
-              });
-              return updated.sort((a, b) => {
-                const sa = a.iaScoreIA != null ? a.iaScoreIA : (a.intelligentScore || 0);
-                const sb = b.iaScoreIA != null ? b.iaScoreIA : (b.intelligentScore || 0);
-                return sb - sa;
-              });
-            });
-          }
-        } catch {
-          console.warn("AI ranking failed (non-fatal)");
-        } finally {
-          setAnalisandoIA(false);
-        }
-      }
-      return;
-    } catch {
-      toast({ title: "Erro ao buscar compradores", variant: "destructive" });
-    } finally {
-      setBuscandoCompradores(false);
-    }
-  };
-
-  const importarComprador = async (comprador: any) => {
-    const cnpj = (comprador.taxId || "").replace(/\D/g, "");
-    if (!cnpj || cnpj.length < 11) {
-      toast({ title: "CNPJ inválido", description: "Não foi possível importar — CNPJ ausente ou inválido.", variant: "destructive" });
-      return;
-    }
-    try {
-      const res = await apiRequest("POST", `/api/matching/assets/${id}/importar-comprador`, {
-        cnpj,
-        tradeName: comprador.tradeName || undefined,
-        legalName: comprador.legalName || undefined,
-        porte: comprador.porte || undefined,
-        cnaePrincipal: comprador.cnaePrincipal || undefined,
-        city: comprador.city || undefined,
-        state: comprador.state || undefined,
-      });
-      const data = await res.json();
-      const nome = comprador.tradeName || comprador.legalName || "Empresa";
-      const companyId = data.company?.id;
-      setCompradores(prev => prev.map(c => c.taxId === comprador.taxId ? { ...c, alreadySaved: true, savedCompanyId: companyId } : c));
-      queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/matching"] });
-      queryClient.invalidateQueries({ queryKey: [`/api/matching/assets/${id}/suggestions`] });
-      toast({
-        title: "Comprador importado com sucesso",
-        description: (
-          <div className="flex flex-col gap-1.5">
-            <span>{nome} — Empresa e match criados. Avalie na aba de Matches.</span>
-            {companyId && (
-              <a
-                href={`/empresas/${companyId}`}
-                className="text-emerald-600 dark:text-emerald-400 underline text-sm font-medium"
-                onClick={(e) => { e.preventDefault(); navigate(`/empresas/${companyId}`); }}
-                data-testid="link-ver-empresa"
-              >
-                Ver Empresa/Comprador →
-              </a>
-            )}
-          </div>
-        ),
-      });
-    } catch {
-      toast({ title: "Erro ao importar comprador", variant: "destructive" });
-    }
-  };
-
-  const iniciarNegociacao = async (match: any) => {
-    try {
-      const stagesRes = await apiRequest("GET", "/api/crm/stages");
-      const stages = await stagesRes.json();
-      const assetStages = (stages as any[]).filter((s: any) => s.pipelineType === "ASSET").sort((a: any, b: any) => a.order - b.order);
-      if (!assetStages.length) {
-        toast({ title: "Nenhum estágio no pipeline ASSET", variant: "destructive" });
-        return;
-      }
-      await apiRequest("POST", "/api/crm/deals", {
-        title: `${match.investorName || "Investidor"} — ${ativo.title}`,
-        pipelineType: "ASSET",
-        stageId: assetStages[0].id,
-        assetId: ativo.id,
-        companyId: match.companyId || undefined,
-        source: "matching",
-        amountEstimate: ativo.priceAsking || undefined,
-      });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", id] });
-      toast({ title: "Negociação iniciada", description: "Deal criado no pipeline ASSET" });
-      navigate("/crm?pipeline=ASSET");
-    } catch {
-      toast({ title: "Erro ao iniciar negociação", variant: "destructive" });
-    }
   };
 
   if (isLoading) {
@@ -2127,28 +2911,29 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
         <Button variant="ghost" size="sm" onClick={() => navigate("/ativos")} className="gap-1.5">
           <ArrowLeft className="w-4 h-4" /> Portfólio de Ativos
         </Button>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <Button
+            variant="default" size="sm"
+            disabled={enrichAllRunning}
+            onClick={runEnrichAll}
+            data-testid="button-atualizar-tudo"
+            className="gap-1.5"
+          >
+            {enrichAllRunning
+              ? <><Loader2 className="w-4 h-4 animate-spin" /> Atualizando...</>
+              : <><RefreshCw className="w-4 h-4" /> Atualizar Tudo</>}
+          </Button>
+
           <Button
             variant="outline" size="sm"
-            onClick={async () => {
-              try {
-                const res = await apiRequest("GET", `/api/matching/assets/${id}/showcase-check`);
-                const check = await res.json();
-                if (check.warnings?.length > 0) {
-                  toast({
-                    title: check.ready ? "Vitrine gerada com avisos" : "Dados insuficientes",
-                    description: check.warnings.join(", "),
-                    variant: check.ready ? "default" : "destructive",
-                  });
-                }
-                const url = `${window.location.origin}/vitrine/${id}`;
-                await navigator.clipboard.writeText(url);
-                toast({ title: "Link copiado!", description: url });
-              } catch { toast({ title: "Erro ao gerar link", variant: "destructive" }); }
-            }}
-            data-testid="button-gerar-vitrine"
+            disabled={exportingPdf || enrichAllRunning}
+            onClick={exportarPdfCompleto}
+            data-testid="button-exportar-pdf"
+            className="gap-1.5"
           >
-            <ExternalLink className="w-4 h-4 mr-1.5" /> Vitrine
+            {exportingPdf
+              ? <><Loader2 className="w-4 h-4 animate-spin" /> Gerando{exportProgress ? ` (${exportProgress})` : ""}...</>
+              : <><FileDown className="w-4 h-4" /> Exportar PDF</>}
           </Button>
           <Button
             variant="outline" size="sm"
@@ -2189,12 +2974,6 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                         {docsStatus.label}
                       </span>
                     )}
-                    {emNegociacao && (
-                      <Badge className="bg-blue-600 text-white text-xs gap-1 animate-pulse" data-testid="badge-em-negociacao">
-                        <Zap className="w-3 h-3" />
-                        Em negociação
-                      </Badge>
-                    )}
                   </div>
                 </div>
                 {ativo.priceAsking && (
@@ -2217,45 +2996,83 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
         </CardContent>
       </Card>
 
+      {enrichAllSteps.length > 0 && (
+        <Card data-testid="card-enrich-all-progress">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold flex items-center gap-2">
+                <RefreshCw className={cn("w-4 h-4", enrichAllRunning && "animate-spin")} />
+                Enriquecimento Completo
+              </p>
+              {enrichAllDone && !enrichAllRunning && (
+                <Button variant="ghost" size="sm" onClick={() => { setEnrichAllSteps([]); setEnrichAllDone(false); }} className="h-6 px-2">
+                  <XIcon className="w-3.5 h-3.5" />
+                </Button>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              {enrichAllSteps.map((step) => (
+                <div key={step.id} className="flex items-center gap-2.5 text-sm" data-testid={`enrich-step-${step.id}`}>
+                  {step.status === "pending" && <Clock className="w-4 h-4 text-muted-foreground" />}
+                  {step.status === "running" && <Loader2 className="w-4 h-4 text-primary animate-spin" />}
+                  {step.status === "success" && <CheckCircle2 className="w-4 h-4 text-green-600" />}
+                  {step.status === "error" && <AlertCircle className="w-4 h-4 text-red-500" />}
+                  <span className={cn(
+                    step.status === "running" && "font-medium text-primary",
+                    step.status === "success" && "text-green-700",
+                    step.status === "error" && "text-red-600",
+                    step.status === "pending" && "text-muted-foreground",
+                  )}>
+                    {step.label}
+                  </span>
+                  {step.error && step.status === "error" && (
+                    <span className="text-xs text-red-400 ml-1">— {step.error}</span>
+                  )}
+                  {step.error && step.status === "success" && (
+                    <span className="text-xs text-yellow-600 ml-1">({step.error})</span>
+                  )}
+                </div>
+              ))}
+            </div>
+            {enrichAllRunning && (
+              <Progress
+                value={Math.round((enrichAllSteps.filter(s => s.status === "success" || s.status === "error").length / enrichAllSteps.length) * 100)}
+                className="h-1.5"
+              />
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Tabs */}
       <Tabs value={abaAtiva} onValueChange={setAbaAtiva}>
         <div className="overflow-x-auto pb-0.5">
           <TabsList className="w-max min-w-full">
-            {(ABAS_POR_TIPO[ativo.type] || ABAS_POR_TIPO["NEGOCIO"]).map(aba => (
-              <TabsTrigger key={aba.id} value={aba.id} data-testid={`tab-${aba.id}`}>
-                {aba.label}
-                {aba.id === "matches" && (linkedDeals.length + matchesInternos.length) > 0 && (
-                  <Badge variant="secondary" className="ml-1.5 h-5 px-1.5 text-[10px]">{linkedDeals.length + matchesInternos.length}</Badge>
-                )}
-                {aba.id === "embrapa" && ativo.camposEspecificos?.embrapa && (
-                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block ml-1" />
-                )}
-                {aba.id === "ambiental" && ativo.camposEspecificos?.ambiental && (
-                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block ml-1" />
-                )}
-                {aba.id === "duediligence" && ativo.camposEspecificos?.dueDiligenceFundiaria && (
-                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block ml-1" />
-                )}
-                {aba.id === "geo" && ativo.camposEspecificos?.sicarConsultadoEm && (
-                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block ml-1" />
-                )}
-                {aba.id === "ccir" && ativo.camposEspecificos?.ccirConsultadoEm && (
-                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block ml-1" />
-                )}
-                {aba.id === "enriquecimento" && (() => {
-                  const enrich = ativo.camposEspecificos?.enrichment;
-                  const cKey = `checklist_${ativo.type}`;
-                  const checks = ativo.camposEspecificos?.[cKey] || {};
-                  const enrichFilled = enrich ? Object.values(enrich).filter((v: any) => v !== null && v !== undefined && v !== "" && v !== false && !(Array.isArray(v) && v.length === 0)).length : 0;
-                  const checksFilled = Object.values(checks).filter(Boolean).length;
-                  if (enrichFilled === 0 && checksFilled === 0) return null;
-                  return <span className="w-2 h-2 rounded-full bg-green-500 inline-block ml-1" />;
-                })()}
-              </TabsTrigger>
-            ))}
+
           </TabsList>
         </div>
 
+        {ccirState.loading && abaAtiva !== "ccir" && ativo && (ativo.type === "TERRA" || ativo.type === "AGRO") && (
+          <div className="mt-3 flex items-center gap-3 rounded-md border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40 px-4 py-2.5" data-testid="banner-ccir-progress">
+            <Loader2 className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-blue-700 dark:text-blue-300">Consulta CCIR em andamento...</p>
+              <p className="text-xs text-blue-500 dark:text-blue-400">Dados do INCRA sendo consultados em segundo plano</p>
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-blue-600 hover:text-blue-800 hover:bg-blue-100 dark:text-blue-400 dark:hover:bg-blue-900 h-7 px-2 text-xs"
+              onClick={handleCancelCcir}
+              data-testid="button-cancel-ccir-banner"
+            >
+              <XIcon className="w-3.5 h-3.5 mr-1" /> Cancelar
+            </Button>
+          </div>
+        )}
+
+        {/* Wrapper capturado na exportação de PDF */}
+        <div ref={pdfContentRef}>
         {/* ── Info Tab ── */}
         <TabsContent value="info" className="space-y-4 mt-4">
           <div className="grid md:grid-cols-2 gap-4">
@@ -2421,8 +3238,9 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
             </Card>
           )}
 
-          {/* Fotos do Ativo */}
+          {/* Fotos do Ativo — removido por enquanto
           <AssetPhotosSection ativo={ativo} assetId={Number(id)} />
+          */}
 
           {/* Observações */}
           {ativo.observacoes && (
@@ -2444,415 +3262,8 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
         </TabsContent>
 
 
-        {/* ── Matches Tab (Negociações + Prospecção Reversa) ── */}
-        <TabsContent value="matches" className="mt-4 space-y-6">
 
-          {/* Negociações abertas */}
-          {linkedDeals.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                  Negociações abertas
-                </h3>
-                <Badge variant="secondary" className="text-xs">{linkedDeals.length}</Badge>
-              </div>
-              {linkedDeals.map((deal: any) => (
-                <Card key={deal.id} className="border-blue-200 dark:border-blue-800">
-                  <CardContent className="p-4 flex items-center justify-between gap-3">
-                    <div className="space-y-1">
-                      <p className="font-medium text-sm">{deal.title}</p>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {deal.stageName && (
-                          <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
-                            {deal.stageName}
-                          </Badge>
-                        )}
-                        {deal.amountEstimate && (
-                          <span className="text-xs text-muted-foreground">
-                            {formatBRL(Number(deal.amountEstimate))}
-                          </span>
-                        )}
-                        <span className="text-xs text-muted-foreground">
-                          {deal.pipelineType === "INVESTOR" ? "Pipeline Investidor" : "Pipeline Ativo"}
-                        </span>
-                      </div>
-                    </div>
-                    <Button size="sm" variant="outline" className="h-7 text-xs shrink-0"
-                      onClick={() => navigate("/crm")}>
-                      Ver no CRM
-                    </Button>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
 
-          {/* Investidores compatíveis — matching engine */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                Investidores compatíveis
-              </h3>
-              {matchesInternos.length > 0 && (
-                <Badge variant="secondary" className="text-xs">{matchesInternos.length}</Badge>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Gerados automaticamente pelo engine de matching com perfis cadastrados no sistema.
-            </p>
-
-            {matchesLoading && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground py-3">
-                <Loader2 className="w-4 h-4 animate-spin" /> Carregando...
-              </div>
-            )}
-
-            {!matchesLoading && matchesInternos.length === 0 && (
-              <Card>
-                <CardContent className="p-6 text-center space-y-2">
-                  <Zap className="w-8 h-8 mx-auto text-muted-foreground opacity-30" />
-                  <p className="text-sm text-muted-foreground">Nenhum investidor compatível ainda.</p>
-                </CardContent>
-              </Card>
-            )}
-
-            {(matchesInternos as any[]).map((match: any) => (
-              <Card key={match.id} className={cn(
-                "border transition-colors",
-                match.status === "accepted" ? "border-green-200 dark:border-green-800" :
-                match.status === "dismissed" ? "border-muted opacity-60" :
-                "hover:border-primary/30"
-              )}>
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-1.5 flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="font-medium text-sm">
-                          {match.investorName || (match as any).reasonsJson?.compradorNome || (match.investorProfileId ? `Investidor #${match.investorProfileId}` : "Comprador Estratégico")}
-                        </p>
-                        {match.investorCnpj && (
-                          <span className="text-xs font-mono text-muted-foreground">{match.investorCnpj}</span>
-                        )}
-                        {(match as any).tipo === "estrategico" && (
-                          <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">
-                            Estratégico
-                          </Badge>
-                        )}
-                        {match.status === "accepted" && (
-                          <Badge variant="outline" className="text-[10px] bg-green-50 text-green-700 border-green-200">
-                            Em negociação
-                          </Badge>
-                        )}
-                        {match.status === "dismissed" && (
-                          <Badge variant="outline" className="text-[10px] text-muted-foreground">Descartado</Badge>
-                        )}
-                      </div>
-
-                      {match.score != null && (
-                        <div className="flex items-center gap-2">
-                          <div className="h-1.5 w-24 bg-muted rounded-full overflow-hidden">
-                            <div className={cn("h-full rounded-full",
-                              match.score >= 70 ? "bg-green-500" :
-                              match.score >= 40 ? "bg-amber-500" : "bg-red-400"
-                            )} style={{ width: `${Math.min(match.score, 100)}%` }} />
-                          </div>
-                          <span className="text-xs text-muted-foreground">Score {match.score}</span>
-                        </div>
-                      )}
-
-                      {Array.isArray(match.reasonsJson) && match.reasonsJson.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {(match.reasonsJson as string[]).slice(0, 3).map((r: string, i: number) => (
-                            <span key={i} className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
-                              {r}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex flex-col gap-1.5 shrink-0">
-                      {match.status === "new" && (
-                        <Button size="sm" className="h-7 text-xs gap-1"
-                          onClick={() => iniciarNegociacao(match)}>
-                          <Handshake className="w-3 h-3" /> Iniciar negociação
-                        </Button>
-                      )}
-                      {match.companyId && (
-                        <Button size="sm" variant="ghost" className="h-7 text-xs"
-                          onClick={() => navigate(`/empresas/${match.companyId}`)}>
-                          Ver empresa
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
-          {/* Prospecção reversa */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                Prospecção reversa
-              </h3>
-              <Badge variant="outline" className="text-[10px]">CNPJA externo</Badge>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Empresas externas com perfil compatível. Ao importar, são vinculadas a este ativo.
-            </p>
-            <Card>
-            <CardContent className="space-y-4 pt-4">
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors"
-                  onClick={() => setShowFiltros(f => !f)}
-                  data-testid="button-toggle-filtros"
-                >
-                  <Filter className="w-3.5 h-3.5" />
-                  Ajustar filtros
-                  <ChevronRight className={cn("w-3 h-3 transition-transform", showFiltros && "rotate-90")} />
-                </button>
-
-                {showFiltros && (
-                  <div className="flex flex-wrap gap-2 p-3 rounded-lg bg-muted/30 border">
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-muted-foreground font-medium uppercase">Porte mínimo</p>
-                      <Select value={filtroPorte} onValueChange={setFiltroPorte}>
-                        <SelectTrigger className="h-7 text-xs w-36" data-testid="select-porte">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="auto">Automático</SelectItem>
-                          <SelectItem value="all">Todos os portes</SelectItem>
-                          <SelectItem value="medio">Médio ou maior</SelectItem>
-                          <SelectItem value="grande">Apenas grande</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-muted-foreground font-medium uppercase">Estado</p>
-                      <Select value={filtroEstado} onValueChange={setFiltroEstado}>
-                        <SelectTrigger className="h-7 text-xs w-40" data-testid="select-estado">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="auto">Automático</SelectItem>
-                          <SelectItem value="all">Todo o Brasil</SelectItem>
-                          {["AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG",
-                            "MS","MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR",
-                            "RS","SC","SE","SP","TO"].map(uf => (
-                            <SelectItem key={uf} value={uf}>{uf}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-1 flex flex-col justify-end">
-                      <label className="flex items-center gap-2 cursor-pointer h-7">
-                        <input
-                          type="checkbox"
-                          checked={ocultarCrm}
-                          onChange={e => setOcultarCrm(e.target.checked)}
-                          className="rounded border-muted-foreground/30 w-3.5 h-3.5"
-                          data-testid="checkbox-ocultar-crm"
-                        />
-                        <span className="text-xs">Ocultar já no CRM</span>
-                      </label>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {!buscaRealizada ? (
-                <div className="text-center py-8 space-y-3">
-                  <p className="text-sm text-muted-foreground">Nenhuma busca realizada ainda.</p>
-                  <Button
-                    onClick={buscarCompradores}
-                    disabled={buscandoCompradores}
-                    className="gap-2"
-                    data-testid="button-buscar-compradores"
-                  >
-                    {buscandoCompradores
-                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Buscando...</>
-                      : <><Search className="w-4 h-4" /> Buscar compradores compatíveis</>}
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="space-y-0.5">
-                      <p className="text-xs text-muted-foreground" data-testid="text-compradores-count">
-                        {compradores.length} empresa{compradores.length !== 1 ? "s" : ""} encontrada{compradores.length !== 1 ? "s" : ""}
-                      </p>
-                      {(primaryCount > 0 || secondaryCount > 0) && (
-                        <div className="flex gap-3 text-[11px]">
-                          {primaryCount > 0 && (
-                            <span className="flex items-center gap-1 text-green-700">
-                              <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
-                              {primaryCount} compradores diretos
-                            </span>
-                          )}
-                          {secondaryCount > 0 && (
-                            <span className="flex items-center gap-1 text-blue-700">
-                              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block" />
-                              {secondaryCount} fundos e tradings
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <Button
-                      variant="outline" size="sm"
-                      onClick={buscarCompradores}
-                      disabled={buscandoCompradores}
-                      className="h-7 text-xs gap-1"
-                      data-testid="button-refazer-busca"
-                    >
-                      {buscandoCompradores ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Refazer
-                    </Button>
-                  </div>
-
-                  {analisandoIA && (
-                    <div className="flex items-center gap-2 p-3 rounded-lg bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800" data-testid="loading-ia-rank">
-                      <Brain className="w-4 h-4 text-violet-600 animate-pulse" />
-                      <span className="text-sm text-violet-700 dark:text-violet-300">Agente IA analisando compatibilidade dos compradores...</span>
-                      <Loader2 className="w-3.5 h-3.5 text-violet-500 animate-spin ml-auto" />
-                    </div>
-                  )}
-
-                  {compradores.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-6">
-                      Nenhuma empresa encontrada. Tente ajustar os filtros.
-                    </p>
-                  ) : (
-                    compradores.map(c => {
-                      const ia = iaRankings[c.taxId];
-                      return (
-                      <div
-                        key={c.taxId}
-                        className={cn(
-                          "p-3 rounded-lg border transition-colors",
-                          ia?.recomendado ? "border-violet-300 dark:border-violet-700 bg-violet-50/30 dark:bg-violet-950/20" : "hover:border-primary/30"
-                        )}
-                        data-testid={`card-comprador-${c.taxId}`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1 min-w-0 space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="font-medium text-sm truncate">{c.tradeName || c.legalName}</p>
-                            {ia && (
-                              <Badge
-                                variant="outline"
-                                className={cn("text-xs font-bold border-0", ia.scoreIA >= 70 ? "bg-violet-100 text-violet-800" : ia.scoreIA >= 40 ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-600")}
-                                data-testid={`badge-ia-score-${c.taxId}`}
-                              >
-                                <Brain className="w-3 h-3 mr-1" />
-                                {ia.scoreIA}
-                              </Badge>
-                            )}
-                            {ia?.recomendado && (
-                              <Badge className="text-[10px] bg-violet-600 text-white border-0 gap-1">
-                                <Sparkles className="w-3 h-3" /> Recomendado IA
-                              </Badge>
-                            )}
-                            {!ia && c.intelligentScore != null && (
-                              <Badge
-                                variant="outline"
-                                className={cn("text-xs font-bold border-0", c.intelligentScore >= 70 ? "bg-green-100 text-green-800" : c.intelligentScore >= 40 ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-600")}
-                                data-testid={`badge-score-${c.taxId}`}
-                              >
-                                {c.intelligentScore}pts
-                              </Badge>
-                            )}
-                            {c.alreadySaved && (
-                              <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
-                                No CRM
-                              </Badge>
-                            )}
-                            {c.camada === 1 && (
-                              <Badge variant="outline" className="text-[10px] bg-green-50 text-green-700 border-green-200">
-                                Comprador direto
-                              </Badge>
-                            )}
-                            {c.camada === 2 && (
-                              <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">
-                                Fundo / trading
-                              </Badge>
-                            )}
-                            {c.camada === 3 && (
-                              <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
-                                Relacionado
-                              </Badge>
-                            )}
-                          </div>
-                          <p className="text-xs text-muted-foreground font-mono">{c.taxId}</p>
-                          {ia?.justificativa && (
-                            <p className="text-[11px] text-violet-700 dark:text-violet-300" data-testid={`text-ia-justificativa-${c.taxId}`}>
-                              <Brain className="w-3 h-3 inline mr-1 opacity-60" />{ia.justificativa}
-                            </p>
-                          )}
-                          {!ia?.justificativa && c.intelligentReason && (
-                            <p className="text-[11px] text-muted-foreground italic" data-testid={`text-reason-${c.taxId}`}>{c.intelligentReason}</p>
-                          )}
-                          {ia && (ia.sinergias?.length > 0 || ia.ressalvas?.length > 0) && (
-                            <div className="flex flex-wrap gap-1.5 mt-1">
-                              {ia.sinergias?.map((s: string, i: number) => (
-                                <span key={`s-${i}`} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400">
-                                  <CheckCircle2 className="w-2.5 h-2.5" />{s}
-                                </span>
-                              ))}
-                              {ia.ressalvas?.map((r: string, i: number) => (
-                                <span key={`r-${i}`} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400">
-                                  <AlertCircle className="w-2.5 h-2.5" />{r}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                            {c.cnaePrincipal && <span className="truncate max-w-[200px]">{c.cnaePrincipal}</span>}
-                            {(c.city || c.state) && (
-                              <span className="flex items-center gap-1">
-                                <MapPin className="w-3 h-3" />
-                                {[c.city, c.state].filter(Boolean).join("/")}
-                              </span>
-                            )}
-                            {c.porte && <span>{c.porte}</span>}
-                          </div>
-                        </div>
-                        <div className="shrink-0">
-                          {!c.alreadySaved ? (
-                            <Button
-                              size="sm" variant="outline" className="h-7 text-xs"
-                              onClick={() => importarComprador(c)}
-                              data-testid={`button-importar-${c.taxId}`}
-                            >
-                              Importar
-                            </Button>
-                          ) : (
-                            <Button
-                              size="sm" variant="ghost" className="h-7 text-xs text-primary"
-                              onClick={() => navigate(c.savedCompanyId ? `/empresas/${c.savedCompanyId}` : "/empresas")}
-                              data-testid={`button-ver-empresa-${c.taxId}`}
-                            >
-                              Ver Empresa/Comprador
-                            </Button>
-                          )}
-                        </div>
-                        </div>
-                      </div>
-                      );
-                    })
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-          </div>
-        </TabsContent>
 
         <TabsContent value="embrapa" className="mt-4 space-y-4">
 
@@ -2911,8 +3322,8 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                       onClick={async () => {
                         setEnriquecendoCompleto(true);
                         try {
-                          await apiRequest("POST", `/api/matching/assets/${id}/enriquecer-completo`, {});
-                          queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", id] });
+                          await apiRequest("POST", `/api/assets/${id}/enriquecer-completo`, {});
+                          queryClient.invalidateQueries({ queryKey: ["/api/assets", id] });
                           toast({ title: "✅ Enriquecimento completo!", description: "IBAMA, MapBiomas e NDVI HD atualizados" });
                         } catch {
                           toast({ title: "Erro no enriquecimento", variant: "destructive" });
@@ -2992,67 +3403,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                     </Card>
                   )}
 
-                  {embrapa.solo && (
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm flex items-center gap-2">
-                          <FlaskConical className="w-4 h-4 text-amber-600" />
-                          Classificação do Solo
-                          {embrapa.solo.fonte === "cache" && (
-                            <Badge variant="outline" className="text-[10px] ml-auto">Cache</Badge>
-                          )}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
-                        <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-                          <p className="text-sm font-bold text-amber-800 dark:text-amber-300">
-                            {embrapa.solo.classificacao}
-                          </p>
-                          {embrapa.solo.aptidao && (
-                            <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
-                              Aptidão: {embrapa.solo.aptidao}
-                            </p>
-                          )}
-                          {embrapa.solo.textura && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Textura: {embrapa.solo.textura}
-                            </p>
-                          )}
-                        </div>
-                        {(embrapa.solo.ph != null || embrapa.solo.argila != null || embrapa.solo.carbonoOrganico != null) && (
-                          <div className="grid grid-cols-2 gap-2 mt-2">
-                            {embrapa.solo.ph != null && (
-                              <div className="p-2 rounded bg-muted/50 text-center">
-                                <p className="text-xs text-muted-foreground">pH</p>
-                                <p className="text-sm font-bold" data-testid="text-solo-ph">{embrapa.solo.ph}</p>
-                              </div>
-                            )}
-                            {embrapa.solo.argila != null && (
-                              <div className="p-2 rounded bg-muted/50 text-center">
-                                <p className="text-xs text-muted-foreground">Argila</p>
-                                <p className="text-sm font-bold" data-testid="text-solo-argila">{embrapa.solo.argila}%</p>
-                              </div>
-                            )}
-                            {embrapa.solo.carbonoOrganico != null && (
-                              <div className="p-2 rounded bg-muted/50 text-center">
-                                <p className="text-xs text-muted-foreground">C. Orgânico</p>
-                                <p className="text-sm font-bold" data-testid="text-solo-soc">{embrapa.solo.carbonoOrganico} g/kg</p>
-                              </div>
-                            )}
-                            {embrapa.solo.areia != null && (
-                              <div className="p-2 rounded bg-muted/50 text-center">
-                                <p className="text-xs text-muted-foreground">Areia</p>
-                                <p className="text-sm font-bold" data-testid="text-solo-areia">{embrapa.solo.areia}%</p>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {embrapa.solo.fonte && (
-                          <p className="text-[10px] text-muted-foreground text-right mt-1">Fonte: {embrapa.solo.fonte}</p>
-                        )}
-                      </CardContent>
-                    </Card>
-                  )}
+                  {/* Card de Análise de Solo removido temporariamente — API SoilGrids/ISRIC indisponível. Reimplementar futuramente com fonte alternativa. */}
 
                   {embrapa.ndvi && (
                     <Card>
@@ -3097,13 +3448,22 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                         <CardTitle className="text-sm flex items-center gap-2">
                           <Droplets className="w-4 h-4 text-blue-500" />
                           Dados Climáticos
-                          {embrapa.clima.fonte === "cache" && (
-                            <Badge variant="outline" className="text-[10px] ml-auto">Cache</Badge>
+                          {embrapa.clima.fonte && (
+                            <Badge variant="outline" className="text-[10px] ml-auto" data-testid="badge-clima-fonte">{embrapa.clima.fonte}</Badge>
                           )}
                         </CardTitle>
                       </CardHeader>
                       <CardContent className="space-y-3">
-                        {embrapa.clima.precipitacaoMedia > 0 && (
+                        {embrapa.clima.precipitacaoAnual ? (
+                          <div className="flex items-center justify-between p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20" data-testid="row-precip-anual">
+                            <span className="text-xs text-muted-foreground flex items-center gap-1">
+                              <Droplets className="w-3.5 h-3.5" /> Precipitação anual
+                            </span>
+                            <span className="text-sm font-bold text-blue-700">
+                              {Number(embrapa.clima.precipitacaoAnual).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} mm/ano
+                            </span>
+                          </div>
+                        ) : embrapa.clima.precipitacaoMedia > 0 ? (
                           <div className="flex items-center justify-between p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20">
                             <span className="text-xs text-muted-foreground flex items-center gap-1">
                               <Droplets className="w-3.5 h-3.5" /> Precipitação
@@ -3112,9 +3472,9 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                               {embrapa.clima.precipitacaoMedia} mm
                             </span>
                           </div>
-                        )}
+                        ) : null}
                         {embrapa.clima.temperaturaMedia > 0 && (
-                          <div className="flex items-center justify-between p-2 rounded-lg bg-orange-50 dark:bg-orange-900/20">
+                          <div className="flex items-center justify-between p-2 rounded-lg bg-orange-50 dark:bg-orange-900/20" data-testid="row-temp-media">
                             <span className="text-xs text-muted-foreground flex items-center gap-1">
                               <Thermometer className="w-3.5 h-3.5" /> Temperatura média
                             </span>
@@ -3123,7 +3483,55 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                             </span>
                           </div>
                         )}
-                        <p className="text-xs text-muted-foreground">{embrapa.clima.indiceSeca}</p>
+                        {embrapa.clima.precipitacaoMensal && (
+                          <div data-testid="chart-precip-mensal">
+                            <p className="text-[11px] text-muted-foreground mb-1.5">Precipitação mensal (mm)</p>
+                            <div className="flex items-end gap-[3px] h-16">
+                              {(embrapa.clima.precipitacaoMensal as number[]).map((v: number, i: number) => {
+                                const max = Math.max(...(embrapa.clima.precipitacaoMensal as number[]), 1);
+                                const pct = Math.max(2, (v / max) * 100);
+                                const isWet = v > 150;
+                                const isDry = v < 60;
+                                return (
+                                  <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
+                                    <div
+                                      className={`w-full rounded-t-sm transition-all ${isWet ? 'bg-blue-500' : isDry ? 'bg-amber-400' : 'bg-blue-300'}`}
+                                      style={{ height: `${pct}%` }}
+                                      title={`${['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][i]}: ${v.toLocaleString('pt-BR')} mm`}
+                                    />
+                                    <span className="text-[8px] text-muted-foreground leading-none">
+                                      {['J','F','M','A','M','J','J','A','S','O','N','D'][i]}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <div className="flex items-center gap-3 mt-1.5 text-[9px] text-muted-foreground">
+                              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500 inline-block" /> Chuvoso (&gt;150mm)</span>
+                              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-300 inline-block" /> Normal</span>
+                              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" /> Seco (&lt;60mm)</span>
+                            </div>
+                          </div>
+                        )}
+                        {(embrapa.clima.mesesSecos?.length > 0 || embrapa.clima.mesesChuvosos?.length > 0) && (
+                          <div className="grid grid-cols-2 gap-2 text-xs" data-testid="info-meses-seco-chuvoso">
+                            {embrapa.clima.mesesSecos?.length > 0 && (
+                              <div className="p-2 rounded bg-amber-50 dark:bg-amber-900/20">
+                                <p className="text-[10px] text-muted-foreground mb-0.5">Meses secos</p>
+                                <p className="font-medium text-amber-700">{(embrapa.clima.mesesSecos as string[]).join(', ')}</p>
+                              </div>
+                            )}
+                            {embrapa.clima.mesesChuvosos?.length > 0 && (
+                              <div className="p-2 rounded bg-blue-50 dark:bg-blue-900/20">
+                                <p className="text-[10px] text-muted-foreground mb-0.5">Meses chuvosos</p>
+                                <p className="font-medium text-blue-700">{(embrapa.clima.mesesChuvosos as string[]).join(', ')}</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {embrapa.clima.indiceSeca && !embrapa.clima.precipitacaoAnual && (
+                          <p className="text-xs text-muted-foreground">{embrapa.clima.indiceSeca}</p>
+                        )}
                       </CardContent>
                     </Card>
                   )}
@@ -3259,38 +3667,31 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
           </TabsContent>
 
         {/* ── CCIR Tab ── */}
-        {(ABAS_POR_TIPO[ativo.type] || ABAS_POR_TIPO["NEGOCIO"]).some(a => a.id === "ccir") && (
-          <TabsContent value="ccir" className="mt-4 space-y-4">
-            <CCIRTab assetId={Number(id)} camposEspecificos={ativo.camposEspecificos} />
-          </TabsContent>
-        )}
+        <TabsContent value="ccir" className="mt-4 space-y-4">
+          <CCIRTab assetId={Number(id)} camposEspecificos={ativo.camposEspecificos} ccirState={ccirState} onStartCcir={handleStartCcir} onCancelCcir={handleCancelCcir} />
+        </TabsContent>
 
         {/* ── Ambiental Tab ── */}
-        {(ABAS_POR_TIPO[ativo.type] || ABAS_POR_TIPO["NEGOCIO"]).some(a => a.id === "ambiental") && (
-          <TabsContent value="ambiental" className="mt-4 space-y-4">
-            <AmbientalTab assetId={Number(id)} camposEspecificos={ativo.camposEspecificos} />
-          </TabsContent>
-        )}
+        <TabsContent value="ambiental" className="mt-4 space-y-4">
+          <AmbientalTab assetId={Number(id)} camposEspecificos={ativo.camposEspecificos} />
+        </TabsContent>
 
         {/* ── Due Diligence Fundiária Tab ── */}
-        {(ABAS_POR_TIPO[ativo.type] || ABAS_POR_TIPO["NEGOCIO"]).some(a => a.id === "duediligence") && (
-          <TabsContent value="duediligence" className="mt-4 space-y-4">
-            <DueDiligenceFundiaria
-              assetId={Number(id)}
-              codigoIncra={ativo.camposEspecificos?.codigoIncra || ativo.camposEspecificos?.enrichment?.codigoIncra}
-              cpfCnpj={ativo.camposEspecificos?.cnpj || (ativo.attributesJson as any)?.cpfCnpj}
-              lat={ativo.camposEspecificos?.latitude}
-              lon={ativo.camposEspecificos?.longitude}
-              areaIncraHa={ativo.areaHa ? Number(ativo.areaHa) : undefined}
-              areaCarHa={(ativo.attributesJson as any)?.carArea ? Number((ativo.attributesJson as any).carArea) : undefined}
-              existingData={ativo.camposEspecificos?.dueDiligenceFundiaria}
-            />
-          </TabsContent>
-        )}
+        <TabsContent value="duediligence" className="mt-4 space-y-4">
+          <DueDiligenceFundiaria
+            assetId={Number(id)}
+            codigoIncra={ativo.camposEspecificos?.ccirCodigoIncra || ativo.camposEspecificos?.codigoIncra || ativo.camposEspecificos?.enrichment?.codigoIncra}
+            cpfCnpj={ativo.camposEspecificos?.cnpj || (ativo.attributesJson as any)?.cpfCnpj}
+            lat={ativo.camposEspecificos?.latitude}
+            lon={ativo.camposEspecificos?.longitude}
+            areaIncraHa={ativo.areaHa ? Number(ativo.areaHa) : undefined}
+            areaCarHa={(ativo.attributesJson as any)?.carArea ? Number((ativo.attributesJson as any).carArea) : undefined}
+            existingData={ativo.camposEspecificos?.dueDiligenceFundiaria}
+          />
+        </TabsContent>
 
-        {/* ── Placeholder tabs (only rendered if present in ABAS_POR_TIPO for this type) ── */}
-        {(ABAS_POR_TIPO[ativo.type] || ABAS_POR_TIPO["NEGOCIO"]).some(a => a.id === "geo") && (
-          <TabsContent value="geo" className="mt-4 space-y-4">
+        {/* ── Geo Tab ── */}
+        <TabsContent value="geo" className="mt-4 space-y-4">
             {(() => {
               const campos = (ativo.camposEspecificos ?? {});
               const hasGeoData = ativo.geoAltMed != null || ativo.geoAltMin != null || ativo.geoAltMax != null ||
@@ -3328,7 +3729,46 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                   </CardContent>
                 </Card>
 
-                <AssetPolygonMap assetId={ativo.id} />
+                <AssetPolygonMap
+                  assetId={ativo.id}
+                  highlightCodigo={sigefHover ?? sigefSelecionada}
+                  onParcelaClick={(codigo) => setSigefSelecionada(codigo)}
+                  highlightCarCodigo={carHover ?? carSelecionado}
+                  onCarClick={(codigo) => setCarSelecionado(codigo)}
+                />
+
+                {isTipoMinerario(ativo.type) && (
+                  <div className="space-y-4" data-testid="section-base-fundiaria">
+                    <div>
+                      <h3 className="text-sm font-semibold">Base Fundiária</h3>
+                      <p className="text-[11px] text-muted-foreground">
+                        Quem ocupa e detém a superfície sobre o polígono do processo — parcelas certificadas (SIGEF), imóveis declarados (CAR) e consolidação CCIR por imóvel.
+                      </p>
+                    </div>
+                    <SigefParcelasCard
+                      ativoId={ativo.id}
+                      savedData={campos.sigefParcelas}
+                      selecionada={sigefSelecionada}
+                      onSelect={setSigefSelecionada}
+                      onHover={setSigefHover}
+                    />
+                    <CarImoveisCard
+                      ativoId={ativo.id}
+                      savedData={campos.carImoveis}
+                      selecionado={carSelecionado}
+                      onSelect={setCarSelecionado}
+                      onHover={setCarHover}
+                    />
+                    <CcirMinaCard
+                      ativoId={ativo.id}
+                      savedData={campos.ccirImoveis}
+                      temInsumos={Boolean(
+                        (campos.sigefParcelas?.parcelas || []).some((p: any) => p.relacao === "sobreposta") ||
+                        (campos.carImoveis?.imoveis || []).some((i: any) => i.relacao === "sobreposto")
+                      )}
+                    />
+                  </div>
+                )}
 
                 {hasGeoData ? (
                   <Card>
@@ -3415,488 +3855,25 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                   </Card>
                 )}
 
-                <Card>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <Leaf className="w-4 h-4" /> CAR — Cadastro Ambiental Rural
-                      </CardTitle>
-                      <div className="flex items-center gap-2">
-                        {campos.sicarConsultadoEm && (
-                          <Badge className="bg-green-100 text-green-700 border-green-200 text-xs" data-testid="badge-sicar-status">
-                            Consultado {new Date(campos.sicarConsultadoEm).toLocaleDateString("pt-BR")}
-                          </Badge>
-                        )}
-                        {campos.sicarFonte && (
-                          <Badge variant="outline" className="text-[10px]" data-testid="badge-sicar-fonte">
-                            {campos.sicarFonte}
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {carCode ? (
-                      <>
-                        <div className="flex items-center justify-between gap-4">
-                          <div>
-                            <p className="text-xs text-muted-foreground">Código CAR</p>
-                            <p className="text-sm font-mono font-bold" data-testid="text-codigo-car">{carCode}</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Button size="sm" variant="outline" className="gap-1.5" disabled={sicarConsulting} onClick={consultarSicar} data-testid="button-consultar-sicar">
-                              {sicarConsulting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Consultando...</> : <><RefreshCw className="w-3.5 h-3.5" /> Consultar SICAR</>}
-                            </Button>
-                            <Button size="sm" variant="ghost" onClick={() => window.open("https://www.car.gov.br/publico/imoveis/index", "_blank")} data-testid="button-validar-sicar">
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </Button>
-                          </div>
-                        </div>
-
-                        {campos.sicarStatus && (
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
-                            <div className="p-2.5 rounded bg-muted/50 text-center">
-                              <p className="text-[10px] text-muted-foreground">Status</p>
-                              <Badge className={cn("text-xs mt-0.5",
-                                campos.sicarStatus === "AT" ? "bg-green-100 text-green-700 border-green-200" :
-                                campos.sicarStatus === "PE" ? "bg-amber-100 text-amber-700 border-amber-200" :
-                                "bg-red-100 text-red-700 border-red-200"
-                              )} data-testid="badge-sicar-status-imovel">
-                                {campos.sicarStatus === "AT" ? "Ativo" : campos.sicarStatus === "PE" ? "Pendente" : campos.sicarStatus === "CA" ? "Cancelado" : campos.sicarStatus}
-                              </Badge>
-                            </div>
-                            <div className="p-2.5 rounded bg-muted/50 text-center">
-                              <p className="text-[10px] text-muted-foreground">Tipo</p>
-                              <p className="text-sm font-bold" data-testid="text-sicar-tipo">
-                                {campos.sicarTipo === "IRU" ? "Imóvel Rural" : campos.sicarTipo === "AST" ? "Assentamento" : campos.sicarTipo || "—"}
-                              </p>
-                            </div>
-                            {campos.sicarModuloFiscal != null && (
-                              <div className="p-2.5 rounded bg-muted/50 text-center">
-                                <p className="text-[10px] text-muted-foreground">Módulos Fiscais</p>
-                                <p className="text-sm font-bold" data-testid="text-sicar-modulo">{Number(campos.sicarModuloFiscal).toFixed(2)}</p>
-                              </div>
-                            )}
-                            {campos.sicarArea != null && (
-                              <div className="p-2.5 rounded bg-muted/50 text-center">
-                                <p className="text-[10px] text-muted-foreground">Área CAR (ha)</p>
-                                <p className="text-sm font-bold" data-testid="text-sicar-area">{Number(campos.sicarArea).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}</p>
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {campos.sicarCondicao && (
-                          <div className="p-2.5 rounded bg-muted/50">
-                            <p className="text-[10px] text-muted-foreground mb-0.5">Condição</p>
-                            <p className="text-xs font-medium" data-testid="text-sicar-condicao">{campos.sicarCondicao}</p>
-                          </div>
-                        )}
-
-                        {(campos.sicarDataCriacao || campos.sicarDataAtualizacao) && (
-                          <div className="grid grid-cols-2 gap-2">
-                            {campos.sicarDataCriacao && (
-                              <div className="p-2 rounded bg-muted/50 text-center">
-                                <p className="text-[10px] text-muted-foreground">Criado em</p>
-                                <p className="text-xs font-medium" data-testid="text-sicar-data-criacao">
-                                  {new Date(campos.sicarDataCriacao).toLocaleDateString("pt-BR")}
-                                </p>
-                              </div>
-                            )}
-                            {campos.sicarDataAtualizacao && (
-                              <div className="p-2 rounded bg-muted/50 text-center">
-                                <p className="text-[10px] text-muted-foreground">Atualizado em</p>
-                                <p className="text-xs font-medium" data-testid="text-sicar-data-atualizacao">
-                                  {new Date(campos.sicarDataAtualizacao).toLocaleDateString("pt-BR")}
-                                </p>
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {carDaysLeft != null && !isNaN(carDaysLeft) && carDaysLeft < 90 && carDaysLeft >= 0 && (
-                          <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 flex items-center gap-2" data-testid="banner-car-vence">
-                            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-                            <p className="text-xs text-amber-800 dark:text-amber-300 font-medium">CAR vence em {carDaysLeft} dias</p>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="text-center py-4">
-                        <Leaf className="w-8 h-8 mx-auto text-muted-foreground opacity-30 mb-2" />
-                        <p className="text-sm text-muted-foreground" data-testid="text-sicar-sem-car">
-                          Sem código CAR vinculado. Preencha nas informações do ativo ou importe pela Prospecção Rural.
-                        </p>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
 
                 </>
               );
             })()}
           </TabsContent>
-        )}
 
-        {(ABAS_POR_TIPO[ativo.type] || ABAS_POR_TIPO["NEGOCIO"]).some(a => a.id === "caf") && (
-          <TabsContent value="caf" className="mt-4 space-y-4">
-            {(() => {
-              const campos = (ativo.camposEspecificos ?? {});
-              const codigoIbge = campos.codigoIbge;
-              const estado = ativo.estado;
+        <TabsContent value="anm" className="mt-4">
+          <AnmEnrichmentTabs ativo={ativo} assetId={id!} salvarEnrichment={salvarEnrichment} group="anm" subTab={anmSubTab} onSubTabChange={setAnmSubTab} />
+        </TabsContent>
 
+        <TabsContent value="titular-financas" className="mt-4">
+          <AnmEnrichmentTabs ativo={ativo} assetId={id!} salvarEnrichment={salvarEnrichment} group="titular-financas" subTab={anmSubTab} onSubTabChange={setAnmSubTab} />
+        </TabsContent>
 
+        <TabsContent value="territorio" className="mt-4">
+          <AnmEnrichmentTabs ativo={ativo} assetId={id!} salvarEnrichment={salvarEnrichment} group="territorio" subTab={anmSubTab} onSubTabChange={setAnmSubTab} />
+        </TabsContent>
 
-              return (
-                <>
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm">Crédito Rural na Região (SICOR/BCB)</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {!codigoIbge ? (
-                      <p className="text-sm text-muted-foreground" data-testid="text-sicor-sem-ibge">
-                        Informe o código IBGE do município nas Informações do ativo para ver dados de crédito rural da região
-                      </p>
-                    ) : (
-                      <>
-                        {sicorLoading && (
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="text-sicor-loading">
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Carregando dados SICOR...
-                          </div>
-                        )}
-                        {!sicorLoading && !sicorData && (
-                          <p className="text-sm text-muted-foreground" data-testid="text-sicor-sem-dados">
-                            Nenhum dado SICOR encontrado para este município.
-                          </p>
-                        )}
-                        {sicorData && (
-                          <div className="grid grid-cols-2 gap-3">
-                            {sicorData.totalContratos != null && (
-                              <div className="p-3 rounded bg-muted/50 text-center">
-                                <p className="text-xs text-muted-foreground">Contratos PRONAF</p>
-                                <p className="text-lg font-bold" data-testid="text-sicor-contratos">
-                                  {Number(sicorData.totalContratos).toLocaleString("pt-BR")}
-                                </p>
-                              </div>
-                            )}
-                            {sicorData.volumeTotal != null && (
-                              <div className="p-3 rounded bg-muted/50 text-center">
-                                <p className="text-xs text-muted-foreground">Volume Financiado</p>
-                                <p className="text-lg font-bold" data-testid="text-sicor-volume">
-                                  {formatBRL(sicorData.volumeTotal)}
-                                </p>
-                              </div>
-                            )}
-                            {sicorData.culturas?.length > 0 && (
-                              <div className="p-3 rounded bg-muted/50 col-span-2">
-                                <p className="text-xs text-muted-foreground mb-2">Principais culturas financiadas</p>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {sicorData.culturas.map((c: any, i: number) => (
-                                    <Badge key={i} variant="outline" className="text-xs capitalize" data-testid={`badge-sicor-cultura-${i}`}>
-                                      {typeof c === "string" ? c : c.nome || c.cultura}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-sm">Produtores CAF na Região</CardTitle>
-                      <div className="flex items-center gap-2">
-                        {campos.cafUpdatedAt && (
-                          <Badge className="bg-green-100 text-green-700 border-green-200 text-xs" data-testid="badge-caf-status">
-                            Atualizado {new Date(campos.cafUpdatedAt).toLocaleDateString("pt-BR")}
-                          </Badge>
-                        )}
-                        <Button
-                          size="sm" variant="outline" className="gap-1.5"
-                          disabled={cafEnriching}
-                          onClick={async () => {
-                            setCafEnriching(true);
-                            try {
-                              const r = await apiRequest("POST", `/api/matching/assets/${id}/enriquecer-caf`, { force: true });
-                              const data = await r.json();
-                              if (data.success && data.cafData?.produtores?.length > 0) {
-                                setCafProdutores(data.cafData.produtores);
-                                queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", id] });
-                                const cd = data.cafData;
-                                const desc = [
-                                  `${cd.totalFamilias || cd.totalProdutores} família(s)`,
-                                  cd.totalMembros ? `${cd.totalMembros} membro(s)` : null,
-                                  cd.enriquecidosDetalhe ? `${cd.enriquecidosDetalhe} com detalhe` : null,
-                                ].filter(Boolean).join(" · ");
-                                toast({ title: `Produtores CAF encontrados!`, description: desc });
-                              } else {
-                                toast({ title: "Nenhum produtor CAF encontrado", variant: "destructive" });
-                              }
-                            } catch {
-                              toast({ title: "Erro ao buscar CAF", variant: "destructive" });
-                            }
-                            setCafEnriching(false);
-                          }}
-                          data-testid="button-enriquecer-caf"
-                        >
-                          {cafEnriching
-                            ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Buscando...</>
-                            : <><RefreshCw className="w-3.5 h-3.5" /> Buscar CAF</>}
-                        </Button>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {!estado ? (
-                      <p className="text-sm text-muted-foreground" data-testid="text-caf-sem-estado">
-                        Preencha o estado do ativo para ver produtores rurais próximos
-                      </p>
-                    ) : (
-                      <>
-                        {(cafLoading || cafEnriching) && cafProdutores.length === 0 && (
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="text-caf-loading">
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Buscando produtores CAF na região...
-                          </div>
-                        )}
-                        {!cafLoading && !cafEnriching && cafProdutores.length === 0 && cafSearched && (
-                          <div className="text-center py-4">
-                            <Users className="w-8 h-8 mx-auto text-muted-foreground opacity-30 mb-2" />
-                            <p className="text-sm text-muted-foreground" data-testid="text-caf-vazio">
-                              Nenhum produtor CAF encontrado para esta região.
-                            </p>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Clique em "Buscar CAF" para consultar a API do MDA.
-                            </p>
-                          </div>
-                        )}
-                        {cafProdutores.length > 0 && (
-                          <>
-                          {(() => {
-                            const cafD = campos.cafData || {};
-                            return (
-                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-                                <div className="p-2.5 rounded bg-muted/50 text-center">
-                                  <p className="text-[10px] text-muted-foreground">Famílias</p>
-                                  <p className="text-base font-bold" data-testid="text-caf-familias">{cafD.totalFamilias || cafProdutores.length}</p>
-                                </div>
-                                <div className="p-2.5 rounded bg-muted/50 text-center">
-                                  <p className="text-[10px] text-muted-foreground">Membros</p>
-                                  <p className="text-base font-bold" data-testid="text-caf-membros">{cafD.totalMembros || cafProdutores.reduce((s: number, p: any) => s + (p.totalMembros || 1), 0)}</p>
-                                </div>
-                                <div className="p-2.5 rounded bg-muted/50 text-center">
-                                  <p className="text-[10px] text-muted-foreground">Área Total</p>
-                                  <p className="text-base font-bold" data-testid="text-caf-area">{cafD.areaTotal ? `${Number(cafD.areaTotal).toLocaleString("pt-BR")} ha` : "N/D"}</p>
-                                </div>
-                                <div className="p-2.5 rounded bg-muted/50 text-center">
-                                  <p className="text-[10px] text-muted-foreground">Com PRONAF</p>
-                                  <p className="text-base font-bold" data-testid="text-caf-pronaf">{cafD.totalComPronaf || 0}</p>
-                                </div>
-                              </div>
-                            );
-                          })()}
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-sm">
-                              <thead>
-                                <tr className="border-b text-xs text-muted-foreground">
-                                  <th className="text-left py-2 px-2 font-medium">Nome</th>
-                                  <th className="text-left py-2 px-2 font-medium">Município</th>
-                                  <th className="text-right py-2 px-2 font-medium">Área (ha)</th>
-                                  <th className="text-left py-2 px-2 font-medium">Atividade</th>
-                                  <th className="text-left py-2 px-2 font-medium">Posse</th>
-                                  <th className="text-left py-2 px-2 font-medium">PRONAF</th>
-                                  <th className="text-center py-2 px-2 font-medium">Família</th>
-                                  <th className="text-center py-2 px-2 font-medium">Perfil</th>
-                                  <th className="text-right py-2 px-2 font-medium">Ações</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {cafProdutores.map((p: any, i: number) => (
-                                  <tr key={i} className="border-b last:border-0 hover:bg-muted/30" data-testid={`row-caf-produtor-${i}`}>
-                                    <td className="py-2 px-2">
-                                      <span className="font-medium">{p.nomeTitular || p.nome || "\u2014"}</span>
-                                      {p.status === "ATIVA" && <Badge className="ml-1.5 bg-green-100 text-green-700 border-green-200 text-[9px] py-0">Ativa</Badge>}
-                                    </td>
-                                    <td className="py-2 px-2 text-xs">{p.municipio || "\u2014"}</td>
-                                    <td className="py-2 px-2 text-right">{p.areaHa != null && p.areaHa > 0 ? Number(p.areaHa).toLocaleString("pt-BR") : "\u2014"}</td>
-                                    <td className="py-2 px-2 text-xs">{p.atividadePrincipal || p.atividade || "\u2014"}</td>
-                                    <td className="py-2 px-2 text-xs">{p.condicaoPosse || "\u2014"}</td>
-                                    <td className="py-2 px-2 text-xs">{p.pronaf && /sim|enquadrado|pronaf|apto/i.test(String(p.pronaf)) ? <Badge className="bg-blue-50 text-blue-700 border-blue-200 text-[9px] py-0">Sim</Badge> : (p.enquadramentoPronaf || p.pronaf || "\u2014")}</td>
-                                    <td className="py-2 px-2 text-center text-xs">
-                                      {(p.totalMembros || 1) > 1 ? (
-                                        <span className="inline-flex items-center gap-0.5"><Users className="w-3 h-3" />{p.totalMembros}</span>
-                                      ) : "1"}
-                                    </td>
-                                    <td className="py-2 px-2 text-center">
-                                      <Badge variant="outline" className={cn("text-[10px]",
-                                        (p.norionProfile || p.perfil) === "alto" ? "bg-green-50 text-green-700 border-green-200" :
-                                        (p.norionProfile || p.perfil) === "medio" ? "bg-amber-50 text-amber-700 border-amber-200" :
-                                        "bg-gray-50 text-gray-600 border-gray-200"
-                                      )} data-testid={`badge-caf-perfil-${i}`}>
-                                        {(p.norionProfile || p.perfil || "baixo").toUpperCase()}
-                                      </Badge>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                          </>
-                        )}
-                      </>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {(() => {
-                  const cr = campos.contextoRegional;
-                  const carregarContexto = async () => {
-                    setContextoLoading(true);
-                    try {
-                      const r = await apiRequest("POST", `/api/matching/assets/${id}/contexto-regional`);
-                      const data = await r.json();
-                      if (data.success) {
-                        queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", id] });
-                        toast({ title: "Contexto regional carregado!" });
-                      } else {
-                        toast({ title: data.message || "Erro ao carregar contexto", variant: "destructive" });
-                      }
-                    } catch {
-                      toast({ title: "Erro ao carregar contexto regional", variant: "destructive" });
-                    }
-                    setContextoLoading(false);
-                  };
-
-                  return (
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
-                          <CardTitle className="text-sm flex items-center gap-2">
-                            <BarChart3 className="w-4 h-4" />
-                            Contexto Regional — Produção Agrícola
-                          </CardTitle>
-                          {cr && (
-                            <Badge variant="outline" className="text-[10px]" data-testid="badge-contexto-fonte">
-                              {cr.fonte} · {cr.anoReferencia}
-                            </Badge>
-                          )}
-                        </div>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
-                        {!codigoIbge ? (
-                          <p className="text-sm text-muted-foreground" data-testid="text-contexto-sem-ibge">
-                            Enriqueça o ativo com dados geoespaciais para obter o código IBGE do município.
-                          </p>
-                        ) : !cr ? (
-                          <div className="text-center py-4">
-                            <BarChart3 className="w-8 h-8 mx-auto text-muted-foreground opacity-30 mb-2" />
-                            <p className="text-sm text-muted-foreground mb-3">
-                              Carregue dados de produção agrícola do município (IBGE PAM).
-                            </p>
-                            <Button
-                              onClick={carregarContexto}
-                              disabled={contextoLoading}
-                              variant="outline"
-                              size="sm"
-                              className="gap-1.5"
-                              data-testid="button-carregar-contexto"
-                            >
-                              {contextoLoading
-                                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Carregando...</>
-                                : <><BarChart3 className="w-3.5 h-3.5" /> Carregar Contexto Regional</>}
-                            </Button>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="grid grid-cols-3 gap-2">
-                              <div className="p-2.5 rounded bg-muted/50 text-center">
-                                <p className="text-[10px] text-muted-foreground">Área Colhida</p>
-                                <p className="text-sm font-bold" data-testid="text-contexto-area">
-                                  {cr.totalAreaColhida?.toLocaleString("pt-BR")} ha
-                                </p>
-                              </div>
-                              <div className="p-2.5 rounded bg-muted/50 text-center">
-                                <p className="text-[10px] text-muted-foreground">Produção</p>
-                                <p className="text-sm font-bold" data-testid="text-contexto-producao">
-                                  {cr.totalQuantidadeProduzida?.toLocaleString("pt-BR")} t
-                                </p>
-                              </div>
-                              <div className="p-2.5 rounded bg-muted/50 text-center">
-                                <p className="text-[10px] text-muted-foreground">Valor</p>
-                                <p className="text-sm font-bold" data-testid="text-contexto-valor">
-                                  R$ {cr.totalValorProducao?.toLocaleString("pt-BR")} mil
-                                </p>
-                              </div>
-                            </div>
-
-                            {cr.culturas?.length > 0 && (
-                              <div className="overflow-x-auto">
-                                <table className="w-full text-xs">
-                                  <thead>
-                                    <tr className="border-b text-muted-foreground">
-                                      <th className="text-left py-1.5 pr-2">Cultura</th>
-                                      <th className="text-right py-1.5 px-2">Área (ha)</th>
-                                      <th className="text-right py-1.5 px-2">Produção (t)</th>
-                                      <th className="text-right py-1.5 pl-2">Valor (R$ mil)</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {cr.culturas.map((c: any, i: number) => (
-                                      <tr key={i} className="border-b border-border/50" data-testid={`row-contexto-cultura-${i}`}>
-                                        <td className="py-1.5 pr-2 font-medium">{c.nome}</td>
-                                        <td className="text-right py-1.5 px-2">{c.areaColhida?.toLocaleString("pt-BR") || "—"}</td>
-                                        <td className="text-right py-1.5 px-2">{c.quantidadeProduzida?.toLocaleString("pt-BR") || "—"}</td>
-                                        <td className="text-right py-1.5 pl-2">{c.valorProducao?.toLocaleString("pt-BR") || "—"}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
-
-                            {cr.culturas?.length === 0 && (
-                              <p className="text-sm text-muted-foreground text-center" data-testid="text-contexto-sem-culturas">
-                                Nenhuma cultura registrada neste município.
-                              </p>
-                            )}
-
-                            <Button
-                              onClick={carregarContexto}
-                              disabled={contextoLoading}
-                              variant="ghost"
-                              size="sm"
-                              className="w-full gap-1.5"
-                              data-testid="button-recarregar-contexto"
-                            >
-                              {contextoLoading
-                                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Atualizando...</>
-                                : <><RefreshCw className="w-3.5 h-3.5" /> Recarregar</>}
-                            </Button>
-                          </>
-                        )}
-                      </CardContent>
-                    </Card>
-                  );
-                })()}
-                </>
-              );
-            })()}
-          </TabsContent>
-        )}
-
-        {(ABAS_POR_TIPO[ativo.type] || ABAS_POR_TIPO["NEGOCIO"]).some(a => a.id === "anm") && (
-          <TabsContent value="anm" className="mt-4">
-            <AnmEnrichmentTabs ativo={ativo} assetId={id!} salvarEnrichment={salvarEnrichment} />
-          </TabsContent>
-        )}
-
-        {(ABAS_POR_TIPO[ativo.type] || ABAS_POR_TIPO["NEGOCIO"]).some(a => a.id === "empresa") && (
-          <TabsContent value="empresa" className="mt-4 space-y-4">
+        <TabsContent value="empresa" className="mt-4 space-y-4">
             {(() => {
               const campos = (ativo.camposEspecificos ?? {});
               const cnpjRaw = campos.cnpj ? campos.cnpj.replace(/\D/g, "") : null;
@@ -3918,10 +3895,10 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
               const salvarCnpj = async (cnpjDigitado: string) => {
                 const clean = cnpjDigitado.replace(/\D/g, "");
                 if (clean.length < 11) return;
-                await apiRequest("PATCH", `/api/matching/assets/${ativo.id}`, {
-                  camposEspecificos: { ...campos, cnpj: clean },
+                await apiRequest("PATCH", `/api/assets/${ativo.id}`, {
+                  camposEspecificos: { cnpj: clean },
                 });
-                queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", id] });
+                queryClient.invalidateQueries({ queryKey: ["/api/assets", id] });
                 toast({ title: "CNPJ salvo!" });
               };
 
@@ -3933,7 +3910,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
 
               return (
                 <>
-                {(cnpjRaw || ativo.type !== "MINA") && (
+                {(cnpjRaw || !isTipoMinerario(ativo.type)) && (
                 <Card>
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm">CNPJ</CardTitle>
@@ -3952,7 +3929,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                             : <><Search className="w-3.5 h-3.5" /> {cnpjaData ? "Atualizar CNPJA" : "Consultar CNPJA"}</>}
                         </Button>
                       </>
-                    ) : ativo.type !== "MINA" ? (
+                    ) : !isTipoMinerario(ativo.type) ? (
                       <div className="space-y-2">
                         <p className="text-xs text-muted-foreground">CNPJ não informado{titularAnm ? ` — Titular ANM: ${titularAnm}` : ""}</p>
                         <div className="flex gap-2">
@@ -4108,12 +4085,28 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                         onClick={async () => {
                           setCertidoesLoading(true);
                           try {
-                            const res = await apiRequest("POST", `/api/companies/${ativo.linkedCompanyId}/certidoes`, {});
+                            const res = await fetch(`/api/companies/${ativo.linkedCompanyId}/certidoes`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              credentials: "include",
+                              body: JSON.stringify({}),
+                            });
                             const data = await res.json();
+                            if (!res.ok) {
+                              const msg = data?.message || `Erro ${res.status}`;
+                              toast({ title: "Certidões indisponíveis", description: msg, variant: "destructive" });
+                              setCertidoesLoading(false);
+                              return;
+                            }
                             setCertidoesData(data);
                             salvarEnrichment("certidoesData", data);
-                          } catch {
-                            toast({ title: "Erro ao consultar certidões", variant: "destructive" });
+                            if (data.erros && data.erros.length > 0) {
+                              const fontesComErro = data.erros.map((e: any) => e.fonte).join(", ");
+                              toast({ title: `Consulta parcial: falha em ${fontesComErro}`, description: "Algumas fontes não puderam ser consultadas. Os dados disponíveis foram exibidos.", variant: "destructive" });
+                            }
+                          } catch (err: any) {
+                            const msg = err?.message || "Erro ao consultar certidões";
+                            toast({ title: "Erro ao consultar certidões", description: msg, variant: "destructive" });
                           }
                           setCertidoesLoading(false);
                         }}
@@ -4127,7 +4120,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
 
                     {!ativo.linkedCompanyId && (
                       <p className="text-xs text-muted-foreground">
-                        Vincule esta empresa ao CRM para consultar certidões.
+                        Vincule uma empresa ao ativo para consultar certidões.
                       </p>
                     )}
 
@@ -4140,11 +4133,15 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                           "p-3 rounded-lg border flex items-center gap-3",
                           certidoesData.pgfn?.temDebitoAtivo
                             ? "bg-red-50 border-red-300"
-                            : "bg-green-50 border-green-200"
+                            : certidoesData.pgfn?.temDebitoAtivo === false
+                              ? "bg-green-50 border-green-200"
+                              : "bg-muted/50"
                         )}>
                           {certidoesData.pgfn?.temDebitoAtivo
                             ? <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
-                            : <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />}
+                            : certidoesData.pgfn?.temDebitoAtivo === false
+                              ? <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+                              : <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />}
                           <div>
                             <p className="text-sm font-medium">PGFN — Dívida Ativa Federal</p>
                             <p className="text-xs text-muted-foreground">{certidoesData.pgfn?.situacao}</p>
@@ -4198,17 +4195,15 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
 
                 {ativo.linkedCompanyId && (
                   <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate(`/empresas/${ativo.linkedCompanyId}`)} data-testid="button-ver-empresa-crm">
-                    <Building2 className="w-3.5 h-3.5" /> Ver empresa no CRM
+                    <Building2 className="w-3.5 h-3.5" /> Ver cadastro da empresa
                   </Button>
                 )}
                 </>
               );
             })()}
           </TabsContent>
-        )}
 
-        {(ABAS_POR_TIPO[ativo.type] || ABAS_POR_TIPO["NEGOCIO"]).some(a => a.id === "cvm") && (
-          <TabsContent value="cvm" className="mt-4 space-y-4">
+        <TabsContent value="cvm" className="mt-4 space-y-4">
             {(() => {
               const campos = (ativo.camposEspecificos ?? {});
               const hasIndicadores = campos.registroCvm || campos.gestora || campos.dy12m != null || campos.pvp != null;
@@ -4369,7 +4364,6 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
               );
             })()}
           </TabsContent>
-        )}
 
         <TabsContent value="enriquecimento" className="mt-4 space-y-4">
           <EnrichmentTab ativo={ativo} assetId={id!} />
@@ -4378,7 +4372,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
         <TabsContent value="ia" className="mt-4 space-y-4">
           <AssetIaTab ativo={ativo} assetId={id!} />
         </TabsContent>
-
+        </div>
       </Tabs>
 
       {/* Delete confirmation */}
@@ -4407,473 +4401,234 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
         onOpenChange={setEditOpen}
         initial={ativo}
         onSaved={() => {
-          queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", id] });
+          queryClient.invalidateQueries({ queryKey: ["/api/assets", id] });
         }}
       />
     </div>
   );
 }
 
-function AssetEnrichmentCards({ iaEnrichment }: { iaEnrichment: any }) {
-  if (!iaEnrichment || iaEnrichment._failReason) return null;
-  const pic = iaEnrichment.perfilIdealComprador || {};
-  const pv = iaEnrichment.potencialValorizacao || {};
-  const riscos = iaEnrichment.riscosIdentificados || [];
-  const comparaveis = iaEnrichment.comparaveisMercado || iaEnrichment.comparaveisNercado || [];
-  const ticket = iaEnrichment.ticketSugerido || {};
-  const oportunidades = iaEnrichment.oportunidadesEspecificas || [];
+function DeepIntelSection({ deepIntel }: { deepIntel: any }) {
+  if (!deepIntel) return null;
 
-  const severidadeCor: Record<string, string> = {
-    baixa: "bg-green-100 text-green-700 border-green-200",
-    media: "bg-yellow-100 text-yellow-700 border-yellow-200",
-    alta: "bg-red-100 text-red-700 border-red-200",
+  const severityColor = (s: string) => {
+    if (s === "alta") return "text-red-600 bg-red-50 border-red-200";
+    if (s === "media") return "text-yellow-600 bg-yellow-50 border-yellow-200";
+    return "text-green-600 bg-green-50 border-green-200";
+  };
+
+  const confiancaBadge = (c: string) => {
+    if (c === "alta") return "bg-green-100 text-green-700";
+    if (c === "media") return "bg-yellow-100 text-yellow-700";
+    return "bg-gray-100 text-gray-600";
   };
 
   return (
-    <>
-      {iaEnrichment.resumoExecutivo && (
-        <Card className="border-violet-200 bg-violet-50/30">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <FileBarChart className="w-4 h-4 text-violet-600" />
-              Resumo Executivo
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm leading-relaxed" data-testid="text-ia-resumo">{iaEnrichment.resumoExecutivo}</p>
-            <div className="flex items-center gap-4 mt-3 pt-3 border-t">
-              <div className="text-center">
-                <p className="text-2xl font-bold text-violet-600" data-testid="text-score-atratividade">{iaEnrichment.scoreAtratividade || 0}</p>
-                <p className="text-[10px] text-muted-foreground">Atratividade</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-emerald-600" data-testid="text-score-valorizacao">{pv.score || 0}</p>
-                <p className="text-[10px] text-muted-foreground">Valorização</p>
-              </div>
-              <div className="flex-1">
-                <Progress value={iaEnrichment.scoreAtratividade || 0} className="h-2" />
-                <p className="text-[10px] text-muted-foreground mt-1">Score de atratividade</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="grid md:grid-cols-2 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Users className="w-4 h-4 text-blue-600" />
-              Perfil Ideal de Comprador
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {pic.descricaoPerfil && (
-              <p className="text-xs text-muted-foreground" data-testid="text-perfil-descricao">{pic.descricaoPerfil}</p>
-            )}
-            <div className="space-y-1.5">
-              {pic.tipoInvestidor && (
-                <div className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">Tipo investidor</span>
-                  <Badge variant="outline" className="text-[10px]" data-testid="badge-tipo-investidor">{pic.tipoInvestidor}</Badge>
-                </div>
-              )}
-              {pic.porteIdeal && pic.porteIdeal !== "Não definido" && (
-                <div className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">Porte ideal</span>
-                  <span className="font-medium" data-testid="text-porte-ideal">{pic.porteIdeal}</span>
-                </div>
-              )}
-              {pic.faturamentoMinimo && pic.faturamentoMinimo !== "Não estimado" && (
-                <div className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">Faturamento mín.</span>
-                  <span className="font-medium" data-testid="text-faturamento-min">{pic.faturamentoMinimo}</span>
-                </div>
-              )}
-            </div>
-            {pic.cnaesIdeais?.length > 0 && (
-              <div className="pt-1">
-                <p className="text-[10px] text-muted-foreground mb-1">CNAEs ideais do comprador:</p>
-                <div className="flex flex-wrap gap-1" data-testid="list-cnaes-ideais">
-                  {pic.cnaesIdeais.map((c: string, i: number) => (
-                    <Badge key={i} variant="secondary" className="text-[10px]">{c}</Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-            {pic.regioesInteresse?.length > 0 && (
-              <div className="pt-1">
-                <p className="text-[10px] text-muted-foreground mb-1">Regiões de interesse:</p>
-                <div className="flex flex-wrap gap-1" data-testid="list-regioes-interesse">
-                  {pic.regioesInteresse.map((r: string, i: number) => (
-                    <Badge key={i} variant="outline" className="text-[10px]">{r}</Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <DollarSign className="w-4 h-4 text-emerald-600" />
-              Ticket e Valorização
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {(ticket.minimo !== "N/D" || ticket.maximo !== "N/D") && (
-              <div className="bg-emerald-50 rounded-lg p-3 text-center">
-                <p className="text-xs text-muted-foreground">Faixa sugerida</p>
-                <p className="text-lg font-bold text-emerald-700" data-testid="text-ticket-faixa">
-                  {ticket.minimo} — {ticket.maximo}
-                </p>
-                {ticket.justificativa && (
-                  <p className="text-[10px] text-muted-foreground mt-1">{ticket.justificativa}</p>
-                )}
-              </div>
-            )}
-            {pv.horizonte && (
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">Horizonte</span>
-                <span className="font-medium" data-testid="text-horizonte">{pv.horizonte}</span>
-              </div>
-            )}
-            {pv.estimativa && pv.estimativa !== "Não estimado" && (
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">Estimativa</span>
-                <span className="font-medium" data-testid="text-estimativa-val">{pv.estimativa}</span>
-              </div>
-            )}
-            {pv.fatores?.length > 0 && (
-              <div className="pt-1">
-                <p className="text-[10px] text-muted-foreground mb-1">Fatores de valorização:</p>
-                <ul className="space-y-0.5">
-                  {pv.fatores.map((f: string, i: number) => (
-                    <li key={i} className="text-xs flex items-start gap-1.5">
-                      <Zap className="w-3 h-3 text-emerald-500 mt-0.5 shrink-0" />
-                      <span>{f}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+    <div className="space-y-4" data-testid="deep-intel-results">
+      <div className="flex items-center gap-3 mb-2">
+        {/* (Score de confiança removido: material de busca web é T3/T4 —
+            pista de trabalho, nunca conclusão pontuada.) */}
+        <span className="text-xs text-muted-foreground">
+          Analisado em {new Date(deepIntel.analyzedAt).toLocaleString("pt-BR")}
+        </span>
       </div>
 
-      {riscos.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-orange-500" />
-              Riscos Identificados ({riscos.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-1.5">
-              {riscos.map((r: any, i: number) => (
-                <div key={i} className="flex items-start gap-2 text-xs bg-muted/30 rounded-lg px-3 py-2" data-testid={`row-risco-${i}`}>
-                  <Badge className={cn("text-[10px] shrink-0 mt-0.5", severidadeCor[r.severidade] || severidadeCor.media)}>
-                    {r.severidade}
-                  </Badge>
+      {deepIntel.resumoInvestigacao && (
+        <div className="p-4 rounded-lg border bg-violet-50 dark:bg-violet-950/30 border-violet-200" data-testid="text-deep-intel-resumo">
+          <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+            <Search className="h-4 w-4 text-violet-600" />
+            Resumo da Investigação
+          </h4>
+          <p className="text-sm leading-relaxed">{deepIntel.resumoInvestigacao}</p>
+        </div>
+      )}
+
+      {deepIntel.proprietarios?.length > 0 && (
+        <div className="p-4 rounded-lg border bg-blue-50 dark:bg-blue-950/30 border-blue-200">
+          <h4 className="font-semibold text-sm mb-3 flex items-center gap-2">
+            <Users className="h-4 w-4 text-blue-600" />
+            Proprietários / Pessoas Ligadas ({deepIntel.proprietarios.length})
+          </h4>
+          <div className="space-y-2">
+            {deepIntel.proprietarios.map((p: any, i: number) => (
+              <div key={i} className="flex items-start justify-between p-2 rounded bg-white dark:bg-gray-900 border text-sm">
+                <div>
+                  <span className="font-medium">{p.nome}</span>
+                  {p.cpfCnpj && <span className="text-muted-foreground ml-2">({p.cpfCnpj})</span>}
+                  <div className="text-xs text-muted-foreground mt-0.5">{p.papel} · Fonte: {p.fonte}</div>
+                </div>
+                <span className={`text-xs px-2 py-0.5 rounded-full ${confiancaBadge(p.confianca)}`}>{p.confianca}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {deepIntel.contatos?.length > 0 && (
+        <div className="p-4 rounded-lg border bg-green-50 dark:bg-green-950/30 border-green-200">
+          <h4 className="font-semibold text-sm mb-3 flex items-center gap-2">
+            <Phone className="h-4 w-4 text-green-600" />
+            Contatos Encontrados ({deepIntel.contatos.length})
+          </h4>
+          <div className="space-y-2">
+            {deepIntel.contatos.map((c: any, i: number) => (
+              <div key={i} className="flex items-center justify-between p-2 rounded bg-white dark:bg-gray-900 border text-sm">
+                <div className="flex items-center gap-2">
+                  {c.tipo === "telefone" || c.tipo === "whatsapp" ? <Phone className="h-3.5 w-3.5 text-green-500" /> : <Mail className="h-3.5 w-3.5 text-blue-500" />}
                   <div>
-                    <span className="font-medium capitalize">{r.tipo}</span>
-                    <span className="text-muted-foreground"> — {r.descricao}</span>
+                    <span className="font-medium">{c.valor}</span>
+                    {c.pessoa && <span className="text-muted-foreground"> — {c.pessoa}</span>}
+                    {c.aviso && <p className="text-[11px] text-amber-700 dark:text-amber-400">{c.aviso}</p>}
                   </div>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {comparaveis.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-blue-500" />
-              Comparáveis de Mercado ({comparaveis.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-1.5">
-              {comparaveis.map((c: any, i: number) => (
-                <div key={i} className="flex items-center justify-between text-xs bg-muted/30 rounded-lg px-3 py-2" data-testid={`row-comparavel-${i}`}>
-                  <span className="flex-1">{c.descricao}</span>
-                  <span className="font-medium text-emerald-700 shrink-0 ml-2">{c.preco}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">{c.fonte}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${confiancaBadge(c.confianca)}`}>{c.confianca}</span>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
-      {oportunidades.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-amber-500" />
-              Oportunidades Específicas
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-1">
-              {oportunidades.map((o: string, i: number) => (
-                <li key={i} className="text-xs flex items-start gap-1.5" data-testid={`row-oportunidade-${i}`}>
-                  <CheckCircle2 className="w-3 h-3 text-amber-500 mt-0.5 shrink-0" />
-                  <span>{o}</span>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
+      {deepIntel.processos?.length > 0 && (
+        <div className="p-4 rounded-lg border bg-orange-50 dark:bg-orange-950/30 border-orange-200">
+          <h4 className="font-semibold text-sm mb-3 flex items-center gap-2">
+            <FileText className="h-4 w-4 text-orange-600" />
+            Processos ({deepIntel.processos.length})
+          </h4>
+          <div className="space-y-2">
+            {deepIntel.processos.map((p: any, i: number) => (
+              <div key={i} className="p-2 rounded bg-white dark:bg-gray-900 border text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium capitalize">{p.tipo}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${p.status === "ativo" || p.status === "em andamento" ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-600"}`}>{p.status}</span>
+                </div>
+                {p.numero && <div className="text-xs text-muted-foreground">Nº {p.numero}</div>}
+                <p className="text-xs mt-1">{p.descricao}</p>
+                <span className="text-xs text-muted-foreground">Fonte: {p.fonte}</span>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
-      {iaEnrichment.enrichedAt && (
-        <p className="text-[10px] text-muted-foreground text-right">
-          Enriquecido em {new Date(iaEnrichment.enrichedAt).toLocaleDateString("pt-BR")} via GPT-4o + Web Search
-        </p>
+      {deepIntel.restricoes?.length > 0 && (
+        <div className="p-4 rounded-lg border bg-red-50 dark:bg-red-950/30 border-red-200">
+          <h4 className="font-semibold text-sm mb-3 flex items-center gap-2">
+            <Shield className="h-4 w-4 text-red-600" />
+            Restrições e Impedimentos ({deepIntel.restricoes.length})
+          </h4>
+          <div className="space-y-2">
+            {deepIntel.restricoes.map((r: any, i: number) => (
+              <div key={i} className={`p-2 rounded border text-sm ${severityColor(r.severidade)}`}>
+                <div className="flex items-center justify-between">
+                  <span className="font-medium capitalize">{r.tipo}</span>
+                  <span className="text-xs font-medium uppercase">{r.severidade}</span>
+                </div>
+                <p className="text-xs mt-1">{r.descricao}</p>
+                <span className="text-xs opacity-70">Fonte: {r.fonte}</span>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
-    </>
+
+      {deepIntel.historicoPropriedade?.length > 0 && (
+        <div className="p-4 rounded-lg border">
+          <h4 className="font-semibold text-sm mb-3 flex items-center gap-2">
+            <Clock className="h-4 w-4 text-gray-600" />
+            Histórico da Propriedade
+          </h4>
+          <div className="space-y-2">
+            {deepIntel.historicoPropriedade.map((h: any, i: number) => (
+              <div key={i} className="flex items-start gap-3 p-2 rounded bg-muted/30 text-sm">
+                <div className="w-2 h-2 rounded-full bg-gray-400 mt-1.5 flex-shrink-0" />
+                <div>
+                  <div className="font-medium">{h.evento} {h.data && <span className="text-muted-foreground font-normal">({h.data})</span>}</div>
+                  <p className="text-xs text-muted-foreground">{h.detalhes}</p>
+                  <span className="text-xs text-muted-foreground">Fonte: {h.fonte}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {deepIntel.fontesPesquisadas?.length > 0 && (
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer hover:text-foreground">
+            {deepIntel.fontesPesquisadas.length} fontes pesquisadas
+          </summary>
+          <ul className="mt-1 space-y-0.5 pl-4">
+            {deepIntel.fontesPesquisadas.map((f: string, i: number) => (
+              <li key={i}>
+                {f.startsWith("http") ? <a href={f} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline break-all">{f}</a> : f}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      <p className="text-xs text-muted-foreground pt-2 border-t">GPT-4o (completo) com pesquisa web · {new Date(deepIntel.analyzedAt).toLocaleDateString("pt-BR")}</p>
+    </div>
   );
 }
 
 function AssetIaTab({ ativo, assetId }: { ativo: any; assetId: string }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [iaAnalise, setIaAnalise] = useState<string | null>(ativo.camposEspecificos?.iaAnalise || null);
-  const [iaLoading, setIaLoading] = useState(false);
-  const [iaReportCompanyId, setIaReportCompanyId] = useState<string>("");
-  const [iaRelatorio, setIaRelatorio] = useState<string | null>(null);
-  const [iaReportLoading, setIaReportLoading] = useState(false);
-  const [iaDueDiligence, setIaDueDiligence] = useState<string | null>(ativo.camposEspecificos?.iaDueDiligence || null);
-  const [iaDueDiligenceLoading, setIaDueDiligenceLoading] = useState(false);
-  const [iaEnrichment, setIaEnrichment] = useState<any>(ativo.camposEspecificos?.iaEnrichment || null);
-  const [iaEnrichLoading, setIaEnrichLoading] = useState(false);
+  const [deepIntel, setDeepIntel] = useState<any>(ativo.camposEspecificos?.iaDeepIntel || null);
+  const [deepIntelLoading, setDeepIntelLoading] = useState(false);
 
-  const { data: companiesList = [] } = useQuery<any[]>({
-    queryKey: ["/api/companies"],
-  });
-
-  const runEnrichAsset = async () => {
-    setIaEnrichLoading(true);
+  const runDeepIntel = async () => {
+    setDeepIntelLoading(true);
     try {
-      const res = await apiRequest("POST", `/api/matching/assets/${ativo.id}/ai-enrich`);
+      const res = await apiRequest("POST", `/api/ai/deep-intel/${ativo.id}`);
       const data = await res.json();
-      if (data.success && data.iaEnrichment) {
-        setIaEnrichment(data.iaEnrichment);
-        queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", assetId] });
-        toast({ title: "Enriquecimento concluído", description: "Dados de IA salvos com sucesso" });
+      if (data.success && data.data) {
+        setDeepIntel(data.data);
+        queryClient.invalidateQueries({ queryKey: ["/api/assets", assetId] });
+        toast({ title: "Investigação completa", description: "Dados de inteligência salvos com sucesso" });
       } else {
-        toast({ title: "Erro", description: data.message || "Erro no enriquecimento", variant: "destructive" });
+        toast({ title: "Erro", description: data.message || "Erro na investigação", variant: "destructive" });
       }
     } catch (e: any) {
       toast({ title: "Erro", description: e.message, variant: "destructive" });
     }
-    setIaEnrichLoading(false);
-  };
-
-  const runAnalise = async () => {
-    setIaLoading(true);
-    try {
-      const res = await apiRequest("POST", `/api/ai/analyze-asset/${ativo.id}`);
-      const data = await res.json();
-      if (data.analise) {
-        setIaAnalise(data.analise);
-        queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", assetId] });
-        toast({ title: "Análise concluída" });
-      } else {
-        toast({ title: "Erro", description: data.message || "Erro na análise", variant: "destructive" });
-      }
-    } catch (e: any) {
-      toast({ title: "Erro", description: e.message, variant: "destructive" });
-    }
-    setIaLoading(false);
-  };
-
-  const runRelatorio = async () => {
-    if (!iaReportCompanyId) return;
-    setIaReportLoading(true);
-    try {
-      const res = await apiRequest("POST", "/api/ai/generate-report", { assetId: ativo.id, companyId: Number(iaReportCompanyId) });
-      const data = await res.json();
-      if (data.relatorio) {
-        setIaRelatorio(data.relatorio);
-        toast({ title: "Relatório gerado" });
-      } else {
-        toast({ title: "Erro", description: data.message || "Erro no relatório", variant: "destructive" });
-      }
-    } catch (e: any) {
-      toast({ title: "Erro", description: e.message, variant: "destructive" });
-    }
-    setIaReportLoading(false);
+    setDeepIntelLoading(false);
   };
 
   return (
     <>
-      <Card className="border-violet-200">
+      <Card className="border-violet-300 bg-gradient-to-r from-violet-50 to-indigo-50 dark:from-violet-950/30 dark:to-indigo-950/30">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            <Sparkles className="h-5 w-5 text-violet-600" />
-            Enriquecimento IA do Ativo (Matching v5)
+            <Search className="h-5 w-5 text-violet-700" />
+            Inteligência Completa do Ativo (GPT-4o)
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Pesquisa web profunda com GPT-4o para gerar perfil ideal de comprador, potencial de valorização, riscos, comparáveis de mercado e ticket sugerido. Estes dados alimentam o algoritmo de matching v5.
+            {ativo.type === "MINA" || ativo.type === "MINERACAO" || ativo.type === "MINERIO" || ativo.type === "JAZIDA" || ativo.anmProcesso
+              ? "Investigação profunda usando GPT-4o completo com pesquisa web. Cruza dados ANM (processo, titular, substância, fase, eventos), dados geoespaciais e ambientais para identificar: titular dos direitos minerários, sócios, CNPJ, contatos, processos e multas ANM."
+              : "Investigação profunda usando GPT-4o completo com pesquisa web. Cruza TODOS os dados enriquecidos (CAF, SICAR, Embrapa, MapBiomas, IBAMA, NDVI, SICOR) para identificar: proprietários reais, contatos, processos judiciais e restrições."}
           </p>
           <Button
-            onClick={runEnrichAsset}
-            disabled={iaEnrichLoading}
-            className="w-full bg-violet-600 hover:bg-violet-700"
-            data-testid="button-ia-enrich-asset"
+            onClick={runDeepIntel}
+            disabled={deepIntelLoading}
+            className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white"
+            data-testid="button-ia-deep-intel"
           >
-            {iaEnrichLoading
-              ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Enriquecendo com IA (pode levar 30-60s)...</>
-              : <><Sparkles className="mr-2 h-4 w-4" /> {iaEnrichment ? "Reenriquecer com IA" : "Enriquecer com IA"}</>}
+            {deepIntelLoading
+              ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Investigando com IA (pode levar 60-120s)...</>
+              : <><Search className="mr-2 h-4 w-4" /> {deepIntel ? "Reinvestigar com IA" : "Investigar com IA"}</>}
           </Button>
+          {deepIntel && <DeepIntelSection deepIntel={deepIntel} />}
         </CardContent>
       </Card>
 
-      <AssetEnrichmentCards iaEnrichment={iaEnrichment} />
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Brain className="h-5 w-5 text-violet-600" />
-            Análise Inteligente do Ativo
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            A IA analisa este ativo em 5 dimensões: potencial produtivo, contexto regional, risco ambiental, risco financeiro e compatibilidade com compradores.
-          </p>
-          <Button
-            onClick={runAnalise}
-            disabled={iaLoading}
-            className="w-full"
-            data-testid="button-ia-analisar"
-          >
-            {iaLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analisando...</> : <><Sparkles className="mr-2 h-4 w-4" /> {iaAnalise ? "Reanalisar com IA" : "Analisar com IA"}</>}
-          </Button>
-          {iaAnalise && (
-            <div className="mt-4 p-4 rounded-lg border bg-muted/30 prose prose-sm max-w-none dark:prose-invert" data-testid="text-ia-analise">
-              <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                {iaAnalise.split("\n").map((line, i) => {
-                  if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-4 mb-1">{line.replace("## ", "")}</h3>;
-                  if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="font-semibold mt-2">{line.replace(/\*\*/g, "")}</p>;
-                  return <p key={i} className="my-0.5">{line}</p>;
-                })}
-              </div>
-              <p className="text-xs text-muted-foreground mt-3 pt-2 border-t">GPT-4o-mini · {new Date().toLocaleDateString("pt-BR")}</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <FileBarChart className="h-5 w-5 text-emerald-600" />
-            Relatório Personalizado (Ativo + Comprador)
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Gere um relatório mostrando por que este ativo combina com um comprador específico.
-          </p>
-          <div className="flex gap-2">
-            <Select value={iaReportCompanyId} onValueChange={setIaReportCompanyId}>
-              <SelectTrigger className="flex-1" data-testid="input-ia-company-id">
-                <SelectValue placeholder="Selecione a empresa compradora" />
-              </SelectTrigger>
-              <SelectContent>
-                {companiesList.map((company: any) => (
-                  <SelectItem key={company.id} value={String(company.id)}>
-                    {company.tradeName || company.legalName} {company.cnpj ? `— ${company.cnpj}` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              onClick={runRelatorio}
-              disabled={iaReportLoading || !iaReportCompanyId}
-              data-testid="button-ia-relatorio"
-            >
-              {iaReportLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileBarChart className="h-4 w-4" />}
-            </Button>
-          </div>
-          {iaRelatorio && (
-            <div className="mt-4 p-4 rounded-lg border bg-muted/30" data-testid="text-ia-relatorio">
-              <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                {iaRelatorio.split("\n").map((line, i) => {
-                  if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-4 mb-1">{line.replace("## ", "")}</h3>;
-                  if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="font-semibold mt-2">{line.replace(/\*\*/g, "")}</p>;
-                  return <p key={i} className="my-0.5">{line}</p>;
-                })}
-              </div>
-              <p className="text-xs text-muted-foreground mt-3 pt-2 border-t">GPT-4o-mini · {new Date().toLocaleDateString("pt-BR")}</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <FileText className="h-5 w-5 text-blue-600" />
-            Due Diligence Documental
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            A IA gera um checklist completo de documentação necessária para este tipo de ativo, verificando pendências e sugerindo próximos passos.
-          </p>
-          <Button
-            onClick={async () => {
-              setIaDueDiligenceLoading(true);
-              try {
-                const res = await apiRequest("POST", `/api/ai/due-diligence/${ativo.id}`);
-                const data = await res.json();
-                if (data.analise) {
-                  setIaDueDiligence(data.analise);
-                  queryClient.invalidateQueries({ queryKey: ["/api/matching/assets", assetId] });
-                  toast({ title: "Verificação documental concluída" });
-                } else {
-                  toast({ title: "Erro", description: data.message || "Erro na verificação", variant: "destructive" });
-                }
-              } catch (e: any) {
-                toast({ title: "Erro", description: e.message, variant: "destructive" });
-              }
-              setIaDueDiligenceLoading(false);
-            }}
-            disabled={iaDueDiligenceLoading}
-            className="w-full"
-            data-testid="button-ia-due-diligence"
-          >
-            {iaDueDiligenceLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verificando...</> : <><FileText className="mr-2 h-4 w-4" /> Verificar Documentação</>}
-          </Button>
-          {iaDueDiligence && (
-            <div className="mt-4 p-4 rounded-lg border bg-muted/30 prose prose-sm max-w-none dark:prose-invert" data-testid="text-ia-due-diligence">
-              <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                {iaDueDiligence.split("\n").map((line, i) => {
-                  if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-4 mb-1">{line.replace("## ", "")}</h3>;
-                  if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="font-semibold mt-2">{line.replace(/\*\*/g, "")}</p>;
-                  return <p key={i} className="my-0.5">{line}</p>;
-                })}
-              </div>
-              <p className="text-xs text-muted-foreground mt-3 pt-2 border-t">GPT-4o-mini · {new Date().toLocaleDateString("pt-BR")}</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {(ativo.type === "MINERACAO" || ativo.type === "MINERIO" ||
-        ativo.camposEspecificos?.processoAnm || (ativo.attributesJson as any)?.anmProcesso || ativo.anmProcesso) && (
-        <MiningAnalysisButton assetId={assetId} campos={ativo.camposEspecificos} />
-      )}
     </>
   );
 }
+

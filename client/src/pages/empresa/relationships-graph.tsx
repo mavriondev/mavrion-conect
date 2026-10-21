@@ -16,7 +16,7 @@ export interface Socio {
   taxId?: string;
 }
 
-export interface CompanyWithLead {
+export interface CompanyCatalog {
   id: number;
   legalName: string;
   tradeName: string | null;
@@ -34,11 +34,10 @@ export interface CompanyWithLead {
   website: string | null;
   revenueEstimate: number | null;
   createdAt: string;
-  lead: { id: number; status: string; score: number; source: string | null } | null;
 }
 
 export interface RelationshipData {
-  company: CompanyWithLead;
+  company: CompanyCatalog;
   socios: Socio[];
 }
 
@@ -48,7 +47,7 @@ export default function RelationshipGraph({
   expandedCompanies,
   onCompanyClick,
 }: {
-  company: CompanyWithLead;
+  company: CompanyCatalog;
   socios: Socio[];
   expandedCompanies: Record<string, SocioCompany[]>;
   onCompanyClick: (c: SocioCompany) => void;

@@ -17,23 +17,20 @@ import { useTableSort } from "@/hooks/use-table-sort";
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
+import { Search, Loader2, X, Mountain, Droplets, Zap as ZapIcon, ChevronLeft, ChevronRight, Map as MapIcon, Check, ExternalLink, TreePine, Download, BarChart2, Gauge, Ruler, MapPin, Eye, AlertTriangle, RefreshCcw, Wifi, WifiOff, Activity, TrendingUp, Play, Filter, Trophy, Sprout, ChevronsUpDown } from "lucide-react";
 import {
-  Search, Loader2, X, Mountain, Droplets, Zap as ZapIcon,
-  ChevronLeft, ChevronRight, Map as MapIcon, Check, ExternalLink,
-  Briefcase, TreePine, Download, BarChart2, Gauge, Ruler, Target,
-  MapPin, Eye, AlertTriangle, RefreshCcw, Wifi, WifiOff, Activity,
-  ArrowUpDown, Save, TrendingUp, Play, Filter, Trophy, Sprout, Leaf,
-} from "lucide-react";
+  Popover, PopoverContent, PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+} from "@/components/ui/command";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -132,18 +129,24 @@ function LeafletMap({
       }
 
       if (analysisLayers?.rios?.features?.length > 0) {
-        L.geoJSON(analysisLayers.rios, {
+        L.geoJSON(analysisLayers!.rios, {
           style: { color: "#3b82f6", weight: 2, opacity: 0.8 },
+          pointToLayer: (_: any, latlng: any) =>
+            L.circleMarker(latlng, { radius: 3, color: "#3b82f6", fillColor: "#3b82f6", fillOpacity: 0.8, weight: 1 }),
         }).addTo(map);
       }
       if (analysisLayers?.massas?.features?.length > 0) {
-        L.geoJSON(analysisLayers.massas, {
+        L.geoJSON(analysisLayers!.massas, {
           style: { color: "#2563eb", weight: 1, fillColor: "#93c5fd", fillOpacity: 0.4 },
+          pointToLayer: (_: any, latlng: any) =>
+            L.circleMarker(latlng, { radius: 3, color: "#2563eb", fillColor: "#93c5fd", fillOpacity: 0.6, weight: 1 }),
         }).addTo(map);
       }
       if (analysisLayers?.energia?.features?.length > 0) {
-        L.geoJSON(analysisLayers.energia, {
+        L.geoJSON(analysisLayers!.energia, {
           style: { color: "#f59e0b", weight: 2, opacity: 0.8, dashArray: "5,5" },
+          pointToLayer: (_: any, latlng: any) =>
+            L.circleMarker(latlng, { radius: 3, color: "#f59e0b", fillColor: "#f59e0b", fillOpacity: 0.8, weight: 1 }),
         }).addTo(map);
       }
 
@@ -153,13 +156,17 @@ function LeafletMap({
       features.forEach((f: any) => {
         if (!f.geometry) return;
         const isSelected = selectedFeature && f.id === selectedFeature.id;
+        const featureColor = isSelected ? "#ef4444" : "#22c55e";
+        const featureFill = isSelected ? "#fca5a5" : "#86efac";
         const layer = L.geoJSON(f, {
           style: {
-            color: isSelected ? "#ef4444" : "#22c55e",
+            color: featureColor,
             weight: isSelected ? 3 : 2,
-            fillColor: isSelected ? "#fca5a5" : "#86efac",
+            fillColor: featureFill,
             fillOpacity: isSelected ? 0.35 : 0.2,
           },
+          pointToLayer: (_: any, latlng: any) =>
+            L.circleMarker(latlng, { radius: 5, color: featureColor, fillColor: featureFill, fillOpacity: 0.5, weight: 2 }),
         });
         layer.on("click", () => onSelectFeature?.(f));
 
@@ -177,11 +184,16 @@ function LeafletMap({
 
       layerRef.current = fg;
 
-      const timer = setTimeout(() => {
-        if (!cancelled && mapRef.current) {
-          mapRef.current.invalidateSize();
-        }
-      }, 200);
+      [100, 300, 600, 1200].forEach(ms => {
+        setTimeout(() => {
+          if (!cancelled && mapRef.current) {
+            mapRef.current.invalidateSize();
+            if (fg.getLayers().length > 0) {
+              mapRef.current.fitBounds(fg.getBounds().pad(0.1));
+            }
+          }
+        }, ms);
+      });
     };
 
     init();
@@ -195,7 +207,18 @@ function LeafletMap({
     };
   }, [features, analysisLayers, selectedFeature, onMapClick]);
 
-  return <div ref={containerRef} className="w-full h-full min-h-[400px] rounded-lg" data-testid="map-container" />;
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const ro = new ResizeObserver(() => {
+      if (mapRef.current) {
+        mapRef.current.invalidateSize();
+      }
+    });
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  return <div ref={containerRef} style={{ width: "100%", height: "100%", minHeight: "400px" }} className="rounded-lg" data-testid="map-container" />;
 }
 
 function scoreColor(score: number | null): { color: string; fill: string } {
@@ -205,7 +228,7 @@ function scoreColor(score: number | null): { color: string; fill: string } {
   return { color: "#dc2626", fill: "#fca5a5" };
 }
 
-function AssetExplorerMap({ onSelectAsset }: { onSelectAsset: (id: number) => void }) {
+function AssetExplorerMap({ onSelectAsset, onAnalyzeSicar }: { onSelectAsset: (id: number) => void; onAnalyzeSicar?: (feature: any) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const popupRef = useRef<any>(null);
@@ -220,22 +243,51 @@ function AssetExplorerMap({ onSelectAsset }: { onSelectAsset: (id: number) => vo
   const [searchMunicipio, setSearchMunicipio] = useState("");
   const [searchAreaMin, setSearchAreaMin] = useState("");
   const [searchAreaMax, setSearchAreaMax] = useState("");
-  const [searchStatus, setSearchStatus] = useState("");
-  const [searchTipo, setSearchTipo] = useState("");
-  const [searchCondicao, setSearchCondicao] = useState("");
+
+
+  const [searchAltMediaMin, setSearchAltMediaMin] = useState("");
+  const [searchAltMediaMax, setSearchAltMediaMax] = useState("");
+  const [searchArgilaMediaMin, setSearchArgilaMediaMin] = useState("");
+  const [searchArgilaMediaMax, setSearchArgilaMediaMax] = useState("");
   const [searchLimit, setSearchLimit] = useState("50");
   const [sicarLoading, setSicarLoading] = useState(false);
   const [sicarData, setSicarData] = useState<any>(null);
   const [sicarTotal, setSicarTotal] = useState(0);
+  const [municipios, setMunicipios] = useState<string[]>([]);
+  const [municipiosLoading, setMunicipiosLoading] = useState(false);
+  const [municipioOpen, setMunicipioOpen] = useState(false);
   const { toast } = useToast();
+
+  useEffect(() => {
+    if (!searchUf) { setMunicipios([]); setSearchMunicipio(""); return; }
+    let cancelled = false;
+    setMunicipiosLoading(true);
+    fetch(`/api/municipios?uf=${searchUf}`, { credentials: "include" })
+      .then(r => r.json())
+      .then((data: any[]) => {
+        if (!cancelled) setMunicipios(data.map((m: any) => m.nome || m));
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setMunicipiosLoading(false); });
+    return () => { cancelled = true; };
+  }, [searchUf]);
 
   const [selectedSicarGeom, setSelectedSicarGeom] = useState<any>(null);
   const [sicarImporting, setSicarImporting] = useState(false);
   const [sicarImported, setSicarImported] = useState(false);
 
-  function handleSicarClick(props: any, geometry?: any) {
+  function handleSicarClick(props: any, _geometry?: any) {
+    if (onAnalyzeSicar) {
+      const feature = {
+        type: "Feature",
+        properties: props,
+        geometry: _geometry || null,
+      };
+      onAnalyzeSicar(feature);
+      return;
+    }
     setSelectedSicarProps(props);
-    setSelectedSicarGeom(geometry || null);
+    setSelectedSicarGeom(_geometry || null);
     setSicarImporting(false);
     setSicarImported(false);
     setSicarSheetOpen(true);
@@ -255,6 +307,7 @@ function AssetExplorerMap({ onSelectAsset }: { onSelectAsset: (id: number) => vo
         condicao: selectedSicarProps.condicao,
         dat_criacao: selectedSicarProps.dat_criacao,
         m_fiscal: selectedSicarProps.m_fiscal,
+        cod_municipio_ibge: selectedSicarProps.cod_municipio_ibge,
       };
       if (selectedSicarGeom) body.geojson = selectedSicarGeom;
       const resp = await fetch("/api/geo/fazendas/import", {
@@ -292,9 +345,11 @@ function AssetExplorerMap({ onSelectAsset }: { onSelectAsset: (id: number) => vo
       if (searchMunicipio) params.set("municipio", searchMunicipio);
       if (searchAreaMin) params.set("areaMin", searchAreaMin);
       if (searchAreaMax) params.set("areaMax", searchAreaMax);
-      if (searchStatus && !searchStatus.startsWith("all")) params.set("status", searchStatus);
-      if (searchTipo && !searchTipo.startsWith("all")) params.set("tipo", searchTipo);
-      if (searchCondicao && !searchCondicao.startsWith("all")) params.set("condicao", searchCondicao);
+      params.set("tipo", "IRU");
+      if (searchAltMediaMin) params.set("altMediaMin", searchAltMediaMin);
+      if (searchAltMediaMax) params.set("altMediaMax", searchAltMediaMax);
+      if (searchArgilaMediaMin) params.set("argilaMediaMin", searchArgilaMediaMin);
+      if (searchArgilaMediaMax) params.set("argilaMediaMax", searchArgilaMediaMax);
       const resp = await fetch(`/api/geo/fazendas/geojson?${params.toString()}`, { credentials: "include" });
       if (!resp.ok) throw new Error("Erro ao buscar");
       const data = await resp.json();
@@ -316,9 +371,12 @@ function AssetExplorerMap({ onSelectAsset }: { onSelectAsset: (id: number) => vo
     setSearchMunicipio("");
     setSearchAreaMin("");
     setSearchAreaMax("");
-    setSearchStatus("");
-    setSearchTipo("");
-    setSearchCondicao("");
+
+
+    setSearchAltMediaMin("");
+    setSearchAltMediaMax("");
+    setSearchArgilaMediaMin("");
+    setSearchArgilaMediaMax("");
     setSearchLimit("50");
     const map = mapRef.current;
     if (map) {
@@ -509,7 +567,7 @@ function AssetExplorerMap({ onSelectAsset }: { onSelectAsset: (id: number) => vo
         zoom: 4,
         pitch: 0,
         bearing: 0,
-        projection: { type: "globe" as any },
+        ...({ projection: { type: "globe" } } as any),
         attributionControl: false,
       });
 
@@ -552,7 +610,7 @@ function AssetExplorerMap({ onSelectAsset }: { onSelectAsset: (id: number) => vo
   }, [projection]);
 
   return (
-    <div className="relative w-full" style={{ height: "calc(100vh - 230px)", minHeight: "500px" }} data-testid="asset-explorer-map">
+    <div className="relative w-full h-[calc(100dvh-64px)]" data-testid="asset-explorer-map">
       <div ref={containerRef} className="w-full h-full rounded-lg border overflow-hidden" />
 
       {loading && (
@@ -561,8 +619,8 @@ function AssetExplorerMap({ onSelectAsset }: { onSelectAsset: (id: number) => vo
         </div>
       )}
 
-      <div className="absolute top-3 left-3 z-[10] flex flex-col gap-2 max-h-[calc(100%-24px)] overflow-y-auto" data-testid="map-controls">
-        <div className="bg-background/95 backdrop-blur-md rounded-xl shadow-xl border-2 border-emerald-300 dark:border-emerald-700 p-2.5 space-y-2">
+      <div className="absolute top-3 left-3 z-[5] flex flex-col gap-2" style={{ maxHeight: "calc(100% - 24px)" }} data-testid="map-controls">
+        <div className="bg-background/95 backdrop-blur-md rounded-xl shadow-xl border border-border/60 p-2.5 space-y-2 max-w-[240px]">
           <button
             onClick={() => setSearchOpen(!searchOpen)}
             className={cn(
@@ -579,7 +637,7 @@ function AssetExplorerMap({ onSelectAsset }: { onSelectAsset: (id: number) => vo
           </button>
 
           {searchOpen && (
-            <div className="space-y-1.5 pt-1">
+            <div className="space-y-1.5 pt-1 max-h-[60vh] overflow-y-auto pr-0.5">
               <Select value={searchUf} onValueChange={setSearchUf}>
                 <SelectTrigger className="h-7 text-xs" data-testid="search-uf">
                   <SelectValue placeholder="UF *" />
@@ -590,13 +648,51 @@ function AssetExplorerMap({ onSelectAsset }: { onSelectAsset: (id: number) => vo
                   ))}
                 </SelectContent>
               </Select>
-              <Input
-                placeholder="Município"
-                value={searchMunicipio}
-                onChange={e => setSearchMunicipio(e.target.value)}
-                className="h-7 text-xs"
-                data-testid="search-municipio"
-              />
+              <Popover open={municipioOpen} onOpenChange={setMunicipioOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    className={cn(
+                      "flex items-center justify-between w-full h-7 px-2 text-xs rounded-xl border bg-card text-left",
+                      !searchMunicipio && "text-muted-foreground"
+                    )}
+                    disabled={!searchUf}
+                    data-testid="search-municipio"
+                  >
+                    <span className="truncate">{searchMunicipio || "Município"}</span>
+                    {municipiosLoading ? <Loader2 className="w-3 h-3 animate-spin shrink-0" /> : <ChevronsUpDown className="w-3 h-3 opacity-50 shrink-0" />}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[220px] p-0" align="start">
+                  <Command>
+                    <CommandInput placeholder="Buscar cidade..." className="h-8 text-xs" />
+                    <CommandList className="max-h-[200px]">
+                      <CommandEmpty className="text-xs py-3 text-center">Nenhuma cidade encontrada</CommandEmpty>
+                      <CommandGroup>
+                        {searchMunicipio && (
+                          <CommandItem
+                            value="__clear__"
+                            onSelect={() => { setSearchMunicipio(""); setMunicipioOpen(false); }}
+                            className="text-xs text-muted-foreground"
+                          >
+                            <X className="w-3 h-3 mr-1.5" /> Limpar
+                          </CommandItem>
+                        )}
+                        {municipios.map(m => (
+                          <CommandItem
+                            key={m}
+                            value={m}
+                            onSelect={() => { setSearchMunicipio(m); setMunicipioOpen(false); }}
+                            className="text-xs"
+                          >
+                            <Check className={cn("w-3 h-3 mr-1.5", searchMunicipio === m ? "opacity-100" : "opacity-0")} />
+                            {m}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
               <div className="grid grid-cols-2 gap-1">
                 <Input
                   placeholder="Área mín (ha)"
@@ -615,40 +711,52 @@ function AssetExplorerMap({ onSelectAsset }: { onSelectAsset: (id: number) => vo
                   data-testid="search-area-max"
                 />
               </div>
-              <Select value={searchStatus} onValueChange={setSearchStatus}>
-                <SelectTrigger className="h-7 text-xs" data-testid="search-status">
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all_status">Todos</SelectItem>
-                  <SelectItem value="AT">Ativo (AT)</SelectItem>
-                  <SelectItem value="PE">Pendente (PE)</SelectItem>
-                  <SelectItem value="SU">Suspenso (SU)</SelectItem>
-                  <SelectItem value="CA">Cancelado (CA)</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={searchTipo} onValueChange={setSearchTipo}>
-                <SelectTrigger className="h-7 text-xs" data-testid="search-tipo">
-                  <SelectValue placeholder="Tipo" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all_tipo">Todos</SelectItem>
-                  <SelectItem value="IRU">Imóvel Rural (IRU)</SelectItem>
-                  <SelectItem value="AST">Assentamento (AST)</SelectItem>
-                  <SelectItem value="PCT">Terras Indígenas/Quilombolas</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={searchCondicao} onValueChange={setSearchCondicao}>
-                <SelectTrigger className="h-7 text-xs" data-testid="search-condicao">
-                  <SelectValue placeholder="Condição" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all_condicao">Todas</SelectItem>
-                  <SelectItem value="Aguardando análise">Aguardando análise</SelectItem>
-                  <SelectItem value="Em conformidade">Em conformidade</SelectItem>
-                  <SelectItem value="Analisado com pendência">Analisado c/ pendência</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="space-y-0.5">
+                <label className="text-[10px] text-muted-foreground flex items-center gap-1">
+                  <Mountain className="w-3 h-3" />Altitude Média (m)
+                </label>
+                <div className="grid grid-cols-2 gap-1">
+                  <Input
+                    placeholder="Min"
+                    type="number"
+                    value={searchAltMediaMin}
+                    onChange={e => setSearchAltMediaMin(e.target.value)}
+                    className="h-7 text-xs"
+                    data-testid="search-alt-media-min"
+                  />
+                  <Input
+                    placeholder="Max"
+                    type="number"
+                    value={searchAltMediaMax}
+                    onChange={e => setSearchAltMediaMax(e.target.value)}
+                    className="h-7 text-xs"
+                    data-testid="search-alt-media-max"
+                  />
+                </div>
+              </div>
+              <div className="space-y-0.5">
+                <label className="text-[10px] text-muted-foreground flex items-center gap-1">
+                  <Sprout className="w-3 h-3" />Argila Média (%)
+                </label>
+                <div className="grid grid-cols-2 gap-1">
+                  <Input
+                    placeholder="Min"
+                    type="number"
+                    value={searchArgilaMediaMin}
+                    onChange={e => setSearchArgilaMediaMin(e.target.value)}
+                    className="h-7 text-xs"
+                    data-testid="search-argila-media-min"
+                  />
+                  <Input
+                    placeholder="Max"
+                    type="number"
+                    value={searchArgilaMediaMax}
+                    onChange={e => setSearchArgilaMediaMax(e.target.value)}
+                    className="h-7 text-xs"
+                    data-testid="search-argila-media-max"
+                  />
+                </div>
+              </div>
               <div className="space-y-1">
                 <label className="text-[10px] text-muted-foreground">Resultados (1-500)</label>
                 <Input
@@ -753,6 +861,18 @@ function AssetExplorerMap({ onSelectAsset }: { onSelectAsset: (id: number) => vo
                   <p className="text-muted-foreground">Data Criação</p>
                   <p className="font-medium">{selectedSicarProps.dat_criacao ? new Date(selectedSicarProps.dat_criacao).toLocaleDateString("pt-BR") : "—"}</p>
                 </div>
+                {selectedSicarProps.alt_media != null && (
+                  <div className="space-y-1">
+                    <p className="text-muted-foreground flex items-center gap-1"><Mountain className="w-3 h-3" />Altitude Média</p>
+                    <p className="font-medium">{Number(selectedSicarProps.alt_media).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} m</p>
+                  </div>
+                )}
+                {selectedSicarProps.argila_media != null && (
+                  <div className="space-y-1">
+                    <p className="text-muted-foreground flex items-center gap-1"><Sprout className="w-3 h-3" />Argila Média (%)</p>
+                    <p className="font-medium">{Number(selectedSicarProps.argila_media).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%</p>
+                  </div>
+                )}
               </div>
               <div className="pt-2 border-t">
                 <Button
@@ -825,26 +945,22 @@ function AnalysisPanel({
   analysis,
   feature,
   onImport,
-  onCreateDeal,
-  onSave,
   isImported,
   importing,
-  saving,
   enriquecimentoAgro,
   enriquecimentoLoading,
   onEnriquecerAgro,
+  assetId,
 }: {
   analysis: any;
   feature: any;
   onImport: () => void;
-  onCreateDeal: () => void;
-  onSave?: () => void;
   isImported: boolean;
   importing: boolean;
-  saving?: boolean;
   enriquecimentoAgro?: EnriquecimentoAgro | null;
   enriquecimentoLoading?: boolean;
   onEnriquecerAgro?: () => void;
+  assetId?: number | null;
 }) {
   const props = feature?.properties || {};
   const bd = analysis.breakdown || {};
@@ -987,7 +1103,7 @@ function AnalysisPanel({
                 </div>
               )}
 
-              {enriquecimentoAgro.zarc.length > 0 && (
+              {(enriquecimentoAgro.zarc?.length ?? 0) > 0 && (
                 <div>
                   <p className="font-medium text-gray-700 dark:text-gray-300 mb-1">ZARC — Aptidão Climática</p>
                   <div className="space-y-1">
@@ -1005,10 +1121,10 @@ function AnalysisPanel({
                 </div>
               )}
 
-              {enriquecimentoAgro.produtividade.filter(p => p.estimativa).length > 0 && (
+              {(enriquecimentoAgro.produtividade ?? []).filter(p => p.estimativa).length > 0 && (
                 <div>
                   <p className="font-medium text-gray-700 dark:text-gray-300 mb-1">Produtividade Estimada</p>
-                  {enriquecimentoAgro.produtividade.filter(p => p.estimativa).map((p, i) => (
+                  {(enriquecimentoAgro.produtividade ?? []).filter(p => p.estimativa).map((p, i) => (
                     <div key={i} className="flex justify-between bg-muted/50 px-2 py-1 rounded mb-1" data-testid={`prod-item-${i}`}>
                       <span className="capitalize">{p.cultura}</span>
                       <span className="font-medium">{p.estimativa} {p.unidade}</span>
@@ -1017,10 +1133,10 @@ function AnalysisPanel({
                 </div>
               )}
 
-              {enriquecimentoAgro.parcelasSigef.length > 0 && (
+              {(enriquecimentoAgro.parcelasSigef?.length ?? 0) > 0 && (
                 <div>
                   <p className="font-medium text-gray-700 dark:text-gray-300 mb-1">Parcelas SIGEF/INCRA</p>
-                  {enriquecimentoAgro.parcelasSigef.map((p, i) => (
+                  {(enriquecimentoAgro.parcelasSigef ?? []).map((p, i) => (
                     <div key={i} className="bg-muted/50 px-2 py-1 rounded mb-1" data-testid={`sigef-item-${i}`}>
                       <span className="font-mono text-muted-foreground">{p.codigo}</span>
                       <span className="ml-2">{p.area.toFixed(0)} ha — {p.municipio}/{p.uf}</span>
@@ -1033,36 +1149,23 @@ function AnalysisPanel({
         </div>
       )}
 
-      {onEnriquecerAgro && !enriquecimentoAgro && !enriquecimentoLoading && (
+      {onEnriquecerAgro && enriquecimentoAgro && !enriquecimentoLoading && (
         <Button
-          variant="outline"
-          className="w-full text-green-700 border-green-300 dark:text-green-400 dark:border-green-700"
+          variant="ghost"
+          size="sm"
+          className="w-full text-muted-foreground"
           onClick={onEnriquecerAgro}
           data-testid="button-enriquecer-agro"
         >
-          <Sprout className="w-4 h-4 mr-1.5" /> Analisar Solo + ZARC + SIGEF
+          <RefreshCcw className="w-3.5 h-3.5 mr-1.5" /> Re-analisar Solo / ZARC / SIGEF
         </Button>
       )}
 
       <div className="flex gap-2 flex-wrap">
         {isImported ? (
-          <>
-            <Button variant="outline" className="flex-1 text-green-600" disabled>
-              <Check className="w-4 h-4 mr-1.5" /> Importado
-            </Button>
-            {onSave && (
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={onSave}
-                disabled={saving}
-                data-testid="button-salvar-analise"
-              >
-                {saving ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Save className="w-4 h-4 mr-1.5" />}
-                Salvar Análise
-              </Button>
-            )}
-          </>
+          <Button variant="outline" className="flex-1 text-green-600" disabled>
+            <Check className="w-4 h-4 mr-1.5" /> Importado
+          </Button>
         ) : (
           <Button
             variant="outline"
@@ -1075,172 +1178,73 @@ function AnalysisPanel({
             Importar Ativo
           </Button>
         )}
-        <Button
-          className="flex-1"
-          onClick={onCreateDeal}
-          disabled={importing}
-          data-testid="button-criar-deal-geo"
-        >
-          <Briefcase className="w-4 h-4 mr-1.5" /> Criar Deal
-        </Button>
+        {isImported && assetId && (
+          <Button
+            className="flex-1"
+            onClick={() => window.location.href = `/ativos/${assetId}`}
+            data-testid="button-ver-ativo-geo"
+          >
+            <Eye className="w-4 h-4 mr-1.5" /> Ver Ativo
+          </Button>
+        )}
       </div>
     </div>
   );
 }
 
-function CreateDealDialog({
-  open,
-  onOpenChange,
-  feature,
-  analysis,
-  importedMap,
-  onDone,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  feature: any;
-  analysis: any;
-  importedMap: Record<string, number>;
-  onDone: () => void;
-}) {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const [, navigate] = useLocation();
-  const [stage, setStage] = useState("");
-  const [creating, setCreating] = useState(false);
-
-  const { data: stages = [] } = useQuery({
-    queryKey: ["/api/crm/stages"],
-    queryFn: () => apiRequest("GET", "/api/crm/stages").then(r => r.json()),
-  });
-  const assetStages = (stages as any[]).filter((s: any) => s.pipelineType === "ASSET");
-
-  useEffect(() => {
-    if (assetStages.length > 0 && !stage) setStage(String(assetStages[0].id));
-  }, [assetStages]);
-
-  const props = feature?.properties || {};
-  const codImovel = props.cod_imovel || "";
-  const municipio = props.municipio || "";
-  const uf = props.cod_estado || props.uf || "";
-
-  const handleCreate = async () => {
-    setCreating(true);
-    try {
-      let assetId = importedMap[codImovel];
-
-      if (!assetId) {
-        const importRes = await apiRequest("POST", "/api/geo/import-fazenda", { feature, analysis });
-        if (importRes.status === 409) {
-          const data = await importRes.json();
-          assetId = data.assetId;
-        } else if (importRes.ok) {
-          const data = await importRes.json();
-          assetId = data.id;
-        } else {
-          throw new Error("Falha ao importar");
-        }
-      }
-
-      const description = [
-        `Imóvel Rural CAR: ${codImovel}`,
-        `Município: ${municipio}/${uf}`,
-        `Área: ${props.num_area ? `${Number(props.num_area).toLocaleString("pt-BR")} ha` : "N/D"}`,
-        `Score: ${analysis?.score || "N/D"}/100`,
-        analysis?.temRio ? "✓ Tem rio/córrego" : "✗ Sem rio próximo",
-        analysis?.temLago ? "✓ Tem lago/represa" : "",
-        analysis?.temEnergia ? "✓ Energia elétrica próxima" : "✗ Sem energia próxima",
-        analysis?.altMedia ? `Altitude média: ${analysis.altMedia}m` : "",
-      ].filter(Boolean).join("\n");
-
-      const priority = (analysis?.score || 0) >= 70 ? "high" : (analysis?.score || 0) >= 40 ? "medium" : "low";
-
-      await apiRequest("POST", "/api/crm/deals", {
-        title: `Oportunidade Rural — ${municipio}/${uf}`,
-        stageId: Number(stage),
-        pipelineType: "ASSET",
-        priority,
-        description,
-        labels: ["CAR", "Rural"],
-        assetId,
-      });
-
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/geo/imported"] });
-      toast({ title: "Deal criado com sucesso!", description: "Redirecionando ao CRM..." });
-      onOpenChange(false);
-      onDone();
-      setTimeout(() => navigate("/crm"), 500);
-    } catch (err) {
-      toast({ title: "Erro ao criar deal", variant: "destructive" });
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[450px]">
-        <DialogHeader>
-          <DialogTitle>Criar Deal — Oportunidade Rural</DialogTitle>
-          <DialogDescription>Importar fazenda como ativo e criar deal no pipeline ASSET</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4 py-2">
-          <div className="bg-muted/40 rounded-lg p-3 text-sm space-y-1">
-            <p className="font-medium">{municipio}/{uf}</p>
-            <p className="text-muted-foreground">CAR: {codImovel || "N/D"}</p>
-            <p className="text-muted-foreground">Área: {props.num_area ? `${Number(props.num_area).toLocaleString("pt-BR")} ha` : "N/D"}</p>
-            {analysis && <p className="text-muted-foreground">Score: {analysis.score}/100</p>}
-          </div>
-          <div className="space-y-2">
-            <Label>Etapa do Pipeline</Label>
-            <Select value={stage} onValueChange={setStage}>
-              <SelectTrigger data-testid="select-stage-geo">
-                <SelectValue placeholder="Selecionar etapa..." />
-              </SelectTrigger>
-              <SelectContent>
-                {assetStages.map((s: any) => (
-                  <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button onClick={handleCreate} disabled={creating || !stage} data-testid="button-confirmar-deal-geo">
-            {creating ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Briefcase className="w-4 h-4 mr-1.5" />}
-            Criar Deal
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 export default function GeoRuralPage() {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const queryClient = useQueryClient();
 
   const [uf, setUf] = useState("");
   const [municipio, setMunicipio] = useState("");
+  const [buscaMunicipios, setBuscaMunicipios] = useState<string[]>([]);
+  const [buscaMunicipiosLoading, setBuscaMunicipiosLoading] = useState(false);
+  const [buscaMunicipioOpen, setBuscaMunicipioOpen] = useState(false);
+
+  useEffect(() => {
+    if (!uf) { setBuscaMunicipios([]); setMunicipio(""); return; }
+    let cancelled = false;
+    setBuscaMunicipiosLoading(true);
+    fetch(`/api/municipios?uf=${uf}`, { credentials: "include" })
+      .then(r => r.json())
+      .then((data: any[]) => {
+        if (!cancelled) setBuscaMunicipios(data.map((m: any) => m.nome || m));
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setBuscaMunicipiosLoading(false); });
+    return () => { cancelled = true; };
+  }, [uf]);
+
   const [areaMin, setAreaMin] = useState("");
   const [areaMax, setAreaMax] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [tipoFilter, setTipoFilter] = useState("");
-  const [condicaoFilter, setCondicaoFilter] = useState("");
+
+
+  const [altMediaMinFilter, setAltMediaMinFilter] = useState("");
+  const [altMediaMaxFilter, setAltMediaMaxFilter] = useState("");
+  const [argilaMediaMinFilter, setArgilaMediaMinFilter] = useState("");
+  const [argilaMediaMaxFilter, setArgilaMediaMaxFilter] = useState("");
   const [searched, setSearched] = useState(false);
   const [activeSearch, setActiveSearch] = useState("");
   const [page, setPage] = useState(0);
+  const [searchProgress, setSearchProgress] = useState(0);
+  const [searchStage, setSearchStage] = useState("");
 
   const [selectedFeature, setSelectedFeature] = useState<any>(null);
   const [analysis, setAnalysis] = useState<any>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
+  const [mapFullscreen, setMapFullscreen] = useState(false);
 
-  const [dealFeature, setDealFeature] = useState<any>(null);
-  const [dealAnalysis, setDealAnalysis] = useState<any>(null);
-  const [dealDialogOpen, setDealDialogOpen] = useState(false);
+  useEffect(() => {
+    if (!mapFullscreen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMapFullscreen(false);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [mapFullscreen]);
 
   const [serverStatus, setServerStatus] = useState<"idle" | "checking" | "online" | "offline">("checking");
   const [serverCheckedAt, setServerCheckedAt] = useState<string | null>(null);
@@ -1291,7 +1295,7 @@ export default function GeoRuralPage() {
     }
   }, [toast]);
 
-  const { data: rawData, isLoading, error, refetch } = useQuery({
+  const { data: rawData, isLoading, error, refetch, isError } = useQuery({
     queryKey: ["/api/geo/fazendas", activeSearch, page],
     queryFn: async () => {
       const r = await apiRequest("GET", `/api/geo/fazendas?${activeSearch}&count=${PAGE_SIZE}&startIndex=${page * PAGE_SIZE}`);
@@ -1309,6 +1313,35 @@ export default function GeoRuralPage() {
     retry: 2,
     retryDelay: 2000,
   });
+
+  const anySearching = isLoading || carSearching;
+  useEffect(() => {
+    if (!anySearching) {
+      setSearchProgress(0);
+      setSearchStage("");
+      return;
+    }
+    setSearchProgress(5);
+    setSearchStage("Consultando base SICAR...");
+    const stages = [
+      { at: 15, msg: "Filtrando imóveis..." },
+      { at: 30, msg: "Processando resultados..." },
+      { at: 50, msg: "Carregando dados geográficos..." },
+      { at: 70, msg: "Calculando métricas..." },
+      { at: 85, msg: "Finalizando..." },
+    ];
+    let idx = 0;
+    const interval = setInterval(() => {
+      if (idx < stages.length) {
+        setSearchProgress(stages[idx].at);
+        setSearchStage(stages[idx].msg);
+        idx++;
+      } else {
+        setSearchProgress(p => Math.min(p + 1, 95));
+      }
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [anySearching]);
 
   const regularFeatures: any[] = rawData?.features || [];
   const carFeatures: any[] = carResult?.features || [];
@@ -1333,9 +1366,11 @@ export default function GeoRuralPage() {
     if (municipio) p.set("municipio", municipio);
     if (areaMin) p.set("areaMin", areaMin);
     if (areaMax) p.set("areaMax", areaMax);
-    if (statusFilter) p.set("status", statusFilter);
-    if (tipoFilter) p.set("tipo", tipoFilter);
-    if (condicaoFilter) p.set("condicao", condicaoFilter);
+    p.set("tipo", "IRU");
+    if (altMediaMinFilter) p.set("altMediaMin", altMediaMinFilter);
+    if (altMediaMaxFilter) p.set("altMediaMax", altMediaMaxFilter);
+    if (argilaMediaMinFilter) p.set("argilaMediaMin", argilaMediaMinFilter);
+    if (argilaMediaMaxFilter) p.set("argilaMediaMax", argilaMediaMaxFilter);
     setActiveSearch(p.toString());
     setSearched(true);
   };
@@ -1388,16 +1423,21 @@ export default function GeoRuralPage() {
     if (municipio) p.set("municipio", municipio);
     if (filters.areaMin) p.set("areaMin", filters.areaMin);
     if (filters.areaMax) p.set("areaMax", filters.areaMax);
-    if (statusFilter) p.set("status", statusFilter);
-    if (tipoFilter) p.set("tipo", tipoFilter);
-    if (condicaoFilter) p.set("condicao", condicaoFilter);
+    p.set("tipo", "IRU");
+    if (altMediaMinFilter) p.set("altMediaMin", altMediaMinFilter);
+    if (altMediaMaxFilter) p.set("altMediaMax", altMediaMaxFilter);
+    if (argilaMediaMinFilter) p.set("argilaMediaMin", argilaMediaMinFilter);
+    if (argilaMediaMaxFilter) p.set("argilaMediaMax", argilaMediaMaxFilter);
     setActiveSearch(p.toString());
     setSearched(true);
   };
 
   const clearFilters = () => {
     setUf(""); setMunicipio(""); setAreaMin(""); setAreaMax("");
-    setStatusFilter(""); setTipoFilter(""); setCondicaoFilter("");
+
+
+    setAltMediaMinFilter(""); setAltMediaMaxFilter("");
+    setArgilaMediaMinFilter(""); setArgilaMediaMaxFilter("");
     setCarManualCode(""); setCarResult(null);
     setSearched(false); setActiveSearch(""); setPage(0);
     setSelectedFeature(null); setAnalysis(null);
@@ -1432,7 +1472,8 @@ export default function GeoRuralPage() {
         const feat = geoData.features?.[0];
         if (!feat?.geometry?.coordinates) throw new Error("Geometria não disponível para esta fazenda");
         geometry = feat.geometry;
-        feature.geometry = geometry;
+        const updatedFeature = { ...feature, geometry };
+        setSelectedFeature(updatedFeature);
       }
       const areaHa = feature?.properties?.num_area ? parseFloat(feature.properties.num_area) : null;
       const res = await apiRequest("POST", "/api/geo/analisar", { geometry, areaHa });
@@ -1530,6 +1571,15 @@ export default function GeoRuralPage() {
     }
   }, [selectedFeature, analysis, importedMap]);
 
+  const autoEnrichTriggeredRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!analysis || !selectedFeature || enriquecimentoAgro || enriquecimentoLoading) return;
+    const featureId = selectedFeature.properties?.cod_imovel || selectedFeature.id || '';
+    if (autoEnrichTriggeredRef.current === featureId) return;
+    autoEnrichTriggeredRef.current = featureId;
+    enriquecerFazendaSelecionada();
+  }, [analysis, selectedFeature, enriquecimentoAgro, enriquecimentoLoading, enriquecerFazendaSelecionada]);
+
   const importMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/geo/import-fazenda", {
@@ -1545,18 +1595,12 @@ export default function GeoRuralPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/geo/imported"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
     },
     onError: () => {
       toast({ title: "Erro ao importar fazenda", variant: "destructive" });
     },
   });
-
-  const openDealDialog = (feature: any, analysisData: any) => {
-    setDealFeature(feature);
-    setDealAnalysis(analysisData);
-    setDealDialogOpen(true);
-  };
 
   const hasResults = searched && features.length > 0;
   const totalPages = Math.ceil(totalFeatures / PAGE_SIZE);
@@ -1660,7 +1704,7 @@ export default function GeoRuralPage() {
     <div className="p-4 md:p-6 max-w-[1600px] mx-auto space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Prospecção Rural</h1>
+          <h1 className="text-xl font-semibold tracking-tight" data-testid="text-page-title">Prospecção Rural</h1>
           <p className="text-sm text-muted-foreground">Busque imóveis rurais do CAR e analise oportunidades com dados geoespaciais</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -1697,26 +1741,22 @@ export default function GeoRuralPage() {
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
-          {hasResults && activeTab === "busca" && (
-            <Button variant="outline" size="sm" onClick={() => setMapOpen(true)} data-testid="button-ver-mapa">
-              <MapIcon className="w-4 h-4 mr-1.5" /> Ver Mapa
-            </Button>
+          {apiCacheStats?.total && (
+            <Badge variant="secondary" className="text-[11px] font-normal gap-1" data-testid="badge-api-stats">
+              <Activity className="w-3 h-3" />
+              {(apiCacheStats.total || 0).toLocaleString("pt-BR")} imóveis
+            </Badge>
           )}
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList data-testid="tabs-geo">
-          <TabsTrigger value="busca" data-testid="tab-busca">
-            <Search className="w-4 h-4 mr-1.5" /> Busca CAR
-          </TabsTrigger>
-          <TabsTrigger value="ranking" data-testid="tab-ranking">
-            <Trophy className="w-4 h-4 mr-1.5" /> Ranking
-          </TabsTrigger>
-          <TabsTrigger value="mapa" data-testid="tab-mapa" className="relative data-[state=inactive]:bg-emerald-50 data-[state=inactive]:text-emerald-700 data-[state=inactive]:border-emerald-300 data-[state=inactive]:border data-[state=inactive]:shadow-sm data-[state=inactive]:animate-pulse dark:data-[state=inactive]:bg-emerald-900/30 dark:data-[state=inactive]:text-emerald-400 dark:data-[state=inactive]:border-emerald-700">
-            <MapIcon className="w-4 h-4 mr-1.5" /> Mapa Interativo
-          </TabsTrigger>
-        </TabsList>
+      <Tabs value={activeTab} onValueChange={(v) => {
+        if (v === "mapa") {
+          setMapFullscreen(true);
+        } else {
+          setActiveTab(v);
+        }
+      }}>
 
         <TabsContent value="ranking" className="space-y-4 mt-4">
           {/* Stats Cards */}
@@ -1943,52 +1983,21 @@ export default function GeoRuralPage() {
               </p>
             </div>
           </div>
-          <AssetExplorerMap onSelectAsset={(assetId) => navigate(`/ativos/${assetId}`)} />
+          <AssetExplorerMap onSelectAsset={(assetId) => navigate(`/ativos/${assetId}`)} onAnalyzeSicar={analyzeFeature} />
         </TabsContent>
 
         <TabsContent value="busca" className="space-y-4 mt-4">
 
-      {apiCacheStats && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-800 p-3 flex items-center gap-3" data-testid="banner-api-stats">
-          <Activity className="w-4 h-4 text-blue-600 shrink-0" />
-          <div className="flex-1">
-            <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
-              API SICARIOn — {(apiCacheStats.total || 0).toLocaleString("pt-BR")} imóveis disponíveis
-            </p>
-            <p className="text-xs text-blue-700 dark:text-blue-400 mt-0.5">
-              UFs: {(apiCacheStats.porUf || []).map((u: any) => `${u.uf} (${Number(u.total).toLocaleString("pt-BR")})`).join(", ") || "Nenhuma"}
-            </p>
+      {anySearching && (
+        <div className="flex flex-col items-center justify-center py-6 space-y-3" data-testid="search-progress">
+          <Loader2 className="w-7 h-7 animate-spin text-emerald-500" />
+          <div className="w-full max-w-sm space-y-2">
+            <Progress value={searchProgress} className="h-2" />
+            <p className="text-sm text-muted-foreground text-center">{searchStage}</p>
           </div>
         </div>
       )}
 
-      {serverStatus === "offline" && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 p-3 flex items-start gap-3" data-testid="banner-sicar-offline">
-          <WifiOff className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="font-medium text-amber-800 dark:text-amber-300 text-sm">
-              API SICARIOn indisponível
-            </p>
-            <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
-              A API está fora do ar. Tente novamente em instantes.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {serverStatus === "checking" && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground py-1" data-testid="status-sicar-checking">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          Verificando disponibilidade...
-        </div>
-      )}
-
-      {serverStatus === "online" && (
-        <div className="flex items-center gap-1.5 text-xs text-green-600" data-testid="status-sicar-online">
-          <Wifi className="w-3.5 h-3.5" />
-          API SICARIOn disponível
-        </div>
-      )}
 
       <>
           <Card>
@@ -2023,12 +2032,49 @@ export default function GeoRuralPage() {
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">Município</Label>
-                  <Input
-                    value={municipio}
-                    onChange={e => setMunicipio(e.target.value)}
-                    placeholder="Buscar..."
-                    data-testid="input-municipio"
-                  />
+                  <Popover open={buscaMunicipioOpen} onOpenChange={setBuscaMunicipioOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        className={cn("w-full justify-between h-9 font-normal", !municipio && "text-muted-foreground")}
+                        disabled={!uf}
+                        data-testid="input-municipio"
+                      >
+                        <span className="truncate">{municipio || "Selecione..."}</span>
+                        {buscaMunicipiosLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 ml-2" /> : <ChevronsUpDown className="w-3.5 h-3.5 opacity-50 shrink-0 ml-2" />}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[260px] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Buscar cidade..." className="h-9" />
+                        <CommandList className="max-h-[250px]">
+                          <CommandEmpty className="text-xs py-3 text-center">Nenhuma cidade encontrada</CommandEmpty>
+                          <CommandGroup>
+                            {municipio && (
+                              <CommandItem
+                                value="__clear__"
+                                onSelect={() => { setMunicipio(""); setBuscaMunicipioOpen(false); }}
+                                className="text-muted-foreground"
+                              >
+                                <X className="w-3.5 h-3.5 mr-2" /> Limpar
+                              </CommandItem>
+                            )}
+                            {buscaMunicipios.map(m => (
+                              <CommandItem
+                                key={m}
+                                value={m}
+                                onSelect={() => { setMunicipio(m); setBuscaMunicipioOpen(false); }}
+                              >
+                                <Check className={cn("w-3.5 h-3.5 mr-2", municipio === m ? "opacity-100" : "opacity-0")} />
+                                {m}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div className="space-y-1.5 lg:col-span-2">
                   <Label className="text-xs">Código CAR</Label>
@@ -2059,52 +2105,42 @@ export default function GeoRuralPage() {
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 gap-3 items-end mt-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 items-end mt-3">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Status</Label>
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger data-testid="select-status">
-                      <SelectValue placeholder="Todos" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="AT">Ativo (AT)</SelectItem>
-                      <SelectItem value="PE">Pendente (PE)</SelectItem>
-                      <SelectItem value="SU">Suspenso (SU)</SelectItem>
-                      <SelectItem value="CA">Cancelado (CA)</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label className="text-xs flex items-center gap-1"><Mountain className="w-3 h-3" />Altitude Média (m) - Min</Label>
+                  <Input
+                    type="number" value={altMediaMinFilter}
+                    onChange={e => setAltMediaMinFilter(e.target.value)}
+                    placeholder="0"
+                    data-testid="input-alt-media-min"
+                  />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Tipo</Label>
-                  <Select value={tipoFilter} onValueChange={setTipoFilter}>
-                    <SelectTrigger data-testid="select-tipo">
-                      <SelectValue placeholder="Todos" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="IRU">Imóvel Rural (IRU)</SelectItem>
-                      <SelectItem value="AST">Assentamento (AST)</SelectItem>
-                      <SelectItem value="PCT">Terras Indígenas/Quilombolas (PCT)</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label className="text-xs flex items-center gap-1"><Mountain className="w-3 h-3" />Altitude Média (m) - Max</Label>
+                  <Input
+                    type="number" value={altMediaMaxFilter}
+                    onChange={e => setAltMediaMaxFilter(e.target.value)}
+                    placeholder="∞"
+                    data-testid="input-alt-media-max"
+                  />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Condição</Label>
-                  <Select value={condicaoFilter} onValueChange={setCondicaoFilter}>
-                    <SelectTrigger data-testid="select-condicao">
-                      <SelectValue placeholder="Todas" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Aguardando análise">Aguardando análise</SelectItem>
-                      <SelectItem value="Em análise">Em análise</SelectItem>
-                      <SelectItem value="Analisado sem pendências">Analisado sem pendências</SelectItem>
-                      <SelectItem value="Analisado, aguardando atendimento a notificação">Aguardando notificação</SelectItem>
-                      <SelectItem value="Analisado, em conformidade com a Lei">Em conformidade</SelectItem>
-                      <SelectItem value="Analisado, em conformidade com a Lei nº 12.651/2012, com ativos ambientais">Em conformidade c/ ativos</SelectItem>
-                      <SelectItem value="Analisado, em regularização ambiental">Em regularização</SelectItem>
-                      <SelectItem value="Analisado, aguardando regularização ambiental">Aguardando regularização</SelectItem>
-                      <SelectItem value="Cancelado por decisão administrativa">Cancelado administrativo</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label className="text-xs flex items-center gap-1"><Sprout className="w-3 h-3" />Argila Média (%) - Min</Label>
+                  <Input
+                    type="number" value={argilaMediaMinFilter}
+                    onChange={e => setArgilaMediaMinFilter(e.target.value)}
+                    placeholder="0"
+                    data-testid="input-argila-media-min"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs flex items-center gap-1"><Sprout className="w-3 h-3" />Argila Média (%) - Max</Label>
+                  <Input
+                    type="number" value={argilaMediaMaxFilter}
+                    onChange={e => setArgilaMediaMaxFilter(e.target.value)}
+                    placeholder="∞"
+                    data-testid="input-argila-media-max"
+                  />
                 </div>
               </div>
               <div className="flex gap-2 mt-3">
@@ -2121,13 +2157,7 @@ export default function GeoRuralPage() {
         </>
 
       {/* Results */}
-      {isLoading && (
-        <div className="space-y-2">
-          {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
-        </div>
-      )}
-
-      {error && (
+      {(error || isError) && (
         <div className="text-center py-10" data-testid="error-sicar">
           <AlertTriangle className="w-10 h-10 mx-auto mb-3 text-yellow-500" />
           <p className="font-medium text-foreground">Dados temporariamente indisponíveis</p>
@@ -2174,6 +2204,8 @@ export default function GeoRuralPage() {
                   <SortableTableHead className="text-right" sortKey="num_area" sort={fazendaSort} onSort={toggleFazendaSort}>Área (ha)</SortableTableHead>
                   <SortableTableHead sortKey="ind_status" sort={fazendaSort} onSort={toggleFazendaSort}>Condição</SortableTableHead>
                   <SortableTableHead className="text-right" sortKey="declividade" sort={fazendaSort} onSort={toggleFazendaSort}>Decliv. (%)</SortableTableHead>
+                  <SortableTableHead className="text-right" sortKey="alt_media" sort={fazendaSort} onSort={toggleFazendaSort}>Alt. (m)</SortableTableHead>
+                  <SortableTableHead className="text-right" sortKey="argila_media" sort={fazendaSort} onSort={toggleFazendaSort}>Argila (%)</SortableTableHead>
                   <TableHead className="text-center">Ações</TableHead>
                 </TableRow>
               </TableHeader>
@@ -2243,6 +2275,12 @@ export default function GeoRuralPage() {
                       <TableCell className="text-right text-sm" data-testid={`text-declividade-${idx}`}>
                         {declividade != null ? `${declividade.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%` : "—"}
                       </TableCell>
+                      <TableCell className="text-right text-sm" data-testid={`text-alt-media-${idx}`}>
+                        {p.alt_media != null ? Number(p.alt_media).toLocaleString("pt-BR", { maximumFractionDigits: 0 }) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right text-sm" data-testid={`text-argila-media-${idx}`}>
+                        {p.argila_media != null ? `${Number(p.argila_media).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%` : "—"}
+                      </TableCell>
                       <TableCell>
                         <div className="flex items-center justify-center gap-1">
                           <TooltipProvider>
@@ -2259,6 +2297,7 @@ export default function GeoRuralPage() {
                               <TooltipContent>Analisar</TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
+                          {/* Criar Deal — comentado por enquanto
                           <TooltipProvider>
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -2281,6 +2320,7 @@ export default function GeoRuralPage() {
                               <TooltipContent>Criar Deal</TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
+                          */}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -2345,7 +2385,7 @@ export default function GeoRuralPage() {
             </div>
           ) : analysis ? (
             <div className="grid md:grid-cols-2 gap-6">
-              <div className="min-h-[400px] relative rounded-lg overflow-hidden border">
+              <div className="h-[450px] relative rounded-lg overflow-hidden border">
                 <LeafletMap
                   features={selectedFeature ? [selectedFeature] : []}
                   analysisLayers={analysis.layers}
@@ -2379,19 +2419,46 @@ export default function GeoRuralPage() {
                 analysis={analysis}
                 feature={selectedFeature}
                 onImport={() => importMutation.mutate()}
-                onCreateDeal={() => openDealDialog(selectedFeature, analysis)}
-                onSave={saveAnalysis}
                 isImported={!!(selectedFeature?.properties?.cod_imovel && (importedMap as any)[selectedFeature.properties.cod_imovel])}
                 importing={importMutation.isPending}
-                saving={savingAnalysis}
                 enriquecimentoAgro={enriquecimentoAgro}
                 enriquecimentoLoading={enriquecimentoLoading}
                 onEnriquecerAgro={enriquecerFazendaSelecionada}
+                assetId={selectedFeature?.properties?.cod_imovel ? (importedMap as any)[selectedFeature.properties.cod_imovel] : null}
               />
             </div>
           ) : null}
         </DialogContent>
       </Dialog>
+
+      {mapFullscreen && (
+        <div className="fixed inset-0 z-50 bg-background" data-testid="map-fullscreen-overlay">
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[60]">
+            <Button
+              variant="secondary"
+              size="sm"
+              className="shadow-xl bg-background/95 backdrop-blur-md border px-5"
+              onClick={() => setMapFullscreen(false)}
+              data-testid="button-exit-fullscreen-map"
+            >
+              <X className="w-4 h-4 mr-1.5" /> Fechar Mapa
+            </Button>
+          </div>
+          <div className="w-full h-full">
+            <AssetExplorerMap
+              onSelectAsset={(assetId) => {
+                setMapFullscreen(false);
+                navigate(`/ativos/${assetId}`);
+              }}
+              onAnalyzeSicar={(feature) => {
+                setMapFullscreen(false);
+                setActiveTab("busca");
+                analyzeFeature(feature);
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Full map sheet */}
       <Sheet open={mapOpen} onOpenChange={setMapOpen}>
@@ -2414,19 +2481,7 @@ export default function GeoRuralPage() {
       </Sheet>
 
       {/* Create deal dialog */}
-      {dealFeature && (
-        <CreateDealDialog
-          open={dealDialogOpen}
-          onOpenChange={setDealDialogOpen}
-          feature={dealFeature}
-          analysis={dealAnalysis}
-          importedMap={importedMap as any}
-          onDone={() => {
-            queryClient.invalidateQueries({ queryKey: ["/api/geo/imported"] });
-            queryClient.invalidateQueries({ queryKey: ["/api/matching/assets"] });
-          }}
-        />
-      )}
+
     </div>
   );
 }

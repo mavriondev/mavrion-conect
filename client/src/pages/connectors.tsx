@@ -14,37 +14,39 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Play, Plus, Server, Database, Activity, Search, X, Globe, FileCode, ChevronDown, HelpCircle, Zap, Trash2, RefreshCw, HardDrive } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
+// Somente tipos que o scheduler sabe executar (server/scheduler.ts, runConnectorJob):
+// anm_scraper, tah_import, cfem_import, sigbm_import.
 const TEMPLATES = [
   {
-    name: "API ReceitaWS",
-    type: "API",
-    description: "Consulta de CNPJ via ReceitaWS. Retorna dados cadastrais, situação e endereço.",
-    configJson: { baseUrl: "https://receitaws.com.br/v1" },
-    schedule: "0 6 * * *",
-    icon: Globe,
-  },
-  {
-    name: "IBGE Municipios",
-    type: "DATABASE",
-    description: "Dados municipais do IBGE via API REST. Inclui municípios, estados e distritos.",
-    configJson: { dbType: "rest_api", endpoint: "https://servicodados.ibge.gov.br/api/v3", resources: ["municipios", "estados", "distritos"], syncMode: "incremental", format: "json" },
-    schedule: "0 0 1 * *",
-    icon: Database,
-  },
-  {
-    name: "Scraper Portal ANM",
-    type: "SCRAPER",
-    description: "Extrai processos minerários do portal GEO ANM. Coleta titular, substância e fase.",
-    configJson: { targetUrl: "https://geo.anm.gov.br", selectors: { processos: ".processo-item", titular: ".titular-nome", substancia: ".substancia", fase: ".fase-atual" }, retryAttempts: 3, timeout: 30000, rateLimit: "2req/s" },
+    name: "Processos ANM (SIGMINE)",
+    type: "anm_scraper",
+    description: "Consulta processos minerários ativos via SIGMINE/ANM por UF e substância.",
+    configJson: { uf: "MG", substancia: "" },
     schedule: "0 8 * * 1",
     icon: Server,
   },
   {
-    name: "Scraper SICAR Rural",
-    type: "SCRAPER",
-    description: "Extrai dados do Cadastro Ambiental Rural (CAR) via portal SICAR. Informações de propriedades rurais.",
-    configJson: { targetUrl: "https://www.car.gov.br/publico/imoveis/index", selectors: { imovel: ".imovel-item", proprietario: ".proprietario-nome", area: ".area-total", status: ".status-car" }, retryAttempts: 3, timeout: 45000, rateLimit: "1req/s" },
-    schedule: "0 6 * * 3",
+    name: "Taxa Anual por Hectare (TAH)",
+    type: "tah_import",
+    description: "Importa a base de TAH dos dados abertos da ANM para o banco local.",
+    configJson: {},
+    schedule: "0 4 2 * *",
+    icon: Database,
+  },
+  {
+    name: "CFEM Arrecadação (ANM)",
+    type: "cfem_import",
+    description: "Importa a arrecadação CFEM dos dados abertos da ANM (agregada por titular).",
+    configJson: {},
+    schedule: "0 4 3 * *",
+    icon: Database,
+  },
+  {
+    name: "SIGBM Barragens (ANM)",
+    type: "sigbm_import",
+    description: "Importa o cadastro de barragens de mineração (SIGBM) dos dados abertos da ANM.",
+    configJson: {},
+    schedule: "0 4 * * 1",
     icon: FileCode,
   },
 ];
@@ -175,7 +177,7 @@ export default function ConnectorsPage() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
-    type: "API",
+    type: "anm_scraper",
     configJson: "{}",
     schedule: "0 0 * * *"
   });
@@ -202,7 +204,7 @@ export default function ConnectorsPage() {
         status: "active"
       });
       setIsCreateOpen(false);
-      setFormData({ name: "", type: "API", configJson: "{}", schedule: "0 0 * * *" });
+      setFormData({ name: "", type: "anm_scraper", configJson: "{}", schedule: "0 0 * * *" });
     } catch {
       alert("Configuração JSON inválida");
     }
@@ -210,7 +212,11 @@ export default function ConnectorsPage() {
 
   const typeIcon = (type: string) => {
     switch (type) {
+      case "anm_scraper":
       case "SCRAPER": return <Server className="w-5 h-5 text-primary" />;
+      case "tah_import":
+      case "cfem_import":
+      case "sigbm_import":
       case "DATABASE": return <Database className="w-5 h-5 text-primary" />;
       default: return <Globe className="w-5 h-5 text-primary" />;
     }
@@ -263,9 +269,10 @@ export default function ConnectorsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="API">REST API</SelectItem>
-                    <SelectItem value="SCRAPER">Web Scraper</SelectItem>
-                    <SelectItem value="DATABASE">Importação de Banco</SelectItem>
+                    <SelectItem value="anm_scraper">Processos ANM (SIGMINE)</SelectItem>
+                    <SelectItem value="tah_import">Importação TAH (ANM)</SelectItem>
+                    <SelectItem value="cfem_import">Importação CFEM (ANM)</SelectItem>
+                    <SelectItem value="sigbm_import">Importação SIGBM (ANM)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -337,7 +344,7 @@ export default function ConnectorsPage() {
                 <strong className="text-foreground">Connectors</strong> são integrações automatizadas que coletam dados de fontes externas para enriquecer sua base de informações.
               </p>
               <p>
-                Existem três tipos principais: <strong className="text-foreground">REST API</strong> (consulta de APIs públicas ou privadas), <strong className="text-foreground">Web Scraper</strong> (extração de dados de páginas web) e <strong className="text-foreground">Importação de Banco</strong> (sincronização com bases de dados externas).
+                Os tipos disponíveis são executados automaticamente pelo agendador: <strong className="text-foreground">Processos ANM</strong> (consulta SIGMINE por UF/substância) e as <strong className="text-foreground">importações de dados abertos da ANM</strong> (TAH, CFEM e SIGBM) para o banco local.
               </p>
               <p>
                 Cada conector pode ser agendado via expressão CRON ou executado manualmente a qualquer momento.
@@ -403,9 +410,10 @@ export default function ConnectorsPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todos os tipos</SelectItem>
-              <SelectItem value="API">REST API</SelectItem>
-              <SelectItem value="SCRAPER">Scraper</SelectItem>
-              <SelectItem value="DATABASE">Banco de Dados</SelectItem>
+              <SelectItem value="anm_scraper">Processos ANM</SelectItem>
+              <SelectItem value="tah_import">TAH</SelectItem>
+              <SelectItem value="cfem_import">CFEM</SelectItem>
+              <SelectItem value="sigbm_import">SIGBM</SelectItem>
             </SelectContent>
           </Select>
           <Select value={connectorStatus} onValueChange={setConnectorStatus}>

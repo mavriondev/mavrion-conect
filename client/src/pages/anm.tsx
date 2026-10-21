@@ -1,7 +1,8 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { Link, useLocation } from "wouter";
+import { cn } from "@/lib/utils";
+import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,25 +15,17 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow, SortableTableHead,
 } from "@/components/ui/table";
 import { useTableSort } from "@/hooks/use-table-sort";
-import {
-  Sheet, SheetContent, SheetHeader, SheetTitle,
-} from "@/components/ui/sheet";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from "@/components/ui/dialog";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Search, MapPin, Download, Loader2, Filter, X, Layers, Mountain,
-  ChevronLeft, ChevronRight, Map as MapIcon, Check, ExternalLink,
-  ChevronDown, ChevronUp, Briefcase, AlertTriangle, Clock, Ban,
-  HandCoins, Zap,
-} from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
+import { Progress } from "@/components/ui/progress";
+import { Search, MapPin, Download, Loader2, Filter, X, Layers, Mountain, ChevronLeft, ChevronRight, Map as MapIcon, Check, ExternalLink, ChevronDown, ChevronUp, AlertTriangle, Clock, Ban, HandCoins, Zap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { useStages } from "@/hooks/use-crm";
-import { cn } from "@/lib/utils";
 
 const ESTADOS_BR = [
   "AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT",
@@ -53,12 +46,34 @@ const FASES_ANM = [
 ];
 
 const USOS_ANM = [
-  { value: "Industrial", label: "Industrial" },
-  { value: "Ourivesaria", label: "Ourivesaria" },
+  { value: "Abrasivo", label: "Abrasivo" },
+  { value: "Balneoterapia", label: "Balneoterapia" },
+  { value: "Brita", label: "Brita" },
+  { value: "Cerâmica vermelha", label: "Cerâmica vermelha" },
+  { value: "Construção civil", label: "Construção civil" },
+  { value: "Corretivo de solo", label: "Corretivo de solo" },
   { value: "Demais substâncias", label: "Demais substâncias" },
+  { value: "Energético", label: "Energético" },
+  { value: "Engarrafamento", label: "Engarrafamento" },
+  { value: "Fabricação de cal", label: "Fabricação de cal" },
+  { value: "Fabricação de cimento", label: "Fabricação de cimento" },
+  { value: "Fertilizantes", label: "Fertilizantes" },
+  { value: "Gema", label: "Gema" },
+  { value: "Industrial", label: "Industrial" },
+  { value: "Metalurgia", label: "Metalurgia" },
+  { value: "Pedra de coleção", label: "Pedra de coleção" },
+  { value: "Revestimento", label: "Revestimento" },
 ];
 
-const OPPORTUNITY_SHORTCUTS = [
+const OPPORTUNITY_SHORTCUTS: {
+  id: string;
+  label: string;
+  desc: string;
+  icon: typeof HandCoins;
+  color: string;
+  bg: string;
+  filters: Record<string, string>;
+}[] = [
   {
     id: "disponibilidade",
     label: "Áreas em Disponibilidade",
@@ -170,7 +185,7 @@ function LeafletMap({
       maxZoom: 18,
     }).addTo(map);
     mapInstanceRef.current = map;
-    setTimeout(() => map.invalidateSize(), 300);
+    [200, 500, 1000].forEach(ms => setTimeout(() => map.invalidateSize(), ms));
     return () => {
       map.remove();
       mapInstanceRef.current = null;
@@ -255,7 +270,7 @@ function LeafletMap({
       const combined = bounds.reduce((acc, b) => acc.extend(b), L.latLngBounds(bounds[0]));
       if (combined.isValid()) map.fitBounds(combined, { padding: [30, 30], maxZoom: 10 });
     }
-  }, [geometries, selectedProcesso, onSelectProcesso]);
+  }, [geometries, selectedProcesso, onSelectProcesso, leafletLoaded]);
 
   useEffect(() => {
     if (mapInstanceRef.current) {
@@ -273,171 +288,34 @@ function LeafletMap({
   );
 }
 
-function CreateDealDialog({
-  open,
-  onOpenChange,
-  processo,
-  importedAssetId,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  processo: ANMProcesso | null;
-  importedAssetId?: number;
-}) {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const [, navigate] = useLocation();
-  const { data: stages = [] } = useStages();
-  const [selectedStageId, setSelectedStageId] = useState<string>("");
-  const [saving, setSaving] = useState(false);
-
-  const assetStages = useMemo(() => {
-    return (stages as any[]).filter((s: any) => s.pipelineType === "ASSET").sort((a: any, b: any) => a.order - b.order);
-  }, [stages]);
-
-  useEffect(() => {
-    if (open && assetStages.length > 0 && !selectedStageId) {
-      setSelectedStageId(String(assetStages[0].id));
-    }
-  }, [open, assetStages, selectedStageId]);
-
-  const handleCreate = async () => {
-    if (!processo || !selectedStageId) return;
-    setSaving(true);
-    try {
-      let assetId = importedAssetId;
-      if (!assetId) {
-        const importRes = await apiRequest("POST", "/api/anm/import-asset", {
-          processo: processo.PROCESSO,
-          nome: processo.NOME,
-          fase: processo.FASE,
-          substancia: processo.SUBS,
-          areaHa: processo.AREA_HA,
-          uf: processo.UF,
-          ultEvento: processo.ULT_EVENTO,
-          uso: processo.USO,
-          ano: processo.ANO,
-        });
-        const importData = await importRes.json();
-        assetId = importData.id || importData.assetId;
-      }
-
-      const dealPayload = {
-        pipelineType: "ASSET",
-        stageId: Number(selectedStageId),
-        title: `Oportunidade: ${processo.SUBS || "Mineração"} - ${processo.PROCESSO}`,
-        description: [
-          `Processo ANM: ${processo.PROCESSO}`,
-          `Titular anterior: ${processo.NOME || "N/A"}`,
-          `Fase: ${processo.FASE || "N/A"}`,
-          `Substância: ${processo.SUBS || "N/A"}`,
-          `Área: ${processo.AREA_HA ? Number(processo.AREA_HA).toLocaleString("pt-BR") + " ha" : "N/A"}`,
-          `UF: ${processo.UF || "N/A"}`,
-          `Uso: ${processo.USO || "N/A"}`,
-          `Último Evento: ${processo.ULT_EVENTO || "N/A"}`,
-        ].join("\n"),
-        source: "ANM Portal",
-        labels: ["ANM", "Oportunidade"],
-        priority: "high",
-        assetId: assetId || undefined,
-      };
-
-      await apiRequest("POST", "/api/crm/deals", dealPayload);
-
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/anm/imported"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/stats/dashboard"] });
-
-      toast({ title: "Deal criado com sucesso!", description: "Ativo importado e deal adicionado ao pipeline ASSET." });
-      onOpenChange(false);
-      setSelectedStageId("");
-      navigate("/crm");
-    } catch (err: any) {
-      toast({ title: "Erro ao criar deal", description: err?.message || "Tente novamente", variant: "destructive" });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (!processo) return null;
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Briefcase className="w-5 h-5" />
-            Criar Deal — Oportunidade ANM
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4 py-2">
-          <div className="rounded-lg border p-3 bg-muted/30 space-y-1.5">
-            <div className="flex items-center gap-2">
-              <Mountain className="w-4 h-4 text-orange-500" />
-              <span className="font-mono text-sm font-medium">{processo.PROCESSO}</span>
-            </div>
-            <div className="text-xs text-muted-foreground space-y-0.5">
-              <p><span className="font-medium">Titular:</span> {processo.NOME || "N/A"}</p>
-              <p><span className="font-medium">Substância:</span> {processo.SUBS || "N/A"}</p>
-              <p><span className="font-medium">Fase:</span> {processo.FASE || "N/A"}</p>
-              <p><span className="font-medium">Área:</span> {processo.AREA_HA ? `${Number(processo.AREA_HA).toLocaleString("pt-BR")} ha` : "N/A"} — <span className="font-medium">UF:</span> {processo.UF || "N/A"}</p>
-              <p><span className="font-medium">Últ. Evento:</span> {processo.ULT_EVENTO || "N/A"}</p>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-sm">Pipeline: ASSET</Label>
-            <p className="text-xs text-muted-foreground">O deal será criado no pipeline de Ativos</p>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-sm">Estágio inicial</Label>
-            <Select value={selectedStageId} onValueChange={setSelectedStageId}>
-              <SelectTrigger data-testid="select-deal-stage">
-                <SelectValue placeholder="Selecione o estágio" />
-              </SelectTrigger>
-              <SelectContent>
-                {assetStages.map((s: any) => (
-                  <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="rounded-lg border p-3 bg-blue-50/50 dark:bg-blue-900/10 space-y-1">
-            <p className="text-xs font-medium text-blue-700 dark:text-blue-400 flex items-center gap-1">
-              <Zap className="w-3.5 h-3.5" /> O que será feito:
-            </p>
-            <ul className="text-xs text-muted-foreground space-y-0.5 ml-5 list-disc">
-              {!importedAssetId && <li>Importar processo como ativo (tipo MINA)</li>}
-              {importedAssetId && <li>Vincular ativo já importado (ID #{importedAssetId})</li>}
-              <li>Criar deal no pipeline ASSET</li>
-              <li>Título: "Oportunidade: {processo.SUBS} - {processo.PROCESSO}"</li>
-              <li>Prioridade: Alta</li>
-            </ul>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
-            Cancelar
-          </Button>
-          <Button onClick={handleCreate} disabled={saving || !selectedStageId} data-testid="button-confirm-create-deal">
-            {saving ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Briefcase className="w-4 h-4 mr-1.5" />}
-            Criar Deal
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 export default function ANMPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const [uf, setUf] = useState("");
   const [substancia, setSubstancia] = useState("");
+  const [subsOpen, setSubsOpen] = useState(false);
+  const [substancias, setSubstancias] = useState<string[]>([]);
+  useEffect(() => {
+    fetch("/api/anm/substancias", { credentials: "include" })
+      .then(r => r.json())
+      .then((data: string[]) => { if (Array.isArray(data)) setSubstancias(data); })
+      .catch(() => {});
+  }, []);
+  const [municipio, setMunicipio] = useState("");
+  const [municipioOpen, setMunicipioOpen] = useState(false);
+  const [municipios, setMunicipios] = useState<{ nome: string; codigoIbge: string | null }[]>([]);
+  useEffect(() => {
+    setMunicipio("");
+    setMunicipios([]);
+    if (!uf) return;
+    fetch(`/api/municipios?uf=${uf}`, { credentials: "include" })
+      .then(r => r.json())
+      .then((data) => { if (Array.isArray(data)) setMunicipios(data); })
+      .catch(() => {});
+  }, [uf]);
+  const [raioKm, setRaioKm] = useState("");
+  useEffect(() => { if (!municipio) setRaioKm(""); }, [municipio]);
   const [fase, setFase] = useState("");
   const [empresa, setEmpresa] = useState("");
   const [processo, setProcesso] = useState("");
@@ -445,18 +323,27 @@ export default function ANMPage() {
   const [ano, setAno] = useState("");
   const [ultEvento, setUltEvento] = useState("");
   const [searched, setSearched] = useState(false);
+  const [anmProgress, setAnmProgress] = useState(0);
+  const [anmStage, setAnmStage] = useState("");
   const [selectedProcesso, setSelectedProcesso] = useState<string | null>(null);
+  const [expandedProcesso, setExpandedProcesso] = useState<ANMProcesso | null>(null);
   const [page, setPage] = useState(0);
   const [geometries, setGeometries] = useState<Record<string, any>>({});
+  const [municipiosMap, setMunicipiosMap] = useState<Record<string, string | null>>({});
+  const municipiosPendingRef = useRef<Set<string>>(new Set());
+  const [resolvingMunicipios, setResolvingMunicipios] = useState(false);
+  const municipiosFailuresRef = useRef<Map<string, number>>(new Map());
+  const municipiosRunsRef = useRef(0);
   const [loadingGeometries, setLoadingGeometries] = useState<Set<string>>(new Set());
-  const [mapOpen, setMapOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("busca");
+  const [mapFullscreen, setMapFullscreen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [dealDialogOpen, setDealDialogOpen] = useState(false);
-  const [dealProcesso, setDealProcesso] = useState<ANMProcesso | null>(null);
 
   const searchParams = useMemo(() => {
     const params = new URLSearchParams();
     if (uf) params.set("uf", uf);
+    if (municipio) params.set("municipio", municipio);
+    if (municipio && raioKm) params.set("raioKm", raioKm);
     if (substancia) params.set("substancia", substancia);
     if (fase) params.set("fase", fase);
     if (empresa) params.set("empresa", empresa);
@@ -465,11 +352,11 @@ export default function ANMPage() {
     if (ano) params.set("ano", ano);
     if (ultEvento) params.set("ultEvento", ultEvento);
     return params.toString();
-  }, [uf, substancia, fase, empresa, processo, uso, ano, ultEvento]);
+  }, [uf, municipio, raioKm, substancia, fase, empresa, processo, uso, ano, ultEvento]);
 
   const [activeSearch, setActiveSearch] = useState("");
 
-  const { data: resultData, isLoading, isFetching } = useQuery<{ features: ANMProcesso[]; total: number }>({
+  const { data: resultData, isLoading, isFetching, isError: errorProcessos } = useQuery<{ features: ANMProcesso[]; total: number }>({
     queryKey: ["/api/anm/processos", activeSearch],
     queryFn: async () => {
       if (!activeSearch) return { features: [], total: 0 };
@@ -489,10 +376,47 @@ export default function ANMPage() {
     },
   });
 
+  const anmSearching = isLoading || isFetching;
+  useEffect(() => {
+    if (!anmSearching) {
+      setAnmProgress(0);
+      setAnmStage("");
+      return;
+    }
+    setAnmProgress(5);
+    setAnmStage("Consultando base ANM...");
+    const stages = [
+      { at: 15, msg: "Filtrando processos minerários..." },
+      { at: 30, msg: "Processando resultados..." },
+      { at: 50, msg: "Carregando dados geográficos..." },
+      { at: 70, msg: "Calculando áreas e substâncias..." },
+      { at: 85, msg: "Finalizando..." },
+    ];
+    let idx = 0;
+    const interval = setInterval(() => {
+      if (idx < stages.length) {
+        setAnmProgress(stages[idx].at);
+        setAnmStage(stages[idx].msg);
+        idx++;
+      } else {
+        setAnmProgress(p => Math.min(p + 1, 95));
+      }
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [anmSearching]);
+
   const results = resultData?.features || [];
   const totalResults = resultData?.total || results.length;
 
-  const { sort: anmSort, toggleSort: rawToggleAnmSort, sortedData: sortedResults } = useTableSort(results);
+  // Incorpora o nome do município resolvido (assíncrono) para permitir ordenação pela coluna
+  const resultsWithMunicipio = useMemo(() => {
+    return results.map((r: any) => ({
+      ...r,
+      MUNICIPIO: r.PROCESSO ? (municipiosMap[r.PROCESSO] ?? null) : null,
+    }));
+  }, [results, municipiosMap]);
+
+  const { sort: anmSort, toggleSort: rawToggleAnmSort, sortedData: sortedResults } = useTableSort(resultsWithMunicipio);
 
   const toggleAnmSort = useCallback((column: string) => {
     rawToggleAnmSort(column);
@@ -513,9 +437,10 @@ export default function ANMPage() {
 
   const totalPages = Math.max(1, Math.ceil(results.length / PAGE_SIZE));
 
-  const hasFilters = uf || substancia || fase || empresa || processo || uso || ano || ultEvento;
+  const hasFilters = uf || municipio || substancia || fase || empresa || processo || uso || ano || ultEvento;
+  const showDistCol = useMemo(() => results.some((r: any) => r.DIST_KM != null), [results]);
   const hasAdvancedFilters = uso || ano || ultEvento;
-  const activeFilterCount = [uf, substancia, fase, empresa, processo, uso, ano, ultEvento].filter(Boolean).length;
+  const activeFilterCount = [uf, municipio, substancia, fase, empresa, processo, uso, ano, ultEvento].filter(Boolean).length;
 
   const applyFiltersAndSearch = useCallback((filters: Record<string, string>) => {
     setUf(filters.uf || "");
@@ -529,6 +454,7 @@ export default function ANMPage() {
     if (filters.ultEvento) setShowAdvanced(true);
     setPage(0);
     setSelectedProcesso(null);
+    setExpandedProcesso(null);
     setGeometries({});
 
     const params = new URLSearchParams();
@@ -547,14 +473,15 @@ export default function ANMPage() {
     setActiveSearch(searchParams);
     setPage(0);
     setSelectedProcesso(null);
+    setExpandedProcesso(null);
     setGeometries({});
   }, [searchParams, hasFilters, toast]);
 
   const handleClear = useCallback(() => {
-    setUf(""); setSubstancia(""); setFase(""); setEmpresa(""); setProcesso("");
+    setUf(""); setMunicipio(""); setRaioKm(""); setSubstancia(""); setFase(""); setEmpresa(""); setProcesso("");
     setUso(""); setAno(""); setUltEvento("");
     setSearched(false); setActiveSearch(""); setPage(0);
-    setSelectedProcesso(null); setGeometries({}); setMapOpen(false);
+    setSelectedProcesso(null); setExpandedProcesso(null); setGeometries({}); setMapFullscreen(false);
   }, []);
 
   const fetchGeometry = useCallback(async (processoNum: string) => {
@@ -574,14 +501,75 @@ export default function ANMPage() {
 
   const handleRowClick = useCallback((proc: ANMProcesso) => {
     const num = proc.PROCESSO;
-    setSelectedProcesso(prev => prev === num ? null : num);
+    setExpandedProcesso(proc);
+    setSelectedProcesso(num);
     fetchGeometry(num);
-    setMapOpen(true);
   }, [fetchGeometry]);
+
+  // Resolve o município de cada processo (batch, com cache no servidor).
+  // Normalmente resolve só a página atual; ao ordenar por "Município", resolve
+  // TODOS os resultados em lotes e aplica de uma vez, para ordenação estável.
+  const sortingByMunicipio = anmSort.column === "MUNICIPIO";
+  useEffect(() => {
+    const source = sortingByMunicipio ? results : pagedResults;
+    const missing = source
+      .filter((p: any) => p.PROCESSO && p.UF && !(p.PROCESSO in municipiosMap) && !municipiosPendingRef.current.has(p.PROCESSO))
+      .map((p: any) => ({ processo: p.PROCESSO, uf: p.UF }));
+    if (missing.length === 0) {
+      // Só apaga o indicador quando nenhuma resolução está em andamento
+      if (municipiosRunsRef.current === 0) setResolvingMunicipios(false);
+      return;
+    }
+    missing.forEach(m => municipiosPendingRef.current.add(m.processo));
+    (async () => {
+      municipiosRunsRef.current += 1;
+      if (sortingByMunicipio) setResolvingMunicipios(true);
+      // O servidor processa no máximo 25 processos por requisição — lotes maiores
+      // seriam truncados silenciosamente e os itens omitidos ficariam sem resolver.
+      const BATCH = 25;
+      const accumulated: Record<string, string | null> = {};
+      try {
+        for (let i = 0; i < missing.length; i += BATCH) {
+          const chunk = missing.slice(i, i + BATCH);
+          try {
+            const res = await apiRequest("POST", "/api/anm/municipios", { processos: chunk });
+            const data: Record<string, string | null> = await res.json();
+            Object.assign(accumulated, data);
+            // Resposta OK cobre todos os itens válidos do lote; um item omitido foi
+            // rejeitado pela validação do servidor (processo/UF inválidos) e nunca
+            // resolveria — marca null para não repetir a mesma consulta em loop.
+            chunk.forEach(m => { if (!(m.processo in accumulated)) accumulated[m.processo] = null; });
+          } catch {
+            // Falha de rede/servidor (possivelmente transitória): permite nova
+            // tentativa, mas com limite para não martelar o servidor em loop.
+            chunk.forEach(m => {
+              const fails = (municipiosFailuresRef.current.get(m.processo) || 0) + 1;
+              municipiosFailuresRef.current.set(m.processo, fails);
+              if (fails >= 2 && !(m.processo in accumulated)) accumulated[m.processo] = null;
+            });
+          }
+          // Sem ordenação por município, aplica incrementalmente (só a página atual);
+          // com ordenação, acumula e aplica uma única vez ao final para a lista não "saltar".
+          if (!sortingByMunicipio) {
+            setMunicipiosMap(prev => ({ ...prev, ...accumulated }));
+          }
+        }
+        setMunicipiosMap(prev => ({ ...prev, ...accumulated }));
+      } finally {
+        // Libera os IDs pendentes e SEMPRE aplica o resultado via setMunicipiosMap
+        // (mesmo que o efeito tenha re-executado): isso re-dispara o efeito e
+        // garante que uma passada de ordenação por município iniciada durante
+        // uma requisição em voo cubra os processos que estavam pendentes.
+        municipiosRunsRef.current -= 1;
+        missing.forEach(m => municipiosPendingRef.current.delete(m.processo));
+        setMunicipiosMap(prev => ({ ...prev, ...accumulated }));
+        if (municipiosRunsRef.current === 0) setResolvingMunicipios(false);
+      }
+    })();
+  }, [pagedResults, results, municipiosMap, sortingByMunicipio]);
 
   const handleLoadAllGeometries = useCallback(() => {
     pagedResults.forEach(proc => fetchGeometry(proc.PROCESSO));
-    setMapOpen(true);
   }, [pagedResults, fetchGeometry]);
 
   const importMutation = useMutation({
@@ -595,7 +583,7 @@ export default function ANMPage() {
     },
     onSuccess: () => {
       toast({ title: "Processo importado como ativo!" });
-      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
       queryClient.invalidateQueries({ queryKey: ["/api/anm/imported"] });
     },
     onError: (err: any) => {
@@ -604,12 +592,20 @@ export default function ANMPage() {
     },
   });
 
-  const handleOpenDealDialog = useCallback((proc: ANMProcesso) => {
-    setDealProcesso(proc);
-    setDealDialogOpen(true);
-  }, []);
-
   const geoCount = Object.keys(geometries).length;
+
+  if (errorProcessos) {
+    return (
+      <div className="p-4 md:p-8 max-w-2xl mx-auto text-center space-y-4 pt-16 md:pt-20" data-testid="error-anm">
+        <AlertTriangle className="w-12 h-12 text-destructive mx-auto" />
+        <p className="text-lg font-medium">Erro ao buscar processos ANM</p>
+        <p className="text-sm text-muted-foreground">Não foi possível carregar os dados. Tente novamente.</p>
+        <Button variant="outline" onClick={() => window.location.reload()} data-testid="button-reload-anm">
+          <Search className="w-4 h-4 mr-2" /> Tentar novamente
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-[1600px] mx-auto">
@@ -623,14 +619,17 @@ export default function ANMPage() {
             Consulte processos minerários e identifique oportunidades de aquisição
           </p>
         </div>
-        {geoCount > 0 && (
-          <Button onClick={() => setMapOpen(true)} variant="outline" data-testid="button-open-map">
-            <MapIcon className="w-4 h-4 mr-1.5" />
-            Ver Mapa
-            <Badge variant="secondary" className="ml-1.5">{geoCount}</Badge>
-          </Button>
-        )}
       </div>
+
+      {anmSearching && (
+        <div className="flex flex-col items-center justify-center py-6 space-y-3" data-testid="search-progress-anm">
+          <Loader2 className="w-7 h-7 animate-spin text-emerald-500" />
+          <div className="w-full max-w-sm space-y-2">
+            <Progress value={anmProgress} className="h-2" />
+            <p className="text-sm text-muted-foreground text-center">{anmStage}</p>
+          </div>
+        </div>
+      )}
 
       {!searched && (
         <div>
@@ -663,298 +662,498 @@ export default function ANMPage() {
         </div>
       )}
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Filter className="w-4 h-4" />
-            Filtros de Busca
-            {activeFilterCount > 0 && (
-              <Badge variant="secondary" className="text-xs">{activeFilterCount} ativo(s)</Badge>
-            )}
-          </CardTitle>
-          {hasFilters && (
-            <Button variant="ghost" size="sm" onClick={handleClear} data-testid="button-clear-filters">
-              <X className="w-4 h-4 mr-1" /> Limpar
-            </Button>
-          )}
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs">UF</Label>
-              <Select value={uf || "all"} onValueChange={v => setUf(v === "all" ? "" : v)}>
-                <SelectTrigger data-testid="select-uf-anm"><SelectValue placeholder="Todos" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos</SelectItem>
-                  {ESTADOS_BR.map(e => <SelectItem key={e} value={e}>{e}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Substância</Label>
-              <Input data-testid="input-substancia-anm" value={substancia} onChange={e => setSubstancia(e.target.value)} placeholder="ex: OURO, FERRO" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Fase</Label>
-              <Select value={fase || "all"} onValueChange={v => setFase(v === "all" ? "" : v)}>
-                <SelectTrigger data-testid="select-fase-anm"><SelectValue placeholder="Todas" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todas</SelectItem>
-                  {FASES_ANM.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Empresa / Titular</Label>
-              <Input data-testid="input-empresa-anm" value={empresa} onChange={e => setEmpresa(e.target.value)} placeholder="Nome da empresa" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Nº Processo</Label>
-              <Input data-testid="input-processo-anm" value={processo} onChange={e => setProcesso(e.target.value)} placeholder="ex: 830.001/2020" />
-            </div>
-          </div>
+      <Tabs value={activeTab} onValueChange={(v) => {
+        if (v === "mapa") {
+          setMapFullscreen(true);
+        } else {
+          setActiveTab(v);
+        }
+      }}>
 
-          <div>
-            <button type="button" onClick={() => setShowAdvanced(!showAdvanced)} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors" data-testid="button-toggle-advanced">
-              {showAdvanced ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              Filtros avançados
-              {hasAdvancedFilters && <Badge variant="secondary" className="text-[10px] ml-1">{[uso, ano, ultEvento].filter(Boolean).length}</Badge>}
-            </button>
-            {showAdvanced && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3 pt-3 border-t">
+        <TabsContent value="busca" forceMount className="space-y-4 mt-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Filter className="w-4 h-4" />
+                Filtros de Busca
+                {activeFilterCount > 0 && (
+                  <Badge variant="secondary" className="text-xs">{activeFilterCount} ativo(s)</Badge>
+                )}
+              </CardTitle>
+              {hasFilters && (
+                <Button variant="ghost" size="sm" onClick={handleClear} data-testid="button-clear-filters">
+                  <X className="w-4 h-4 mr-1" /> Limpar
+                </Button>
+              )}
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Uso</Label>
-                  <Select value={uso || "all"} onValueChange={v => setUso(v === "all" ? "" : v)}>
-                    <SelectTrigger data-testid="select-uso-anm"><SelectValue placeholder="Todos" /></SelectTrigger>
+                  <Label className="text-xs">UF</Label>
+                  <Select value={uf || "all"} onValueChange={v => setUf(v === "all" ? "" : v)}>
+                    <SelectTrigger data-testid="select-uf-anm"><SelectValue placeholder="Todos" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Todos</SelectItem>
-                      {USOS_ANM.map(u => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                      {ESTADOS_BR.map(e => <SelectItem key={e} value={e}>{e}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Ano do Processo</Label>
-                  <Input data-testid="input-ano-anm" value={ano} onChange={e => setAno(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="ex: 2023" maxLength={4} />
+                  <Label className="text-xs">Município</Label>
+                  <Popover open={municipioOpen} onOpenChange={setMunicipioOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline" role="combobox" aria-expanded={municipioOpen}
+                        disabled={!uf}
+                        className="w-full justify-between font-normal text-[13px] h-9"
+                        data-testid="input-municipio-anm"
+                      >
+                        <span className="truncate">
+                          {municipio ? (municipios.find(m => m.codigoIbge === municipio)?.nome || municipio) : (uf ? "Todos" : "Escolha a UF")}
+                        </span>
+                        <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[260px] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Buscar município..." />
+                        <CommandList className="max-h-[220px]">
+                          <CommandEmpty>Nenhum encontrado</CommandEmpty>
+                          <CommandGroup>
+                            <CommandItem value="__todos__" onSelect={() => { setMunicipio(""); setMunicipioOpen(false); }}>
+                              <Check className={cn("w-3.5 h-3.5 mr-2", !municipio ? "opacity-100" : "opacity-0")} />
+                              Todos
+                            </CommandItem>
+                            {municipios.filter(m => m.codigoIbge).map(m => (
+                              <CommandItem key={m.codigoIbge} value={m.nome} onSelect={() => { setMunicipio(m.codigoIbge!); setMunicipioOpen(false); }}>
+                                <Check className={cn("w-3.5 h-3.5 mr-2", municipio === m.codigoIbge ? "opacity-100" : "opacity-0")} />
+                                {m.nome}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Último Evento (texto)</Label>
-                  <Input data-testid="input-ultevento-anm" value={ultEvento} onChange={e => setUltEvento(e.target.value)} placeholder="ex: INDEFERIMENTO, MULTA, DÉBITO" />
+                  <Label className="text-xs">Raio (km)</Label>
+                  <Select value={raioKm || "0"} onValueChange={v => setRaioKm(v === "0" ? "" : v)} disabled={!municipio}>
+                    <SelectTrigger data-testid="select-raio-anm">
+                      <SelectValue placeholder={municipio ? "Só o município" : "Escolha o município"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0">Só o município</SelectItem>
+                      <SelectItem value="25">Até 25 km</SelectItem>
+                      <SelectItem value="50">Até 50 km</SelectItem>
+                      <SelectItem value="100">Até 100 km</SelectItem>
+                      <SelectItem value="200">Até 200 km</SelectItem>
+                      <SelectItem value="300">Até 300 km</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Substância</Label>
+                  <Popover open={subsOpen} onOpenChange={setSubsOpen}>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" role="combobox" aria-expanded={subsOpen} className="w-full justify-between font-normal text-[13px] h-9" data-testid="input-substancia-anm">
+                        {substancia || "Todas"}
+                        <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[260px] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Buscar substância..." />
+                        <CommandList className="max-h-[220px]">
+                          <CommandEmpty>Nenhuma encontrada</CommandEmpty>
+                          <CommandGroup>
+                            <CommandItem value="__todas__" onSelect={() => { setSubstancia(""); setSubsOpen(false); }}>
+                              <Check className={cn("w-3.5 h-3.5 mr-2", !substancia ? "opacity-100" : "opacity-0")} />
+                              Todas
+                            </CommandItem>
+                            {substancias.map(s => (
+                              <CommandItem key={s} value={s} onSelect={() => { setSubstancia(s); setSubsOpen(false); }}>
+                                <Check className={cn("w-3.5 h-3.5 mr-2", substancia === s ? "opacity-100" : "opacity-0")} />
+                                {s}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Fase</Label>
+                  <Select value={fase || "all"} onValueChange={v => setFase(v === "all" ? "" : v)}>
+                    <SelectTrigger data-testid="select-fase-anm"><SelectValue placeholder="Todas" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas</SelectItem>
+                      {FASES_ANM.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Empresa / Titular</Label>
+                  <Input data-testid="input-empresa-anm" value={empresa} onChange={e => setEmpresa(e.target.value)} placeholder="Nome da empresa" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Nº Processo</Label>
+                  <Input data-testid="input-processo-anm" value={processo} onChange={e => setProcesso(e.target.value)} placeholder="ex: 830.001/2020" />
                 </div>
               </div>
-            )}
-          </div>
 
-          <div className="flex gap-2 justify-end">
-            <Button onClick={handleSearch} disabled={isLoading || isFetching} data-testid="button-search-anm">
-              {(isLoading || isFetching) ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Search className="w-4 h-4 mr-1.5" />}
-              Buscar
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {searched && (
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-            <CardTitle className="text-base">
-              Resultados
-              {results.length > 0 && (
-                <Badge variant="secondary" className="ml-2">
-                  {results.length} {totalResults > results.length ? `de ${totalResults}` : ""}
-                </Badge>
-              )}
-            </CardTitle>
-            {results.length > 0 && (
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={handleLoadAllGeometries} data-testid="button-load-geometries">
-                  <Layers className="w-4 h-4 mr-1" />
-                  <span className="hidden sm:inline">Carregar polígonos</span>
-                  <span className="sm:hidden">Polígonos</span>
-                </Button>
-                {geoCount > 0 && (
-                  <Button size="sm" onClick={() => setMapOpen(true)} data-testid="button-show-map">
-                    <MapIcon className="w-4 h-4 mr-1" /> Mapa
-                    <Badge variant="secondary" className="ml-1.5 bg-white/20 text-white">{geoCount}</Badge>
-                  </Button>
-                )}
-              </div>
-            )}
-          </CardHeader>
-          <CardContent className="p-0">
-            {isLoading ? (
-              <div className="p-4 space-y-3">
-                {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
-              </div>
-            ) : results.length === 0 ? (
-              <div className="p-8 text-center text-muted-foreground">
-                <Mountain className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                <p className="text-sm">Nenhum processo encontrado.</p>
-                <p className="text-xs mt-1">Ajuste os filtros e tente novamente.</p>
-              </div>
-            ) : (
-              <>
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <SortableTableHead className="whitespace-nowrap" sortKey="PROCESSO" sort={anmSort} onSort={toggleAnmSort}>Processo</SortableTableHead>
-                        <SortableTableHead className="whitespace-nowrap" sortKey="NOME" sort={anmSort} onSort={toggleAnmSort}>Titular</SortableTableHead>
-                        <SortableTableHead className="whitespace-nowrap" sortKey="FASE" sort={anmSort} onSort={toggleAnmSort}>Fase</SortableTableHead>
-                        <SortableTableHead className="whitespace-nowrap" sortKey="SUBS" sort={anmSort} onSort={toggleAnmSort}>Substância</SortableTableHead>
-                        <SortableTableHead className="whitespace-nowrap" sortKey="USO" sort={anmSort} onSort={toggleAnmSort}>Uso</SortableTableHead>
-                        <SortableTableHead className="whitespace-nowrap text-right" sortKey="AREA_HA" sort={anmSort} onSort={toggleAnmSort}>Área (ha)</SortableTableHead>
-                        <SortableTableHead className="whitespace-nowrap" sortKey="UF" sort={anmSort} onSort={toggleAnmSort}>UF</SortableTableHead>
-                        <SortableTableHead className="whitespace-nowrap" sortKey="ANO" sort={anmSort} onSort={toggleAnmSort}>Ano</SortableTableHead>
-                        <SortableTableHead className="whitespace-nowrap" sortKey="ULT_EVENTO" sort={anmSort} onSort={toggleAnmSort}>Últ. Evento</SortableTableHead>
-                        <TableHead className="whitespace-nowrap text-center">Ações</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {pagedResults.map((proc, idx) => {
-                        const isImported = !!importedMap[proc.PROCESSO];
-                        const importedAssetId = importedMap[proc.PROCESSO];
-                        return (
-                          <TableRow
-                            key={proc.PROCESSO || idx}
-                            data-testid={`row-processo-${proc.PROCESSO}`}
-                            className={cn(
-                              "cursor-pointer transition-colors",
-                              selectedProcesso === proc.PROCESSO && "bg-primary/5",
-                              isImported && "bg-green-50/50 dark:bg-green-900/10"
-                            )}
-                            onClick={() => handleRowClick(proc)}
-                          >
-                            <TableCell className="font-mono text-xs whitespace-nowrap">
-                              <div className="flex items-center gap-1.5">
-                                {loadingGeometries.has(proc.PROCESSO) && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
-                                {geometries[proc.PROCESSO] && <MapPin className="w-3 h-3 text-blue-500" />}
-                                {isImported && <Check className="w-3 h-3 text-green-600" />}
-                                {proc.PROCESSO}
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-xs max-w-[200px] truncate" title={proc.NOME}>{proc.NOME}</TableCell>
-                            <TableCell>
-                              <Badge variant="outline" className="text-[10px] whitespace-nowrap">{proc.FASE}</Badge>
-                            </TableCell>
-                            <TableCell className="text-xs whitespace-nowrap">{proc.SUBS}</TableCell>
-                            <TableCell className="text-xs whitespace-nowrap">{proc.USO || "-"}</TableCell>
-                            <TableCell className="text-xs text-right whitespace-nowrap">
-                              {proc.AREA_HA != null ? Number(proc.AREA_HA).toLocaleString("pt-BR", { maximumFractionDigits: 2 }) : "-"}
-                            </TableCell>
-                            <TableCell className="text-xs">{proc.UF}</TableCell>
-                            <TableCell className="text-xs">{proc.ANO || "-"}</TableCell>
-                            <TableCell className="text-xs max-w-[180px] truncate" title={proc.ULT_EVENTO}>{proc.ULT_EVENTO || "-"}</TableCell>
-                            <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                              <TooltipProvider>
-                                <div className="flex items-center justify-center gap-0.5">
-                                  {isImported ? (
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <Button variant="ghost" size="icon" className="h-7 w-7 text-green-600" data-testid={`button-view-asset-${proc.PROCESSO}`} onClick={() => window.open(`/ativos/${importedAssetId}`, '_blank', 'noopener,noreferrer')}>
-                                          <ExternalLink className="w-3.5 h-3.5" />
-                                        </Button>
-                                      </TooltipTrigger>
-                                      <TooltipContent>Abrir ativo em nova aba</TooltipContent>
-                                    </Tooltip>
-                                  ) : (
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <Button variant="ghost" size="icon" className="h-7 w-7" disabled={importMutation.isPending} onClick={() => importMutation.mutate(proc)} data-testid={`button-import-${proc.PROCESSO}`}>
-                                          <Download className="w-3.5 h-3.5" />
-                                        </Button>
-                                      </TooltipTrigger>
-                                      <TooltipContent>Importar como Ativo</TooltipContent>
-                                    </Tooltip>
-                                  )}
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600" onClick={() => handleOpenDealDialog(proc)} data-testid={`button-deal-${proc.PROCESSO}`}>
-                                        <Briefcase className="w-3.5 h-3.5" />
-                                      </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>Criar Deal no CRM</TooltipContent>
-                                  </Tooltip>
-                                </div>
-                              </TooltipProvider>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
-
-                {totalPages > 1 && (
-                  <div className="flex items-center justify-between gap-2 p-3 border-t">
-                    <span className="text-xs text-muted-foreground">Página {page + 1} de {totalPages}</span>
-                    <div className="flex gap-1">
-                      <Button variant="outline" size="icon" disabled={page === 0} onClick={() => setPage(p => p - 1)} data-testid="button-prev-page">
-                        <ChevronLeft className="w-4 h-4" />
-                      </Button>
-                      <Button variant="outline" size="icon" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)} data-testid="button-next-page">
-                        <ChevronRight className="w-4 h-4" />
-                      </Button>
+              <div>
+                <button type="button" onClick={() => setShowAdvanced(!showAdvanced)} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors" data-testid="button-toggle-advanced">
+                  {showAdvanced ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  Filtros avançados
+                  {hasAdvancedFilters && <Badge variant="secondary" className="text-[10px] ml-1">{[uso, ano, ultEvento].filter(Boolean).length}</Badge>}
+                </button>
+                {showAdvanced && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3 pt-3 border-t">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Uso</Label>
+                      <Select value={uso || "all"} onValueChange={v => setUso(v === "all" ? "" : v)}>
+                        <SelectTrigger data-testid="select-uso-anm"><SelectValue placeholder="Todos" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todos</SelectItem>
+                          {USOS_ANM.map(u => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Ano do Processo</Label>
+                      <Input data-testid="input-ano-anm" value={ano} onChange={e => setAno(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="ex: 2023" maxLength={4} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Último Evento (texto)</Label>
+                      <Input data-testid="input-ultevento-anm" value={ultEvento} onChange={e => setUltEvento(e.target.value)} placeholder="ex: INDEFERIMENTO, MULTA, DÉBITO" />
                     </div>
                   </div>
                 )}
-              </>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {!searched && (
-        <Card>
-          <CardContent className="p-8 text-center">
-            <Mountain className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-30" />
-            <h3 className="font-semibold text-lg mb-1">Consulte o Geoportal ANM</h3>
-            <p className="text-sm text-muted-foreground max-w-md mx-auto">
-              Use os atalhos de oportunidade acima ou os filtros para buscar processos minerários.
-              Importe como ativo e crie deals diretamente no pipeline.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      <Sheet open={mapOpen} onOpenChange={setMapOpen}>
-        <SheetContent side="right" className="w-full sm:w-[600px] md:w-[700px] lg:w-[800px] sm:max-w-none p-0 flex flex-col [&>button]:z-[1000]">
-          <SheetHeader className="px-4 pt-4 pb-2 shrink-0">
-            <SheetTitle className="flex items-center gap-2 text-base">
-              <MapPin className="w-4 h-4" />
-              Mapa de Processos
-              {geoCount > 0 && <Badge variant="secondary">{geoCount} polígono(s)</Badge>}
-            </SheetTitle>
-            {selectedProcesso && (
-              <div className="flex items-center gap-2">
-                <p className="text-xs text-muted-foreground">
-                  Selecionado: <span className="font-mono font-medium">{selectedProcesso}</span>
-                </p>
-                {importedMap[selectedProcesso] && (
-                  <Link href={`/ativos/${importedMap[selectedProcesso]}`}>
-                    <Badge variant="outline" className="text-[10px] text-green-600 border-green-300 cursor-pointer hover:bg-green-50">
-                      <ExternalLink className="w-3 h-3 mr-1" /> Ver ativo
-                    </Badge>
-                  </Link>
-                )}
               </div>
-            )}
-          </SheetHeader>
-          <div className="flex-1 min-h-0 px-2 pb-2">
-            <div className="h-full rounded-md overflow-hidden" style={{ minHeight: "calc(100vh - 100px)" }}>
-              {mapOpen && (
-                <LeafletMap geometries={geometries} selectedProcesso={selectedProcesso} onSelectProcesso={setSelectedProcesso} processDetails={processDetailsMap} />
+
+              <div className="flex gap-2 justify-end">
+                <Button onClick={handleSearch} disabled={isLoading || isFetching} data-testid="button-search-anm">
+                  {(isLoading || isFetching) ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Search className="w-4 h-4 mr-1.5" />}
+                  Buscar
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {searched && (
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+                <CardTitle className="text-base">
+                  Resultados
+                  {results.length > 0 && (
+                    <Badge variant="secondary" className="ml-2">
+                      {results.length} {totalResults > results.length ? `de ${totalResults}` : ""}
+                    </Badge>
+                  )}
+                </CardTitle>
+                {results.length > 0 && (
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={handleLoadAllGeometries} data-testid="button-load-geometries">
+                      <Layers className="w-4 h-4 mr-1" />
+                      <span className="hidden sm:inline">Carregar polígonos</span>
+                      <span className="sm:hidden">Polígonos</span>
+                    </Button>
+                  </div>
+                )}
+              </CardHeader>
+              <CardContent className="p-0">
+                {anmSearching ? (
+                  <div className="p-4 space-y-3">
+                    {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+                  </div>
+                ) : results.length === 0 ? (
+                  <div className="p-8 text-center text-muted-foreground">
+                    <Mountain className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                    <p className="text-sm">Nenhum processo encontrado.</p>
+                    <p className="text-xs mt-1">Ajuste os filtros e tente novamente.</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <SortableTableHead className="whitespace-nowrap" sortKey="PROCESSO" sort={anmSort} onSort={toggleAnmSort}>Processo</SortableTableHead>
+                            <SortableTableHead className="whitespace-nowrap" sortKey="NOME" sort={anmSort} onSort={toggleAnmSort}>Titular</SortableTableHead>
+                            <SortableTableHead className="whitespace-nowrap" sortKey="FASE" sort={anmSort} onSort={toggleAnmSort}>Fase</SortableTableHead>
+                            <SortableTableHead className="whitespace-nowrap" sortKey="SUBS" sort={anmSort} onSort={toggleAnmSort}>Substância</SortableTableHead>
+                            <SortableTableHead className="whitespace-nowrap" sortKey="USO" sort={anmSort} onSort={toggleAnmSort}>Uso</SortableTableHead>
+                            <SortableTableHead className="whitespace-nowrap text-right" sortKey="AREA_HA" sort={anmSort} onSort={toggleAnmSort}>Área (ha)</SortableTableHead>
+                            {showDistCol && <SortableTableHead className="whitespace-nowrap text-right" sortKey="DIST_KM" sort={anmSort} onSort={toggleAnmSort}>Dist. (km)</SortableTableHead>}
+                            <SortableTableHead className="whitespace-nowrap" sortKey="MUNICIPIO" sort={anmSort} onSort={toggleAnmSort}>
+                              <span className="inline-flex items-center gap-1">
+                                Município
+                                {resolvingMunicipios && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" data-testid="loader-municipios" />}
+                              </span>
+                            </SortableTableHead>
+                            <SortableTableHead className="whitespace-nowrap" sortKey="UF" sort={anmSort} onSort={toggleAnmSort}>UF</SortableTableHead>
+                            <SortableTableHead className="whitespace-nowrap" sortKey="ANO" sort={anmSort} onSort={toggleAnmSort}>Ano</SortableTableHead>
+                            <SortableTableHead className="whitespace-nowrap" sortKey="ULT_EVENTO" sort={anmSort} onSort={toggleAnmSort}>Últ. Evento</SortableTableHead>
+                            <TableHead className="whitespace-nowrap text-center">Ações</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {pagedResults.map((proc, idx) => {
+                            const isImported = !!importedMap[proc.PROCESSO];
+                            const importedAssetId = importedMap[proc.PROCESSO];
+                            return (
+                              <TableRow
+                                key={proc.PROCESSO || idx}
+                                data-testid={`row-processo-${proc.PROCESSO}`}
+                                className={cn(
+                                  "cursor-pointer transition-colors",
+                                  selectedProcesso === proc.PROCESSO && "bg-primary/5",
+                                  isImported && "bg-green-50/50 dark:bg-green-900/10"
+                                )}
+                                onClick={() => handleRowClick(proc)}
+                              >
+                                <TableCell className="font-mono text-xs whitespace-nowrap">
+                                  <div className="flex items-center gap-1.5">
+                                    {loadingGeometries.has(proc.PROCESSO) && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+                                    {geometries[proc.PROCESSO] && <MapPin className="w-3 h-3 text-blue-500" />}
+                                    {isImported && <Check className="w-3 h-3 text-green-600" />}
+                                    {proc.PROCESSO}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="text-xs max-w-[200px] truncate" title={proc.NOME}>{proc.NOME}</TableCell>
+                                <TableCell>
+                                  <Badge variant="outline" className="text-[10px] whitespace-nowrap">{proc.FASE}</Badge>
+                                </TableCell>
+                                <TableCell className="text-xs whitespace-nowrap">{proc.SUBS}</TableCell>
+                                <TableCell className="text-xs whitespace-nowrap">{proc.USO || "-"}</TableCell>
+                                <TableCell className="text-xs text-right whitespace-nowrap">
+                                  {proc.AREA_HA != null ? Number(proc.AREA_HA).toLocaleString("pt-BR", { maximumFractionDigits: 2 }) : "-"}
+                                </TableCell>
+                                {showDistCol && (
+                                  <TableCell className="text-xs text-right whitespace-nowrap" data-testid={`text-dist-${proc.PROCESSO}`}>
+                                    {proc.DIST_KM != null ? Number(proc.DIST_KM).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) : "-"}
+                                  </TableCell>
+                                )}
+                                <TableCell className="text-xs whitespace-nowrap max-w-[160px] truncate" data-testid={`text-municipio-${proc.PROCESSO}`} title={municipiosMap[proc.PROCESSO] || undefined}>
+                                  {municipiosMap[proc.PROCESSO] === undefined
+                                    ? <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
+                                    : (municipiosMap[proc.PROCESSO] || "-")}
+                                </TableCell>
+                                <TableCell className="text-xs">{proc.UF}</TableCell>
+                                <TableCell className="text-xs">{proc.ANO || "-"}</TableCell>
+                                <TableCell className="text-xs max-w-[180px] truncate" title={proc.ULT_EVENTO}>{proc.ULT_EVENTO || "-"}</TableCell>
+                                <TableCell className="text-center" onClick={e => e.stopPropagation()}>
+                                  <TooltipProvider>
+                                    <div className="flex items-center justify-center gap-0.5">
+                                      {isImported ? (
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button variant="ghost" size="icon" className="h-7 w-7 text-green-600" data-testid={`button-view-asset-${proc.PROCESSO}`} onClick={() => window.open(`/ativos/${importedAssetId}`, '_blank', 'noopener,noreferrer')}>
+                                              <ExternalLink className="w-3.5 h-3.5" />
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>Abrir ativo em nova aba</TooltipContent>
+                                        </Tooltip>
+                                      ) : (
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button variant="ghost" size="icon" className="h-7 w-7" disabled={importMutation.isPending} onClick={() => importMutation.mutate(proc)} data-testid={`button-import-${proc.PROCESSO}`}>
+                                              <Download className="w-3.5 h-3.5" />
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>Importar como Ativo</TooltipContent>
+                                        </Tooltip>
+                                      )}
+                                    </div>
+                                  </TooltipProvider>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+
+                    {totalPages > 1 && (
+                      <div className="flex items-center justify-between gap-2 p-3 border-t">
+                        <span className="text-xs text-muted-foreground">Página {page + 1} de {totalPages}</span>
+                        <div className="flex gap-1">
+                          <Button variant="outline" size="icon" disabled={page === 0} onClick={() => setPage(p => p - 1)} data-testid="button-prev-page">
+                            <ChevronLeft className="w-4 h-4" />
+                          </Button>
+                          <Button variant="outline" size="icon" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)} data-testid="button-next-page">
+                            <ChevronRight className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {!searched && (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <Mountain className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-30" />
+                <h3 className="font-semibold text-lg mb-1">Consulte o Geoportal ANM</h3>
+                <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                  Use os atalhos de oportunidade acima ou os filtros para buscar processos minerários.
+                  Importe processos como ativos para consultar os dados da jazida.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
+
+      {mapFullscreen && (
+        <div className="fixed inset-0 z-50 bg-background flex flex-col" data-testid="map-fullscreen-anm">
+          <div className="flex items-center justify-between px-4 py-2 border-b bg-background shrink-0">
+            <div className="flex items-center gap-3">
+              <h2 className="text-base font-semibold flex items-center gap-2">
+                <MapPin className="w-4 h-4" />
+                Mapa de Processos
+              </h2>
+              {geoCount > 0 && <Badge variant="secondary">{geoCount} polígono(s)</Badge>}
+              {selectedProcesso && (
+                <span className="text-xs text-muted-foreground">
+                  Selecionado: <span className="font-mono font-medium">{selectedProcesso}</span>
+                </span>
+              )}
+              {selectedProcesso && importedMap[selectedProcesso] && (
+                <Link href={`/ativos/${importedMap[selectedProcesso]}`}>
+                  <Badge variant="outline" className="text-[10px] text-green-600 border-green-300 cursor-pointer hover:bg-green-50">
+                    <ExternalLink className="w-3 h-3 mr-1" /> Ver ativo
+                  </Badge>
+                </Link>
               )}
             </div>
+            <Button variant="outline" size="sm" onClick={() => setMapFullscreen(false)} data-testid="button-close-fullscreen-map">
+              <X className="w-4 h-4 mr-1" /> Fechar
+            </Button>
           </div>
-        </SheetContent>
-      </Sheet>
+          <div className="flex-1 min-h-0">
+            <LeafletMap
+              geometries={geometries}
+              selectedProcesso={selectedProcesso}
+              onSelectProcesso={setSelectedProcesso}
+              processDetails={processDetailsMap}
+            />
+          </div>
+        </div>
+      )}
 
-      <CreateDealDialog
-        open={dealDialogOpen}
-        onOpenChange={setDealDialogOpen}
-        processo={dealProcesso}
-        importedAssetId={dealProcesso ? importedMap[dealProcesso.PROCESSO] : undefined}
-      />
+      <Dialog open={!!expandedProcesso} onOpenChange={(open) => { if (!open) { setExpandedProcesso(null); setSelectedProcesso(null); } }}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto" data-testid="dialog-detalhe-anm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Mountain className="w-5 h-5 text-orange-500" />
+              Detalhes do Processo
+              {expandedProcesso && (
+                <span className="text-xs font-normal text-muted-foreground ml-2 font-mono">
+                  {expandedProcesso.PROCESSO}
+                </span>
+              )}
+            </DialogTitle>
+            <DialogDescription className="sr-only">
+              Detalhes do processo minerário selecionado
+            </DialogDescription>
+          </DialogHeader>
+
+          {expandedProcesso && (
+            <div className="grid md:grid-cols-2 gap-6">
+              <div className="min-h-[400px] relative rounded-lg overflow-hidden border">
+                {loadingGeometries.has(expandedProcesso.PROCESSO) ? (
+                  <div className="flex items-center justify-center h-full gap-3">
+                    <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                    <span className="text-muted-foreground">Carregando geometria...</span>
+                  </div>
+                ) : geometries[expandedProcesso.PROCESSO] ? (
+                  <LeafletMap
+                    geometries={{ [expandedProcesso.PROCESSO]: geometries[expandedProcesso.PROCESSO] }}
+                    selectedProcesso={expandedProcesso.PROCESSO}
+                    onSelectProcesso={() => {}}
+                    processDetails={processDetailsMap}
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-full text-muted-foreground">
+                    <div className="text-center space-y-2">
+                      <MapIcon className="w-10 h-10 mx-auto opacity-30" />
+                      <p className="text-sm">Geometria não disponível</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Processo</p>
+                    <p className="text-sm font-mono font-medium">{expandedProcesso.PROCESSO}</p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Fase</p>
+                    <Badge variant="outline" className="text-xs">{expandedProcesso.FASE || "N/A"}</Badge>
+                  </div>
+                  <div className="space-y-0.5 col-span-2">
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Titular</p>
+                    <p className="text-sm">{expandedProcesso.NOME || "N/A"}</p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Substância</p>
+                    <p className="text-sm">{expandedProcesso.SUBS || "N/A"}</p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Uso</p>
+                    <p className="text-sm">{expandedProcesso.USO || "N/A"}</p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Área</p>
+                    <p className="text-sm">{expandedProcesso.AREA_HA != null ? `${Number(expandedProcesso.AREA_HA).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} ha` : "N/A"}</p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">UF</p>
+                    <p className="text-sm">{expandedProcesso.UF || "N/A"}</p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Ano</p>
+                    <p className="text-sm">{expandedProcesso.ANO || "N/A"}</p>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Último Evento</p>
+                    <p className="text-sm">{expandedProcesso.ULT_EVENTO || "N/A"}</p>
+                  </div>
+                  {expandedProcesso.DSProcesso && (
+                    <div className="space-y-0.5 col-span-2">
+                      <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Descrição</p>
+                      <p className="text-sm">{expandedProcesso.DSProcesso}</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t pt-3 flex flex-wrap gap-2">
+                  {!importedMap[expandedProcesso.PROCESSO] ? (
+                    <Button variant="outline" size="sm" disabled={importMutation.isPending} onClick={() => importMutation.mutate(expandedProcesso)} data-testid="button-import-dialog">
+                      {importMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Download className="w-3.5 h-3.5 mr-1" />}
+                      Importar Ativo
+                    </Button>
+                  ) : (
+                    <Button variant="outline" size="sm" className="text-green-600" onClick={() => window.open(`/ativos/${importedMap[expandedProcesso.PROCESSO]}`, '_blank', 'noopener,noreferrer')} data-testid="button-view-asset-dialog">
+                      <ExternalLink className="w-3.5 h-3.5 mr-1" /> Ver Ativo
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+
     </div>
   );
 }

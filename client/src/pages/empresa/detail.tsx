@@ -11,47 +11,18 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Building2, MapPin, Briefcase, Phone, Mail, Users, Loader2, UserPlus,
-  ExternalLink, FileText, Globe, Calendar, ArrowLeft, Hash, AlertCircle,
-  Network, Download, Eye, Sparkles, Search, Code, Tag, Share2, CheckCircle2,
-  Clock, Plus, Trash2, Save, BookOpen, TriangleAlert, Target, Layers, Brain,
-  ClipboardCheck, Linkedin, Instagram, Facebook, Youtube, Twitter, TrendingUp,
-  Shield, Zap, UserCheck,
-} from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
-import { Link } from "wouter";
-import { cn } from "@/lib/utils";
+import { Building2, MapPin, Briefcase, Phone, Mail, Users, Loader2, ExternalLink, FileText, Globe, Calendar, ArrowLeft, AlertCircle, Network, Download, Eye, Sparkles, Search, Share2, CheckCircle2, BookOpen, Layers, Brain, Linkedin, Instagram, Facebook, Youtube, Twitter, TrendingUp, Shield, Zap, UserCheck, Pickaxe } from "lucide-react";
 
 import RelationshipGraph from "./relationships-graph";
 import EnrichmentPanel from "./enrichment-panel";
 import ContactVerification from "./contact-verification";
-import type { CompanyWithLead, Socio, SocioCompany, RelationshipData } from "./relationships-graph";
-
-const LEAD_STATUS_LABELS: Record<string, string> = {
-  new: "Novo", queued: "Na fila", in_progress: "Em progresso",
-  contacted: "Contactado", qualified: "Qualificado", disqualified: "Descartado",
-};
-
-const LEAD_STATUS_COLORS: Record<string, string> = {
-  new: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
-  queued: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400",
-  in_progress: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400",
-  contacted: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400",
-  qualified: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
-  disqualified: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
-};
+import type { SocioCompany, RelationshipData } from "./relationships-graph";
 
 export default function EmpresaDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [creatingLead, setCreatingLead] = useState(false);
   const [confirmExpand, setConfirmExpand] = useState(false);
   const [expandLoading, setExpandLoading] = useState(false);
   const [expandedCompanies, setExpandedCompanies] = useState<Record<string, SocioCompany[]>>({});
@@ -70,24 +41,6 @@ export default function EmpresaDetailPage() {
     verifiedAt?: string; verifiedBy?: string;
   }>({});
   const [savingVerified, setSavingVerified] = useState(false);
-  const [perfilComprador, setPerfilComprador] = useState<{
-    buyerType: string;
-    cnaeInteresse: string;
-    regioesInteresse: string;
-    prazoDecisao: string;
-    capacidadeAquisicao: string;
-    dealsAnteriores: boolean;
-    observacoes: string;
-  }>({
-    buyerType: "nao_definido",
-    cnaeInteresse: "",
-    regioesInteresse: "",
-    prazoDecisao: "",
-    capacidadeAquisicao: "",
-    dealsAnteriores: false,
-    observacoes: "",
-  });
-  const [savingPerfil, setSavingPerfil] = useState(false);
   const [cnpjaLoading, setCnpjaLoading] = useState(false);
   const [sicorData, setSicorData] = useState<any>(null);
   const [sicorLoading, setSicorLoading] = useState(false);
@@ -116,7 +69,7 @@ export default function EmpresaDetailPage() {
     }
   };
 
-  const { data, isLoading, error } = useQuery<RelationshipData>({
+  const { data, isLoading, error, isError } = useQuery<RelationshipData>({
     queryKey: [`/api/companies/${id}/relationships`],
     enabled: !!id,
   });
@@ -125,33 +78,17 @@ export default function EmpresaDetailPage() {
   const socios = data?.socios || [];
 
   const { data: todosAtivos = [] } = useQuery<any[]>({
-    queryKey: ["/api/matching/assets"],
-    queryFn: () => apiRequest("GET", "/api/matching/assets").then(r => r.json()),
+    queryKey: ["/api/assets"],
+    queryFn: () => apiRequest("GET", "/api/assets").then(r => r.json()),
   });
 
   const ativosVinculados = (todosAtivos as any[]).filter(
     (a: any) => a.linkedCompanyId === Number(id)
   );
 
-  const companyDeals: any[] = (data as any)?.deals || [];
-
   const sociosWithTaxId = socios.filter(s => s.taxId);
   const creditCost = sociosWithTaxId.length;
   const alreadyExpanded = Object.keys(expandedCompanies).length > 0;
-
-  const createLeadMutation = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/companies/${id}/lead`),
-    onSuccess: () => {
-      toast({ title: "Lead criado com sucesso!" });
-      queryClient.invalidateQueries({ queryKey: [`/api/companies/${id}/relationships`] });
-      queryClient.invalidateQueries({ queryKey: ["/api/companies/with-leads"] });
-    },
-    onError: (err: any) => {
-      queryClient.invalidateQueries({ queryKey: [`/api/companies/${id}/relationships`] });
-      toast({ title: err?.message === "409" ? "Esta empresa já possui um lead" : "Erro ao criar lead", variant: "destructive" });
-    },
-    onSettled: () => setCreatingLead(false),
-  });
 
   const enrichMutation = useMutation({
     mutationFn: () => apiRequest("POST", `/api/companies/${id}/enrich`),
@@ -162,7 +99,7 @@ export default function EmpresaDetailPage() {
       }
       setEnrichmentResult(enrichResult);
       queryClient.invalidateQueries({ queryKey: [`/api/companies/${id}/relationships`] });
-      queryClient.invalidateQueries({ queryKey: ["/api/companies/with-leads"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/companies/catalogo"] });
       const aiLabel = data.aiEnrichment
         ? ` + IA (${data.aiEnrichment.decisionMakers?.length || 0} decisores encontrados)`
         : "";
@@ -185,10 +122,7 @@ export default function EmpresaDetailPage() {
       } else {
         setVerifiedContacts({});
       }
-      const perfil = (data.company as any).enrichmentData?.perfilComprador;
-      if (perfil && typeof perfil === "object") {
-        setPerfilComprador(prev => ({ ...prev, ...perfil }));
-      }
+
     }
   }, [data]);
 
@@ -212,30 +146,6 @@ export default function EmpresaDetailPage() {
     },
     onError: () => toast({ title: "Erro ao salvar contatos verificados", variant: "destructive" }),
     onSettled: () => setSavingVerified(false),
-  });
-
-  const savePerfilMutation = useMutation({
-    mutationFn: (perfil: typeof perfilComprador) =>
-      apiRequest("PATCH", `/api/companies/${id}`, {
-        enrichmentData: {
-          ...((company as any)?.enrichmentData || {}),
-          perfilComprador: perfil,
-          buyerType: perfil.buyerType,
-          cnaeInteresse: perfil.cnaeInteresse
-            ? perfil.cnaeInteresse.split(",").map((s: string) => s.trim()).filter(Boolean)
-            : [],
-          regioesInteresse: perfil.regioesInteresse
-            ? perfil.regioesInteresse.split(",").map((s: string) => s.trim()).filter(Boolean)
-            : [],
-        },
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/companies/${id}/relationships`] });
-      queryClient.invalidateQueries({ queryKey: ["/api/companies/with-leads"] });
-      toast({ title: "Perfil de comprador salvo!", description: "Esta empresa agora aparece no matching reverso." });
-    },
-    onError: () => toast({ title: "Erro ao salvar perfil", variant: "destructive" }),
-    onSettled: () => setSavingPerfil(false),
   });
 
   const handleSaveVerified = () => {
@@ -343,7 +253,7 @@ export default function EmpresaDetailPage() {
     try {
       await apiRequest("POST", `/api/cnpj/${clickedExtCompany.taxId}/import`);
       toast({ title: `${clickedExtCompany.legalName} importada com sucesso!` });
-      queryClient.invalidateQueries({ queryKey: ["/api/companies/with-leads"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/companies/catalogo"] });
       setClickedExtCompany(null);
     } catch (e: any) {
       if (e?.message?.includes("já possui") || e?.status === 409) {
@@ -364,12 +274,13 @@ export default function EmpresaDetailPage() {
     );
   }
 
-  if (error || !company) {
+  if (isError || error || !company) {
     return (
-      <div className="p-4 md:p-8 max-w-2xl mx-auto text-center space-y-4 pt-16 md:pt-20">
+      <div className="p-4 md:p-8 max-w-2xl mx-auto text-center space-y-4 pt-16 md:pt-20" data-testid="error-empresa-detail">
         <AlertCircle className="w-12 h-12 text-destructive mx-auto" />
         <p className="text-lg font-medium">Empresa não encontrada</p>
-        <Button variant="outline" onClick={() => navigate("/empresas")} className="gap-2">
+        <p className="text-sm text-muted-foreground">Não foi possível carregar os dados. Tente novamente.</p>
+        <Button variant="outline" onClick={() => navigate("/empresas")} className="gap-2" data-testid="button-back-empresas">
           <ArrowLeft className="w-4 h-4" /> Voltar para Empresas
         </Button>
       </div>
@@ -401,19 +312,7 @@ export default function EmpresaDetailPage() {
             <div className="flex items-center gap-2 flex-wrap">
               {company.porte && <Badge variant="outline">{company.porte}</Badge>}
               <AiCompanySummaryButton companyId={company.id} />
-              {company.lead ? (
-                <>
-                  <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${LEAD_STATUS_COLORS[company.lead.status] || LEAD_STATUS_COLORS.new}`}>
-                    Lead: {LEAD_STATUS_LABELS[company.lead.status] || company.lead.status}
-                  </span>
-                </>
-              ) : (
-                <Button size="sm" onClick={() => { setCreatingLead(true); createLeadMutation.mutate(); }}
-                  disabled={creatingLead} className="gap-1.5" data-testid="button-criar-lead">
-                  {creatingLead ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
-                  Criar Lead
-                </Button>
-              )}
+
             </div>
           </div>
         </div>
@@ -673,12 +572,10 @@ export default function EmpresaDetailPage() {
               if (!ai) return null;
               const fp = ai.financialProfile;
               const ci = ai.competitiveIntel;
-              const ms = ai.matchingSignals;
               const bi = ai.businessIntel;
               const lc = ai.legalCompliance;
               const hasContent = fp?.sector || fp?.mainActivities?.length || fp?.foundedYear ||
                 ci?.mainCompetitors?.length || ci?.marketPosition ||
-                ms?.buyerPotential || ms?.expansionSignals?.length ||
                 bi?.length || lc?.certifications?.length;
               if (!hasContent) return null;
               return (
@@ -726,30 +623,7 @@ export default function EmpresaDetailPage() {
                       </div>
                     )}
 
-                    {(ms?.buyerPotential || ms?.expansionSignals?.length || ms?.interestAreas?.length) && (
-                      <div>
-                        <p className="text-xs font-semibold text-muted-foreground mb-1.5 flex items-center gap-1"><Target className="w-3 h-3" /> Sinais de Negócio</p>
-                        <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-                          {ms.buyerPotential && <><dt className="text-muted-foreground">Potencial comprador</dt><dd className="font-medium capitalize">{ms.buyerPotential}</dd></>}
-                          {ms.investmentCapacity && <><dt className="text-muted-foreground">Capacidade invest.</dt><dd className="font-medium">{ms.investmentCapacity}</dd></>}
-                        </dl>
-                        {ms.expansionSignals?.length > 0 && (
-                          <div className="mt-1.5">
-                            <p className="text-[10px] text-muted-foreground mb-1">Sinais de expansão:</p>
-                            <ul className="text-xs space-y-0.5 list-disc list-inside text-muted-foreground">
-                              {ms.expansionSignals.map((s: string, i: number) => <li key={i}>{s}</li>)}
-                            </ul>
-                          </div>
-                        )}
-                        {ms.interestAreas?.length > 0 && (
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {ms.interestAreas.map((a: string, i: number) => (
-                              <Badge key={i} variant="secondary" className="text-[10px] py-0 px-1.5">{a}</Badge>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
+
 
                     {lc?.certifications?.length > 0 && (
                       <div>
@@ -786,175 +660,13 @@ export default function EmpresaDetailPage() {
               );
             })()}
 
-            {company.lead && (
-              <Card className="border-primary/20 bg-primary/[0.02]">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <Hash className="w-4 h-4 text-primary" /> Lead Vinculado
-                    </CardTitle>
-                    <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${LEAD_STATUS_COLORS[company.lead.status] || LEAD_STATUS_COLORS.new}`}>
-                      {LEAD_STATUS_LABELS[company.lead.status] || company.lead.status}
-                    </span>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <dl className="divide-y divide-border/60">
-                    <div className="flex items-center justify-between py-2.5">
-                      <dt className="text-xs text-muted-foreground">Score de qualificação</dt>
-                      <dd className="flex items-center gap-2">
-                        <div className="h-1.5 w-20 rounded-full bg-muted overflow-hidden">
-                          <div className="h-full rounded-full bg-primary" style={{ width: `${company.lead.score || 0}%` }} />
-                        </div>
-                        <span className="text-sm font-bold">{company.lead.score ?? 0}</span>
-                      </dd>
-                    </div>
-                    {company.lead.source && (
-                      <div className="flex items-center justify-between py-2.5">
-                        <dt className="text-xs text-muted-foreground">Fonte</dt>
-                        <dd className="text-sm">{company.lead.source}</dd>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between py-2.5">
-                      <dt className="text-xs text-muted-foreground">ID do Lead</dt>
-                      <dd className="font-mono text-xs text-muted-foreground">#{company.lead.id}</dd>
-                    </div>
-                  </dl>
-                </CardContent>
-              </Card>
-            )}
+
 
             {/* ── PERFIL DE COMPRADOR ESTRATÉGICO (RESUMO READ-ONLY) ── */}
-            <Card className={perfilComprador.buyerType === "estrategico" || perfilComprador.buyerType === "financeiro"
-              ? "border-primary/30 dark:border-primary/40"
-              : ""}>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Target className="w-4 h-4 text-muted-foreground" />
-                  Perfil de Comprador / Investidor
-                  {(perfilComprador.buyerType === "estrategico" || perfilComprador.buyerType === "financeiro") && (
-                    <Badge variant="outline" className={
-                      perfilComprador.buyerType === "estrategico"
-                        ? "text-xs bg-blue-50 text-blue-700 border-blue-200 ml-auto"
-                        : "text-xs bg-green-50 text-green-700 border-green-200 ml-auto"
-                    } data-testid="badge-buyer-type">
-                      {perfilComprador.buyerType === "estrategico" ? "Comprador estratégico" : "Investidor financeiro"}
-                    </Badge>
-                  )}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Tipo de comprador</Label>
-                  <Select
-                    value={perfilComprador.buyerType}
-                    onValueChange={v => setPerfilComprador(p => ({ ...p, buyerType: v }))}
-                  >
-                    <SelectTrigger className="h-8 text-sm" data-testid="select-buyer-type">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="nao_definido">Não definido</SelectItem>
-                      <SelectItem value="financeiro">Investidor financeiro (fundo, family office, banco)</SelectItem>
-                      <SelectItem value="estrategico">Comprador estratégico (empresa operacional)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
 
-                {(perfilComprador.buyerType === "estrategico" || perfilComprador.buyerType === "financeiro") && (
-                  <div className="space-y-3 pt-1">
-                    {(() => {
-                      const fields: { label: string; value: any }[] = [];
-                      if (perfilComprador.regioesInteresse) fields.push({ label: "Regiões", value: perfilComprador.regioesInteresse });
-                      if (perfilComprador.cnaeInteresse) fields.push({ label: "CNAEs", value: perfilComprador.cnaeInteresse });
-                      if (perfilComprador.prazoDecisao) fields.push({ label: "Prazo", value: perfilComprador.prazoDecisao.replace(/_/g, " ") });
-                      if (perfilComprador.capacidadeAquisicao) fields.push({ label: "Capacidade", value: `R$ ${Number(perfilComprador.capacidadeAquisicao).toLocaleString("pt-BR")}` });
-                      if (perfilComprador.dealsAnteriores) fields.push({ label: "Aquisições anteriores", value: "Sim" });
-                      if (perfilComprador.observacoes) fields.push({ label: "Obs", value: perfilComprador.observacoes });
-
-                      const totalFields = 18;
-                      const filledCount = fields.length + (perfilComprador.buyerType !== "nao_definido" ? 1 : 0);
-                      const progress = Math.round((filledCount / totalFields) * 100);
-
-                      return (
-                        <>
-                          <div className="flex items-center gap-2">
-                            <div className="h-2 flex-1 bg-muted rounded-full overflow-hidden">
-                              <div className={cn("h-full rounded-full transition-all",
-                                progress >= 60 ? "bg-green-500" : progress >= 30 ? "bg-yellow-500" : "bg-red-400"
-                              )} style={{ width: `${progress}%` }} />
-                            </div>
-                            <span className="text-xs font-medium tabular-nums text-muted-foreground">{progress}%</span>
-                          </div>
-                          <p className="text-[10px] text-muted-foreground">
-                            Onboarding {progress}% completo — qualifique esta empresa no CRM para melhorar os matchings.
-                          </p>
-
-                          {fields.length > 0 && (
-                            <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-                              {fields.map(f => (
-                                <div key={f.label}>
-                                  <dt className="text-muted-foreground">{f.label}</dt>
-                                  <dd className="font-medium truncate">{f.value}</dd>
-                                </div>
-                              ))}
-                            </dl>
-                          )}
-                        </>
-                      );
-                    })()}
-
-                    <div className="flex gap-2 pt-1">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="gap-1.5 flex-1"
-                        onClick={() => navigate(`/crm/onboarding?empresa=${company.id}`)}
-                        data-testid="button-qualificar-crm"
-                      >
-                        <ClipboardCheck className="w-3.5 h-3.5" /> Qualificar no CRM
-                      </Button>
-                      <Button
-                        size="sm"
-                        className="gap-1.5"
-                        disabled={savingPerfil || savePerfilMutation.isPending}
-                        onClick={() => {
-                          setSavingPerfil(true);
-                          savePerfilMutation.mutate(perfilComprador);
-                        }}
-                        data-testid="button-salvar-perfil"
-                      >
-                        {(savingPerfil || savePerfilMutation.isPending)
-                          ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Salvando...</>
-                          : <><Save className="w-3.5 h-3.5" /> Salvar</>
-                        }
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {perfilComprador.buyerType === "nao_definido" && (
-                  <div className="flex justify-end pt-1">
-                    <Button
-                      size="sm"
-                      className="gap-1.5"
-                      disabled={savingPerfil || savePerfilMutation.isPending}
-                      onClick={() => {
-                        setSavingPerfil(true);
-                        savePerfilMutation.mutate(perfilComprador);
-                      }}
-                      data-testid="button-salvar-perfil"
-                    >
-                      {(savingPerfil || savePerfilMutation.isPending)
-                        ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Salvando...</>
-                        : <><Save className="w-3.5 h-3.5" /> Salvar perfil</>
-                      }
-                    </Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
           </div>
+
+          {company.cnpj && <ScmProcessosSection cnpj={company.cnpj} />}
           </div>
         </TabsContent>
 
@@ -1045,7 +757,7 @@ export default function EmpresaDetailPage() {
 
           {alreadyExpanded && (
             <p className="text-xs text-center text-muted-foreground">
-              Nós amarelos = outras empresas dos sócios · Clique para importar como lead · Cache cnpja.com 30 dias
+              Nós amarelos = outras empresas dos sócios · Clique para importar como empresa · Cache cnpja.com 30 dias
             </p>
           )}
         </TabsContent>
@@ -1059,10 +771,10 @@ export default function EmpresaDetailPage() {
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex items-center gap-3">
-                {company?.enrichedAt ? (
+                {(company as any)?.enrichedAt ? (
                   <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400" data-testid="badge-enriched-at">
                     <CheckCircle2 className="w-3 h-3 mr-1" />
-                    Enriquecido em {new Date(company.enrichedAt).toLocaleDateString("pt-BR")}
+                    Enriquecido em {new Date((company as any).enrichedAt).toLocaleDateString("pt-BR")}
                   </Badge>
                 ) : (
                   <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400" data-testid="badge-never-enriched">
@@ -1091,7 +803,7 @@ export default function EmpresaDetailPage() {
                       if (cnpjaData.endereco || cnpjaData.address) patchBody.address = cnpjaData.endereco || cnpjaData.address;
                       if (cnpjaData.cnaePrincipal || cnpjaData.mainActivity) patchBody.cnaePrincipal = cnpjaData.cnaePrincipal?.codigo || cnpjaData.mainActivity?.id || cnpjaData.cnaePrincipal;
                       patchBody.enrichedAt = new Date().toISOString();
-                      await apiRequest("PATCH", `/api/crm/companies/${id}`, patchBody);
+                      await apiRequest("PATCH", `/api/companies/${id}`, patchBody);
                       queryClient.invalidateQueries({ queryKey: [`/api/companies/${id}/relationships`] });
                       toast({ title: "Dados atualizados via CNPJA" });
                     } catch {
@@ -1108,48 +820,7 @@ export default function EmpresaDetailPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Briefcase className="w-4 h-4" /> Histórico de Negociações
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {companyDeals.length === 0 ? (
-                <p className="text-sm text-muted-foreground" data-testid="text-sem-deals">Nenhuma negociação registrada</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b text-xs text-muted-foreground">
-                        <th className="text-left py-2 px-2 font-medium">Título</th>
-                        <th className="text-left py-2 px-2 font-medium">Pipeline</th>
-                        <th className="text-left py-2 px-2 font-medium">Estágio</th>
-                        <th className="text-right py-2 px-2 font-medium">Valor</th>
-                        <th className="text-right py-2 px-2 font-medium">Data</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {companyDeals.map((d: any) => (
-                        <tr key={d.id} className="border-b last:border-0 hover:bg-muted/30 cursor-pointer"
-                          onClick={() => navigate("/crm")} data-testid={`row-deal-${d.id}`}>
-                          <td className="py-2 px-2 font-medium">{d.title || "\u2014"}</td>
-                          <td className="py-2 px-2">{d.pipelineType || "\u2014"}</td>
-                          <td className="py-2 px-2">{d.stageName || d.stageId || "\u2014"}</td>
-                          <td className="py-2 px-2 text-right">
-                            {d.value ? Number(d.value).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "\u2014"}
-                          </td>
-                          <td className="py-2 px-2 text-right">
-                            {d.createdAt ? new Date(d.createdAt).toLocaleDateString("pt-BR") : "\u2014"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+
 
           {company?.cnaePrincipal && String(company.cnaePrincipal).startsWith("01") && (
             <Card>
@@ -1367,7 +1038,7 @@ export default function EmpresaDetailPage() {
               data-testid="button-importar-ext-company"
             >
               {importingExt ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-              Importar como Lead
+              Importar Empresa
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1436,5 +1107,82 @@ function AiCompanySummaryButton({ companyId }: { companyId: number }) {
         </AlertDialog>
       )}
     </>
+  );
+}
+
+function ScmProcessosSection({ cnpj }: { cnpj: string }) {
+  const cleanCnpj = cnpj.replace(/\D/g, "");
+  const { data: processos, isLoading, isError } = useQuery<any[]>({
+    queryKey: ["/api/scm/titular", cleanCnpj],
+    queryFn: () => apiRequest("GET", `/api/scm/titular/${cleanCnpj}`).then(r => r.json()),
+    enabled: cleanCnpj.length > 0,
+  });
+
+  if (cleanCnpj.length === 0) return null;
+
+  const fmtHa = (v: number | null | undefined) =>
+    v == null ? null : `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(v)} ha`;
+
+  return (
+    <Card data-testid="card-scm-processos">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Pickaxe className="w-4 h-4 text-muted-foreground" /> Processos Minerários — Titular (SCM/ANM)
+          {Array.isArray(processos) && processos.length > 0 && (
+            <Badge variant="outline" className="text-xs font-normal">{processos.length}</Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {isLoading ? (
+          <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" /> Consultando base SCM local...
+          </div>
+        ) : isError ? (
+          <p className="text-sm text-muted-foreground py-2">
+            Não foi possível consultar a base SCM. Tente novamente mais tarde.
+          </p>
+        ) : !processos || processos.length === 0 ? (
+          <div className="py-8 text-center space-y-2" data-testid="empty-scm-processos">
+            <Pickaxe className="w-8 h-8 mx-auto text-muted-foreground/30" />
+            <p className="text-sm font-medium text-muted-foreground">Nenhum processo minerário encontrado</p>
+            <p className="text-xs text-muted-foreground/70 max-w-md mx-auto">
+              Esta empresa não figura como titular em nenhum processo da base SCM local.
+              A base é alimentada conforme processos são consultados no SCM da ANM.
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-border/60">
+            {processos.map((p: any) => (
+              <div
+                key={p.id}
+                className="py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4"
+                data-testid={`row-scm-processo-${p.id}`}
+              >
+                <div className="flex items-center gap-2 sm:w-44 shrink-0">
+                  <span className="font-mono font-semibold text-sm">{p.processo}</span>
+                  {p.statusAtivo === false && (
+                    <Badge variant="outline" className="text-[10px] text-muted-foreground">Inativo</Badge>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap text-xs">
+                  {p.fase && (
+                    <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 border-0">
+                      {p.fase}
+                    </Badge>
+                  )}
+                  {p.tipoRequerimento && <Badge variant="outline" className="font-normal">{p.tipoRequerimento}</Badge>}
+                  {p.uf && <Badge variant="outline" className="font-normal">{p.uf}</Badge>}
+                </div>
+                <div className="flex items-center gap-3 text-xs text-muted-foreground sm:ml-auto shrink-0">
+                  {fmtHa(p.areaHa) && <span>{fmtHa(p.areaHa)}</span>}
+                  {p.dataProtocolo && <span>Protocolo: {p.dataProtocolo}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

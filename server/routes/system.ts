@@ -1,9 +1,9 @@
 import type { Express } from "express";
 import type { IStorage } from "../storage";
 import { api } from "@shared/routes";
-import { rawIngests, deals, assets, leads, matchSuggestions, pipelineStages, portalInquiries, errorReports } from "@shared/schema";
+import { rawIngests, assets, errorReports } from "@shared/schema";
 import { z } from "zod";
-import { sql, count, sum, and, eq, gte, lt, desc } from "drizzle-orm";
+import { sql, count, and, eq, desc } from "drizzle-orm";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -128,8 +128,6 @@ export function registerSystemRoutes(app: Express, storage: IStorage) {
         portal_why_bullets: all.portal_why_bullets || null,
         portal_accent_color: all.portal_accent_color || null,
         portal_contact: all.portal_contact || null,
-        showcase_phone: all.showcase_phone || "",
-        showcase_whatsapp: all.showcase_whatsapp || "",
       });
     } catch (err) { res.status(500).json({ message: "Erro interno" }); }
   });
@@ -173,14 +171,14 @@ export function registerSystemRoutes(app: Express, storage: IStorage) {
   app.get("/api/error-reports", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
     const user = req.user as any;
-    const reports = await storage.getErrorReports(getOrgId());
+    const reports = await storage.getErrorReports(getOrgId(req));
     res.json(reports);
   });
 
   app.get("/api/error-reports/stats", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
     const user = req.user as any;
-    const stats = await storage.getErrorReportStats(getOrgId());
+    const stats = await storage.getErrorReportStats(getOrgId(req));
     res.json(stats);
   });
 
@@ -188,7 +186,7 @@ export function registerSystemRoutes(app: Express, storage: IStorage) {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
     const user = req.user as any;
     const report = await storage.getErrorReport(Number(req.params.id));
-    if (!report || report.orgId !== getOrgId()) return res.status(404).json({ message: "Not found" });
+    if (!report || report.orgId !== getOrgId(req)) return res.status(404).json({ message: "Not found" });
     res.json(report);
   });
 
@@ -200,7 +198,7 @@ export function registerSystemRoutes(app: Express, storage: IStorage) {
       return res.status(400).json({ message: "Título é obrigatório" });
     }
     const report = await storage.createErrorReport({
-      orgId: getOrgId(),
+      orgId: getOrgId(req),
       type: "user_report",
       title: title.trim(),
       description: description || null,
@@ -218,7 +216,7 @@ export function registerSystemRoutes(app: Express, storage: IStorage) {
     const user = req.user as any;
     const { url, method, statusCode, errorMessage, stack, page } = req.body;
     const report = await storage.createErrorReport({
-      orgId: getOrgId(),
+      orgId: getOrgId(req),
       type: "auto_capture",
       title: `[Auto] ${method || "GET"} ${url || "unknown"} → ${statusCode || "Error"}`,
       description: (errorMessage || "Erro capturado automaticamente").substring(0, 2000),
@@ -251,7 +249,7 @@ export function registerSystemRoutes(app: Express, storage: IStorage) {
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ message: "Nenhum campo válido para atualizar" });
     }
-    const report = await storage.updateErrorReport(Number(req.params.id), getOrgId(), updates);
+    const report = await storage.updateErrorReport(Number(req.params.id), getOrgId(req), updates);
     if (!report) return res.status(404).json({ message: "Not found" });
     res.json(report);
   });
@@ -259,7 +257,7 @@ export function registerSystemRoutes(app: Express, storage: IStorage) {
   app.post("/api/error-reports/bulk-close-api", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
     const user = req.user as any;
-    const orgId = getOrgId();
+    const orgId = getOrgId(req);
     const result = await db.update(errorReports)
       .set({
         status: "closed",
@@ -309,7 +307,7 @@ export function registerSystemRoutes(app: Express, storage: IStorage) {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
     const user = req.user as any;
     const { entity, entityId, limit } = req.query;
-    const logs = await storage.getAuditLogs(getOrgId(), {
+    const logs = await storage.getAuditLogs(getOrgId(req), {
       entity: entity as string | undefined,
       entityId: entityId ? Number(entityId) : undefined,
       limit: limit ? Math.min(Number(limit), 500) : 100,
@@ -382,9 +380,38 @@ export function registerSystemRoutes(app: Express, storage: IStorage) {
 
     res.on("close", () => clearInterval(heartbeat));
 
-    addSSEClient(getOrgId(), res);
+    addSSEClient(getOrgId(req), res);
 
-    res.write(`data: ${JSON.stringify({ type: "connected", orgId: getOrgId() })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: "connected", orgId: getOrgId(req) })}\n\n`);
+  });
+
+  // Alertas persistentes (rotinas VPS defasadas): o sino carrega no login o que
+  // ainda está "open" em error_reports — entrega durável, não depende de SSE ao vivo.
+  app.get("/api/notifications/pending", async (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    try {
+      const rows = await db.select().from(errorReports)
+        .where(and(eq(errorReports.type, "vps_rotina_stale"), eq(errorReports.status, "open")))
+        .orderBy(desc(errorReports.createdAt))
+        .limit(50);
+      // 1 por módulo (o mais recente) — o sidecar insere 1/dia enquanto persiste o problema
+      const seen = new Set<string>();
+      const pending = rows.filter(r => {
+        const key = r.module || String(r.id);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }).map(r => ({
+        id: `er-${r.id}`,
+        type: "connector_error",
+        title: r.title,
+        message: r.description || r.title,
+        createdAt: (r.createdAt || new Date()).toISOString(),
+      }));
+      res.json(pending);
+    } catch {
+      res.status(500).json({ message: "Erro ao buscar notificações pendentes" });
+    }
   });
 
   app.get("/api/dashboard/quotes", async (req, res) => {
@@ -443,62 +470,11 @@ export function registerSystemRoutes(app: Express, storage: IStorage) {
 
     try {
       const orgId = getOrgId(req);
-      const agora = new Date();
-      const inicioMes = new Date(agora.getFullYear(), agora.getMonth(), 1);
-      const limite24h = new Date(Date.now() - 86400000);
-      const limite15d = new Date(Date.now() - 15 * 86400000);
-
-      const [ativosAtivos, ativosEmNeg, dealsResult, leadsNovos, leadsQualif, portal24h, matchesPend] =
-        await Promise.all([
-          db.select({ count: count() }).from(assets).where(and(eq(assets.orgId, orgId), eq(assets.statusAtivo, "ativo"))),
-          db.select({ count: count() }).from(assets).where(and(eq(assets.orgId, orgId), eq(assets.statusAtivo, "em_negociacao"))),
-          db.select({ count: count(), volume: sum(deals.amountEstimate) }).from(deals).where(eq(deals.orgId, orgId)),
-          db.select({ count: count() }).from(leads).where(and(eq(leads.orgId, orgId), eq(leads.status, "new"))),
-          db.select({ count: count() }).from(leads).where(and(eq(leads.orgId, orgId), gte(leads.score, 60))),
-          db.select({ count: count() }).from(portalInquiries).where(and(eq(portalInquiries.orgId, orgId), gte(portalInquiries.createdAt, limite24h))),
-          db.select({ count: count() }).from(matchSuggestions).where(and(eq(matchSuggestions.orgId, orgId), eq(matchSuggestions.status, "new"))),
-        ]);
-
-      const porEstagio = await db.select({ stageId: deals.stageId, count: count(), volume: sum(deals.amountEstimate) })
-        .from(deals).where(eq(deals.orgId, orgId)).groupBy(deals.stageId);
-
-      const stages = await db.select().from(pipelineStages).where(eq(pipelineStages.orgId, orgId));
-
-      const dealsParados = await db.select({ id: deals.id, title: deals.title, updatedAt: deals.createdAt })
-        .from(deals).where(and(eq(deals.orgId, orgId), lt(deals.createdAt, limite15d)))
-        .orderBy(desc(deals.createdAt)).limit(5);
-
-      const leadsRecentes = await db.select().from(portalInquiries)
-        .where(and(eq(portalInquiries.orgId, orgId), gte(portalInquiries.createdAt, limite24h)))
-        .orderBy(desc(portalInquiries.createdAt)).limit(8);
-
-      res.json({
-        ativos: {
-          total: Number(ativosAtivos[0]?.count || 0),
-          emNegociacao: Number(ativosEmNeg[0]?.count || 0),
-        },
-        deals: {
-          total: Number(dealsResult[0]?.count || 0),
-          volumeTotal: Number(dealsResult[0]?.volume || 0),
-          porEstagio: porEstagio.map(e => ({
-            stageId: e.stageId,
-            stageName: stages.find(s => s.id === e.stageId)?.name || "—",
-            count: Number(e.count),
-            volumeTotal: Number(e.volume || 0),
-          })),
-          parados: dealsParados.map(d => ({
-            id: d.id, title: d.title,
-            diasParado: Math.floor((Date.now() - new Date(d.updatedAt!).getTime()) / 86400000),
-          })),
-        },
-        leads: {
-          novos: Number(leadsNovos[0]?.count || 0),
-          qualificados: Number(leadsQualif[0]?.count || 0),
-          portal24h: Number(portal24h[0]?.count || 0),
-          recentes: leadsRecentes,
-        },
-        matchesPendentes: Number(matchesPend[0]?.count || 0),
-      });
+      const [available, negotiating] = await Promise.all([
+            db.select({ count: count() }).from(assets).where(and(eq(assets.orgId, orgId), eq(assets.statusAtivo, "ativo"))),
+            db.select({ count: count() }).from(assets).where(and(eq(assets.orgId, orgId), eq(assets.statusAtivo, "em_negociacao"))),
+          ]);
+          res.json({ ativos: { total: Number(available[0]?.count || 0), emNegociacao: Number(negotiating[0]?.count || 0) } });
     } catch (err) {
       console.error("Dashboard error:", err);
       res.status(500).json({ message: "Erro ao carregar dashboard" });

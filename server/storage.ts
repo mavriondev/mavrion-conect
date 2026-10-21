@@ -1,24 +1,7 @@
-import { 
-  users, connectors, companies, contacts, leads, deals, 
-  assets, investorProfiles, matchSuggestions, pipelineStages, leadRules, organizations,
-  dealComments, proposalTemplates, proposals, orgSettings,
-  portalListings, portalInquiries, contractTemplates, contracts,
-  errorReports, auditLogs, assetLandingPages
-} from "@shared/schema";
-import type { 
-  User, InsertUser, Connector, InsertConnector, Company, InsertCompany,
-  Contact, InsertContact, Lead, InsertLead, Deal, InsertDeal,
-  Asset, InsertAsset, InvestorProfile, InsertInvestorProfile, MatchSuggestion,
-  PipelineStage, InsertPipelineStage, LeadRule, Organization,
-  DealComment, InsertDealComment, ProposalTemplate, InsertProposalTemplate,
-  Proposal, InsertProposal, OrgSetting,
-  PortalListing, InsertPortalListing, PortalInquiry, InsertPortalInquiry,
-  ContractTemplate, InsertContractTemplate, Contract, InsertContract,
-  ErrorReport, InsertErrorReport, AuditLog,
-  AssetLandingPage, InsertAssetLandingPage
-} from "@shared/schema";
+import { users, connectors, companies, contacts, deals, assets, matchSuggestions, organizations, proposals, orgSettings, portalListings, portalInquiries, contracts, errorReports, auditLogs, assetLandingPages, matchFeedback, companyVisitLog, companyRejectionLog } from "@shared/schema";
+import type { User, InsertUser, Connector, InsertConnector, Company, InsertCompany, Contact, InsertContact, Asset, InsertAsset, Organization, OrgSetting, ErrorReport, InsertErrorReport, AuditLog } from "@shared/schema";
 import { db } from "./db";
-import { eq, count, and, desc, gte, lt, sql } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { pool } from "./db";
@@ -45,23 +28,6 @@ export interface IStorage {
   getContacts(orgId?: number): Promise<Contact[]>;
   createContact(contact: InsertContact): Promise<Contact>;
 
-  getLeadsQueue(orgId?: number): Promise<(Lead & { company: Company })[]>;
-  updateLead(id: number, status: string, notes?: string): Promise<Lead>;
-
-  getDeals(pipelineType?: string, orgId?: number, companyId?: number): Promise<(Deal & { company: Company | null })[]>;
-  getDeal(id: number): Promise<(Deal & { company: Company | null }) | undefined>;
-  createDeal(deal: InsertDeal): Promise<Deal>;
-  updateDeal(id: number, deal: Partial<InsertDeal>): Promise<Deal>;
-  deleteDeal(id: number): Promise<void>;
-  getPipelineStages(): Promise<PipelineStage[]>;
-  createPipelineStage(stage: InsertPipelineStage): Promise<PipelineStage>;
-  updatePipelineStage(id: number, data: Partial<PipelineStage>): Promise<PipelineStage>;
-  deletePipelineStage(id: number): Promise<void>;
-
-  getDealComments(dealId: number): Promise<DealComment[]>;
-  createDealComment(comment: InsertDealComment): Promise<DealComment>;
-  deleteDealComment(id: number): Promise<void>;
-
   getAssets(orgId?: number): Promise<Asset[]>;
   getAsset(id: number): Promise<Asset | undefined>;
   createAsset(asset: InsertAsset): Promise<Asset>;
@@ -69,68 +35,15 @@ export interface IStorage {
   mergeAssetCampos(id: number, patch: Record<string, any>, extraFields?: Record<string, any>): Promise<Asset>;
   deleteAsset(id: number): Promise<void>;
 
-  getInvestors(orgId?: number): Promise<InvestorProfile[]>;
-  getInvestor(id: number): Promise<InvestorProfile | undefined>;
-  createInvestor(investor: InsertInvestorProfile): Promise<InvestorProfile>;
-  updateInvestor(id: number, data: Partial<InsertInvestorProfile>): Promise<InvestorProfile>;
-  deleteInvestor(id: number): Promise<void>;
-
-  getMatchSuggestions(orgId: number): Promise<(MatchSuggestion & { asset: Asset, investor: InvestorProfile })[]>;
-
-  getProposalTemplates(orgId: number): Promise<ProposalTemplate[]>;
-  getProposalTemplate(id: number): Promise<ProposalTemplate | undefined>;
-  createProposalTemplate(template: InsertProposalTemplate): Promise<ProposalTemplate>;
-  updateProposalTemplate(id: number, data: Partial<InsertProposalTemplate>): Promise<ProposalTemplate>;
-  deleteProposalTemplate(id: number): Promise<void>;
-
-  getProposals(orgId: number): Promise<Proposal[]>;
-  getProposal(id: number): Promise<Proposal | undefined>;
-  createProposal(proposal: InsertProposal): Promise<Proposal>;
-  updateProposal(id: number, data: Partial<InsertProposal>): Promise<Proposal>;
-  deleteProposal(id: number): Promise<void>;
-
   getOrgSetting(orgId: number, key: string): Promise<OrgSetting | undefined>;
   getAllOrgSettings(orgId: number): Promise<Record<string, any>>;
   setOrgSetting(orgId: number, key: string, value: any): Promise<OrgSetting>;
-
-  getDashboardStats(orgId: number): Promise<any>;
-
-  getPortalListings(orgId: number): Promise<(PortalListing & { asset: Asset | null })[]>;
-  getPortalListing(id: number): Promise<(PortalListing & { asset: Asset | null }) | undefined>;
-  createPortalListing(listing: InsertPortalListing): Promise<PortalListing>;
-  updatePortalListing(id: number, data: Partial<InsertPortalListing>): Promise<PortalListing>;
-  deletePortalListing(id: number): Promise<void>;
-  getPublishedListings(): Promise<(PortalListing & { asset: Asset | null })[]>;
-
-  getPortalInquiries(orgId: number): Promise<(PortalInquiry & { listing: { title: string } | null })[]>;
-  getPortalInquiry(id: number): Promise<PortalInquiry | undefined>;
-  createPortalInquiry(inquiry: InsertPortalInquiry): Promise<PortalInquiry>;
-  updatePortalInquiry(id: number, data: Partial<InsertPortalInquiry>): Promise<PortalInquiry>;
-
-  getContractTemplates(orgId: number): Promise<ContractTemplate[]>;
-  getContractTemplate(id: number): Promise<ContractTemplate | undefined>;
-  createContractTemplate(template: InsertContractTemplate): Promise<ContractTemplate>;
-  updateContractTemplate(id: number, data: Partial<InsertContractTemplate>): Promise<ContractTemplate>;
-  deleteContractTemplate(id: number): Promise<void>;
-
-  getContracts(orgId: number): Promise<Contract[]>;
-  getContract(id: number): Promise<Contract | undefined>;
-  createContract(contract: InsertContract): Promise<Contract>;
-  updateContract(id: number, data: Partial<InsertContract>): Promise<Contract>;
-  deleteContract(id: number): Promise<void>;
 
   getErrorReports(orgId: number): Promise<ErrorReport[]>;
   getErrorReport(id: number): Promise<ErrorReport | undefined>;
   createErrorReport(report: InsertErrorReport): Promise<ErrorReport>;
   updateErrorReport(id: number, orgId: number, data: Partial<InsertErrorReport>): Promise<ErrorReport>;
   getErrorReportStats(orgId: number): Promise<{ total: number; open: number; resolved: number; autoCapture: number; apiError: number }>;
-
-  getAssetLandingPages(orgId: number): Promise<(AssetLandingPage & { asset: Asset | null })[]>;
-  getAssetLandingPage(id: number): Promise<(AssetLandingPage & { asset: Asset | null }) | undefined>;
-  getAssetLandingPageBySlug(slug: string): Promise<(AssetLandingPage & { asset: Asset | null }) | undefined>;
-  createAssetLandingPage(page: InsertAssetLandingPage): Promise<AssetLandingPage>;
-  updateAssetLandingPage(id: number, data: Partial<InsertAssetLandingPage>): Promise<AssetLandingPage>;
-  deleteAssetLandingPage(id: number): Promise<void>;
 
   getAuditLogs(orgId: number, filters?: { entity?: string; entityId?: number; limit?: number }): Promise<AuditLog[]>;
 
@@ -141,9 +54,9 @@ export class DatabaseStorage implements IStorage {
   sessionStore: session.Store;
 
   constructor() {
-    this.sessionStore = new PostgresSessionStore({ 
-      pool, 
-      createTableIfMissing: true 
+    this.sessionStore = new PostgresSessionStore({
+      pool,
+      createTableIfMissing: true
     });
   }
 
@@ -219,105 +132,6 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getLeadsQueue(orgId?: number): Promise<(Lead & { company: Company })[]> {
-    let query = db.select({ lead: leads, company: companies })
-      .from(leads)
-      .innerJoin(companies, eq(leads.companyId, companies.id))
-      .orderBy(desc(leads.createdAt));
-    if (orgId) {
-      query = query.where(eq(leads.orgId, orgId)) as any;
-    }
-    const rows = await query;
-    return rows.map(r => ({ ...r.lead, company: r.company }));
-  }
-
-  async updateLead(id: number, status: string, notes?: string): Promise<Lead> {
-    const updates: any = { status, updatedAt: new Date() };
-    if (notes !== undefined) updates.notes = notes;
-    const [updated] = await db.update(leads).set(updates).where(eq(leads.id, id)).returning();
-    return updated;
-  }
-
-  async getDeals(pipelineType?: string, orgId?: number, companyId?: number): Promise<(Deal & { company: Company | null })[]> {
-    const conditions: any[] = [];
-    if (pipelineType) conditions.push(eq(deals.pipelineType, pipelineType));
-    if (orgId) conditions.push(eq(deals.orgId, orgId));
-    if (companyId) conditions.push(eq(deals.companyId, companyId));
-    let query = db.select({ deal: deals, company: companies })
-      .from(deals)
-      .leftJoin(companies, eq(deals.companyId, companies.id))
-      .orderBy(desc(deals.createdAt));
-    if (conditions.length === 1) {
-      query = query.where(conditions[0]) as any;
-    } else if (conditions.length > 1) {
-      query = query.where(and(...conditions)) as any;
-    }
-    const rows = await query;
-    return rows.map(r => ({ ...r.deal, company: r.company }));
-  }
-
-  async getDeal(id: number): Promise<(Deal & { company: Company | null }) | undefined> {
-    const rows = await db.select({ deal: deals, company: companies })
-      .from(deals)
-      .leftJoin(companies, eq(deals.companyId, companies.id))
-      .where(eq(deals.id, id));
-    if (!rows[0]) return undefined;
-    return { ...rows[0].deal, company: rows[0].company };
-  }
-
-  async createDeal(deal: InsertDeal): Promise<Deal> {
-    const [created] = await db.insert(deals).values(deal).returning();
-    return created;
-  }
-
-  async updateDeal(id: number, deal: Partial<InsertDeal>): Promise<Deal> {
-    const [updated] = await db.update(deals).set(deal as any).where(eq(deals.id, id)).returning();
-    return updated;
-  }
-
-  async deleteDeal(id: number): Promise<void> {
-    await db.transaction(async (tx) => {
-      await tx.update(matchSuggestions)
-        .set({ status: "new", dealId: null } as any)
-        .where(and(eq(matchSuggestions.dealId, id), eq(matchSuggestions.status, "accepted")));
-      await tx.delete(matchSuggestions).where(eq(matchSuggestions.dealId, id));
-      await tx.delete(dealComments).where(eq(dealComments.dealId, id));
-      await tx.execute(sql`DELETE FROM deal_activities WHERE deal_id = ${id}`);
-      await tx.delete(deals).where(eq(deals.id, id));
-    });
-  }
-
-  async getPipelineStages(): Promise<PipelineStage[]> {
-    return await db.select().from(pipelineStages);
-  }
-
-  async createPipelineStage(stage: InsertPipelineStage): Promise<PipelineStage> {
-    const [created] = await db.insert(pipelineStages).values(stage).returning();
-    return created;
-  }
-
-  async updatePipelineStage(id: number, data: Partial<PipelineStage>): Promise<PipelineStage> {
-    const [updated] = await db.update(pipelineStages).set(data as any).where(eq(pipelineStages.id, id)).returning();
-    return updated;
-  }
-
-  async deletePipelineStage(id: number): Promise<void> {
-    await db.delete(pipelineStages).where(eq(pipelineStages.id, id));
-  }
-
-  async getDealComments(dealId: number): Promise<DealComment[]> {
-    return await db.select().from(dealComments).where(eq(dealComments.dealId, dealId)).orderBy(desc(dealComments.createdAt));
-  }
-
-  async createDealComment(comment: InsertDealComment): Promise<DealComment> {
-    const [created] = await db.insert(dealComments).values(comment).returning();
-    return created;
-  }
-
-  async deleteDealComment(id: number): Promise<void> {
-    await db.delete(dealComments).where(eq(dealComments.id, id));
-  }
-
   async getAssets(orgId?: number): Promise<Asset[]> {
     if (orgId) {
       return await db.select().from(assets)
@@ -333,12 +147,26 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createAsset(asset: InsertAsset): Promise<Asset> {
-    const [created] = await db.insert(assets).values(asset).returning();
+    const [created] = await db.insert(assets).values(asset as any).returning();
     return created;
   }
 
   async updateAsset(id: number, data: Partial<InsertAsset>): Promise<Asset> {
-    const [updated] = await db.update(assets).set(data as any).where(eq(assets.id, id)).returning();
+    // camposEspecificos é aplicado como merge atômico (jsonb ||) em vez de
+    // substituir a coluna inteira: PATCHes concorrentes de enriquecimento não
+    // podem apagar chaves salvos uns dos outros a partir de cópias desatualizadas.
+    // Nenhum fluxo depende de remoção de chaves via update; para limpar um
+    // valor, envie a chave explicitamente com null.
+    const { camposEspecificos, ...rest } = data as Record<string, any>;
+    const set: Record<string, any> = { ...rest };
+    if (camposEspecificos !== undefined) {
+      const isPlainObject = camposEspecificos !== null &&
+        typeof camposEspecificos === "object" && !Array.isArray(camposEspecificos);
+      set.camposEspecificos = isPlainObject
+        ? sql`COALESCE(${assets.camposEspecificos}, '{}'::jsonb) || ${JSON.stringify(camposEspecificos)}::jsonb`
+        : camposEspecificos;
+    }
+    const [updated] = await db.update(assets).set(set as any).where(eq(assets.id, id)).returning();
     return updated;
   }
 
@@ -350,6 +178,7 @@ export class DatabaseStorage implements IStorage {
     if (extraFields) {
       for (const [key, value] of Object.entries(extraFields)) {
         if (key === 'municipio') setClauses.push(sql`municipio = ${value}`);
+        else if (key === 'location') setClauses.push(sql`location = ${value}`);
         else if (key === 'estado') setClauses.push(sql`estado = ${value}`);
         else if (key === 'areaHa') setClauses.push(sql`area_ha = ${value}`);
         else if (key === 'geoScore') setClauses.push(sql`geo_score = ${value}`);
@@ -364,119 +193,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteAsset(id: number): Promise<void> {
+    await db.delete(matchFeedback).where(eq(matchFeedback.assetId, id));
     await db.delete(matchSuggestions).where(eq(matchSuggestions.assetId, id));
     await db.update(deals).set({ assetId: null } as any).where(eq(deals.assetId, id));
+    await db.delete(proposals).where(eq(proposals.assetId, id));
     await db.delete(portalInquiries).where(eq(portalInquiries.assetId, id));
     await db.delete(portalListings).where(eq(portalListings.assetId, id));
     await db.delete(assetLandingPages).where(eq(assetLandingPages.assetId, id));
     await db.delete(contracts).where(eq(contracts.assetId, id));
+    await db.delete(companyVisitLog).where(eq(companyVisitLog.assetId, id));
+    await db.delete(companyRejectionLog).where(eq(companyRejectionLog.assetId, id));
     await db.delete(assets).where(eq(assets.id, id));
-  }
-
-  async getInvestors(orgId?: number): Promise<any[]> {
-    const baseQuery = db
-      .select({
-        investor: investorProfiles,
-        company: {
-          id: companies.id,
-          legalName: companies.legalName,
-          tradeName: companies.tradeName,
-          cnpj: companies.cnpj,
-          revenueEstimate: companies.revenueEstimate,
-          employeeCount: companies.employeeCount,
-          shareCapital: companies.shareCapital,
-          cnaePrincipal: companies.cnaePrincipal,
-          cnaeSecundarios: companies.cnaeSecundarios,
-        },
-      })
-      .from(investorProfiles)
-      .leftJoin(companies, eq(investorProfiles.companyId, companies.id))
-      .orderBy(desc(investorProfiles.createdAt));
-
-    const rows = orgId
-      ? await baseQuery.where(eq(investorProfiles.orgId, orgId))
-      : await baseQuery;
-
-    return rows.map(r => ({
-      ...r.investor,
-      company: r.company?.id ? r.company : null,
-    }));
-  }
-
-  async getInvestor(id: number): Promise<InvestorProfile | undefined> {
-    const [inv] = await db.select().from(investorProfiles).where(eq(investorProfiles.id, id));
-    return inv;
-  }
-
-  async createInvestor(investor: InsertInvestorProfile): Promise<InvestorProfile> {
-    const [created] = await db.insert(investorProfiles).values(investor).returning();
-    return created;
-  }
-
-  async updateInvestor(id: number, data: Partial<InsertInvestorProfile>): Promise<InvestorProfile> {
-    const [updated] = await db.update(investorProfiles).set(data as any).where(eq(investorProfiles.id, id)).returning();
-    return updated;
-  }
-
-  async deleteInvestor(id: number): Promise<void> {
-    await db.delete(matchSuggestions).where(eq(matchSuggestions.investorProfileId, id));
-    await db.delete(investorProfiles).where(eq(investorProfiles.id, id));
-  }
-
-  async getMatchSuggestions(orgId: number): Promise<(MatchSuggestion & { asset: Asset, investor: InvestorProfile })[]> {
-    const rows = await db.selectDistinctOn([matchSuggestions.assetId, matchSuggestions.investorProfileId], { match: matchSuggestions, asset: assets, investor: investorProfiles })
-      .from(matchSuggestions)
-      .innerJoin(assets, eq(matchSuggestions.assetId, assets.id))
-      .innerJoin(investorProfiles, eq(matchSuggestions.investorProfileId, investorProfiles.id))
-      .where(eq(matchSuggestions.orgId, orgId))
-      .orderBy(matchSuggestions.assetId, matchSuggestions.investorProfileId, desc(matchSuggestions.createdAt));
-    return rows.map(r => ({ ...r.match, asset: r.asset, investor: r.investor }));
-  }
-
-  async getProposalTemplates(orgId: number): Promise<ProposalTemplate[]> {
-    return await db.select().from(proposalTemplates).where(eq(proposalTemplates.orgId, orgId)).orderBy(desc(proposalTemplates.createdAt));
-  }
-
-  async getProposalTemplate(id: number): Promise<ProposalTemplate | undefined> {
-    const [t] = await db.select().from(proposalTemplates).where(eq(proposalTemplates.id, id));
-    return t;
-  }
-
-  async createProposalTemplate(template: InsertProposalTemplate): Promise<ProposalTemplate> {
-    const [created] = await db.insert(proposalTemplates).values(template).returning();
-    return created;
-  }
-
-  async updateProposalTemplate(id: number, data: Partial<InsertProposalTemplate>): Promise<ProposalTemplate> {
-    const [updated] = await db.update(proposalTemplates).set({ ...data as any, updatedAt: new Date() }).where(eq(proposalTemplates.id, id)).returning();
-    return updated;
-  }
-
-  async deleteProposalTemplate(id: number): Promise<void> {
-    await db.delete(proposalTemplates).where(eq(proposalTemplates.id, id));
-  }
-
-  async getProposals(orgId: number): Promise<Proposal[]> {
-    return await db.select().from(proposals).where(eq(proposals.orgId, orgId)).orderBy(desc(proposals.createdAt));
-  }
-
-  async getProposal(id: number): Promise<Proposal | undefined> {
-    const [p] = await db.select().from(proposals).where(eq(proposals.id, id));
-    return p;
-  }
-
-  async createProposal(proposal: InsertProposal): Promise<Proposal> {
-    const [created] = await db.insert(proposals).values(proposal).returning();
-    return created;
-  }
-
-  async updateProposal(id: number, data: Partial<InsertProposal>): Promise<Proposal> {
-    const [updated] = await db.update(proposals).set(data as any).where(eq(proposals.id, id)).returning();
-    return updated;
-  }
-
-  async deleteProposal(id: number): Promise<void> {
-    await db.delete(proposals).where(eq(proposals.id, id));
   }
 
   async getOrgSetting(orgId: number, key: string): Promise<OrgSetting | undefined> {
@@ -499,208 +226,6 @@ export class DatabaseStorage implements IStorage {
     }
     const [created] = await db.insert(orgSettings).values({ orgId, key, value }).returning();
     return created;
-  }
-
-  async getDashboardStats(orgId: number) {
-    const now = new Date();
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
-
-    const [leadsTotal] = await db.select({ c: count() }).from(leads).where(eq(leads.orgId, orgId));
-    const [leadsUltimos30] = await db.select({ c: count() }).from(leads)
-      .where(and(eq(leads.orgId, orgId), gte(leads.createdAt, thirtyDaysAgo)));
-    const [leadsAnterios30] = await db.select({ c: count() }).from(leads)
-      .where(and(eq(leads.orgId, orgId), gte(leads.createdAt, sixtyDaysAgo), lt(leads.createdAt, thirtyDaysAgo)));
-
-    const allDeals = await db.select().from(deals).where(eq(deals.orgId, orgId));
-    const activeDeals = allDeals.filter(d => d.pipelineType === "INVESTOR");
-    const pipelineValue = activeDeals.reduce((sum, d) => sum + (d.amountEstimate || 0), 0);
-    const avgTicket = activeDeals.length > 0 ? pipelineValue / activeDeals.length : 0;
-
-    const forecastValue = activeDeals.reduce((sum, d) => {
-      const prob = (d.probability || 50) / 100;
-      return sum + (d.amountEstimate || 0) * prob;
-    }, 0);
-
-    const [leadsQualified] = await db.select({ c: count() }).from(leads)
-      .where(and(eq(leads.orgId, orgId), eq(leads.status, "qualified"), gte(leads.createdAt, thirtyDaysAgo)));
-    const [dealsUltimos30] = await db.select({ c: count() }).from(deals)
-      .where(and(eq(deals.orgId, orgId), gte(deals.createdAt, thirtyDaysAgo)));
-
-    const conversionRate = Number(leadsQualified?.c || 0) > 0
-      ? (Number(dealsUltimos30?.c || 0) / Number(leadsQualified?.c || 0)) * 100
-      : 0;
-
-    const dealsPorPrioridade = {
-      urgent: allDeals.filter(d => d.priority === "urgent").length,
-      high: allDeals.filter(d => d.priority === "high").length,
-      medium: allDeals.filter(d => d.priority === "medium").length,
-      low: allDeals.filter(d => d.priority === "low").length,
-    };
-
-    const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    const dealsVencendo = allDeals.filter(d =>
-      d.dueDate && new Date(d.dueDate) <= sevenDaysFromNow && new Date(d.dueDate) >= now
-    ).length;
-    const dealsVencidos = allDeals.filter(d =>
-      d.dueDate && new Date(d.dueDate) < now
-    ).length;
-
-    const crescimentoLeads = Number(leadsAnterios30?.c || 0) > 0
-      ? ((Number(leadsUltimos30?.c || 0) - Number(leadsAnterios30?.c || 0)) / Number(leadsAnterios30?.c || 0)) * 100
-      : 0;
-
-    return {
-      leadsCount: Number(leadsTotal?.c || 0),
-      leadsUltimos30: Number(leadsUltimos30?.c || 0),
-      crescimentoLeads: Math.round(crescimentoLeads * 10) / 10,
-      activeDealsCount: activeDeals.length,
-      pipelineValue,
-      avgTicket,
-      forecastValue,
-      conversionRate: Math.round(conversionRate * 10) / 10,
-      dealsVencendo,
-      dealsVencidos,
-      dealsPorPrioridade,
-      assetsCount: Number((await db.select({ c: count() }).from(assets).where(eq(assets.orgId, orgId)))[0]?.c || 0),
-      investorsCount: Number((await db.select({ c: count() }).from(investorProfiles).where(eq(investorProfiles.orgId, orgId)))[0]?.c || 0),
-      matchesCount: Number((await db.select({ c: count() }).from(matchSuggestions).where(eq(matchSuggestions.orgId, orgId)))[0]?.c || 0),
-    };
-  }
-
-  async getPortalListings(orgId: number) {
-    const rows = await db.select().from(portalListings).where(eq(portalListings.orgId, orgId)).orderBy(desc(portalListings.createdAt));
-    const result = [];
-    for (const r of rows) {
-      let asset: Asset | null = null;
-      if (r.assetId) {
-        const [a] = await db.select().from(assets).where(eq(assets.id, r.assetId));
-        asset = a || null;
-      }
-      result.push({ ...r, asset });
-    }
-    return result;
-  }
-
-  async getPortalListing(id: number) {
-    const [r] = await db.select().from(portalListings).where(eq(portalListings.id, id));
-    if (!r) return undefined;
-    let asset: Asset | null = null;
-    if (r.assetId) {
-      const [a] = await db.select().from(assets).where(eq(assets.id, r.assetId));
-      asset = a || null;
-    }
-    return { ...r, asset };
-  }
-
-  async createPortalListing(listing: InsertPortalListing) {
-    const [created] = await db.insert(portalListings).values(listing).returning();
-    return created;
-  }
-
-  async updatePortalListing(id: number, data: Partial<InsertPortalListing>) {
-    const [updated] = await db.update(portalListings).set(data as any).where(eq(portalListings.id, id)).returning();
-    return updated;
-  }
-
-  async deletePortalListing(id: number) {
-    await db.delete(portalInquiries).where(eq(portalInquiries.listingId, id));
-    await db.delete(portalListings).where(eq(portalListings.id, id));
-  }
-
-  async getPublishedListings() {
-    const rows = await db.select().from(portalListings).where(eq(portalListings.status, "published")).orderBy(desc(portalListings.publishedAt));
-    const result = [];
-    for (const r of rows) {
-      let asset: Asset | null = null;
-      if (r.assetId) {
-        const [a] = await db.select().from(assets).where(eq(assets.id, r.assetId));
-        asset = a || null;
-      }
-      result.push({ ...r, asset });
-    }
-    return result;
-  }
-
-  async getPortalInquiries(orgId: number) {
-    const allInquiries = await db.select().from(portalInquiries)
-      .where(eq(portalInquiries.orgId, orgId))
-      .orderBy(desc(portalInquiries.createdAt));
-
-    const results: (PortalInquiry & { listing: { title: string } | null })[] = [];
-    for (const inq of allInquiries) {
-      let listing: { title: string } | null = null;
-      if (inq.listingId) {
-        const [l] = await db.select({ title: portalListings.title }).from(portalListings).where(eq(portalListings.id, inq.listingId));
-        if (l) listing = { title: l.title || "Listing" };
-      } else if (inq.landingPageId) {
-        const [lp] = await db.select({ title: assetLandingPages.title }).from(assetLandingPages).where(eq(assetLandingPages.id, inq.landingPageId));
-        if (lp) listing = { title: lp.title };
-      }
-      results.push({ ...inq, listing });
-    }
-    return results;
-  }
-
-  async getPortalInquiry(id: number) {
-    const [inq] = await db.select().from(portalInquiries).where(eq(portalInquiries.id, id));
-    return inq;
-  }
-
-  async createPortalInquiry(inquiry: InsertPortalInquiry) {
-    const [created] = await db.insert(portalInquiries).values(inquiry).returning();
-    return created;
-  }
-
-  async updatePortalInquiry(id: number, data: Partial<InsertPortalInquiry>) {
-    const [updated] = await db.update(portalInquiries).set(data as any).where(eq(portalInquiries.id, id)).returning();
-    return updated;
-  }
-
-  async getContractTemplates(orgId: number) {
-    return await db.select().from(contractTemplates).where(eq(contractTemplates.orgId, orgId)).orderBy(desc(contractTemplates.createdAt));
-  }
-
-  async getContractTemplate(id: number) {
-    const [t] = await db.select().from(contractTemplates).where(eq(contractTemplates.id, id));
-    return t;
-  }
-
-  async createContractTemplate(template: InsertContractTemplate) {
-    const [created] = await db.insert(contractTemplates).values(template).returning();
-    return created;
-  }
-
-  async updateContractTemplate(id: number, data: Partial<InsertContractTemplate>) {
-    const [updated] = await db.update(contractTemplates).set({ ...data as any, updatedAt: new Date() }).where(eq(contractTemplates.id, id)).returning();
-    return updated;
-  }
-
-  async deleteContractTemplate(id: number) {
-    await db.delete(contractTemplates).where(eq(contractTemplates.id, id));
-  }
-
-  async getContracts(orgId: number) {
-    return await db.select().from(contracts).where(eq(contracts.orgId, orgId)).orderBy(desc(contracts.createdAt));
-  }
-
-  async getContract(id: number) {
-    const [c] = await db.select().from(contracts).where(eq(contracts.id, id));
-    return c;
-  }
-
-  async createContract(contract: InsertContract) {
-    const [created] = await db.insert(contracts).values(contract).returning();
-    return created;
-  }
-
-  async updateContract(id: number, data: Partial<InsertContract>) {
-    const [updated] = await db.update(contracts).set(data as any).where(eq(contracts.id, id)).returning();
-    return updated;
-  }
-
-  async deleteContract(id: number) {
-    await db.delete(contracts).where(eq(contracts.id, id));
   }
 
   async getErrorReports(orgId: number) {
@@ -733,40 +258,6 @@ export class DatabaseStorage implements IStorage {
       autoCapture: all.filter(r => r.type === "auto_capture").length,
       apiError: all.filter(r => r.type === "api_error").length,
     };
-  }
-
-  async getAssetLandingPages(orgId: number) {
-    const rows = await db.select().from(assetLandingPages).where(eq(assetLandingPages.orgId, orgId)).orderBy(desc(assetLandingPages.createdAt));
-    const allAssets = await db.select().from(assets);
-    return rows.map(r => ({ ...r, asset: allAssets.find(a => a.id === r.assetId) || null }));
-  }
-
-  async getAssetLandingPage(id: number) {
-    const [r] = await db.select().from(assetLandingPages).where(eq(assetLandingPages.id, id));
-    if (!r) return undefined;
-    const asset = r.assetId ? (await db.select().from(assets).where(eq(assets.id, r.assetId)))[0] || null : null;
-    return { ...r, asset };
-  }
-
-  async getAssetLandingPageBySlug(slug: string) {
-    const [r] = await db.select().from(assetLandingPages).where(eq(assetLandingPages.slug, slug));
-    if (!r) return undefined;
-    const asset = r.assetId ? (await db.select().from(assets).where(eq(assets.id, r.assetId)))[0] || null : null;
-    return { ...r, asset };
-  }
-
-  async createAssetLandingPage(page: InsertAssetLandingPage) {
-    const [created] = await db.insert(assetLandingPages).values(page).returning();
-    return created;
-  }
-
-  async updateAssetLandingPage(id: number, data: Partial<InsertAssetLandingPage>) {
-    const [updated] = await db.update(assetLandingPages).set(data as any).where(eq(assetLandingPages.id, id)).returning();
-    return updated;
-  }
-
-  async deleteAssetLandingPage(id: number) {
-    await db.delete(assetLandingPages).where(eq(assetLandingPages.id, id));
   }
 
   async getAuditLogs(orgId: number, filters?: { entity?: string; entityId?: number; limit?: number }) {

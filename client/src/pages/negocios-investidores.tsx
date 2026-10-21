@@ -8,10 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Search, Briefcase, Building2, DollarSign, MapPin, Eye,
-  Users, TrendingUp, Target, Pickaxe, TreePine, Home, Wheat, Factory, Zap,
-} from "lucide-react";
+import { Search, Briefcase, Building2, DollarSign, MapPin, Eye, Users, TrendingUp, Target, Pickaxe, TreePine, Home, Wheat, Factory } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function formatPrice(v: any) {
@@ -57,13 +54,13 @@ export default function NegociosInvestidoresPage() {
   const [searchInvestidores, setSearchInvestidores] = useState("");
 
   const { data: assets = [], isLoading: assetsLoading } = useQuery<any[]>({
-    queryKey: ["/api/matching/assets"],
-    queryFn: () => apiRequest("GET", "/api/matching/assets").then(r => r.json()),
+    queryKey: ["/api/assets"],
+    queryFn: () => apiRequest("GET", "/api/assets").then(r => r.json()),
   });
 
   const { data: companiesRaw = [], isLoading: companiesLoading } = useQuery<any[]>({
-    queryKey: ["/api/companies/with-leads"],
-    queryFn: () => apiRequest("GET", "/api/companies/with-leads").then(r => r.json()),
+    queryKey: ["/api/companies/catalogo"],
+    queryFn: () => apiRequest("GET", "/api/companies/catalogo").then(r => r.json()),
   });
 
   const negocios = useMemo(() => {
@@ -258,7 +255,7 @@ export default function NegociosInvestidoresPage() {
                 <Users className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
                 <p className="text-muted-foreground">Nenhum investidor ou empresa compatível encontrado.</p>
                 <p className="text-xs text-muted-foreground mt-2 max-w-md mx-auto">
-                  Empresas importadas via Prospecção com CNAE compatível com seus ativos aparecem automaticamente aqui. Marcar como investidor na página da empresa dá prioridade no matching.
+                  Empresas importadas via Prospecção com CNAE compatível com seus ativos aparecem automaticamente aqui. Consulte o cadastro da empresa para mais informações.
                 </p>
               </CardContent>
             </Card>

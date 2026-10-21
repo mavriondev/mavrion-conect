@@ -2,7 +2,8 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
-    const text = (await res.text()) || res.statusText;
+    const cloned = res.clone();
+    const text = (await cloned.text()) || res.statusText;
     throw new Error(`${res.status}: ${text}`);
   }
 }
@@ -47,8 +48,8 @@ export const queryClient = new QueryClient({
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
       refetchOnWindowFocus: false,
-      staleTime: Infinity,
-      retry: false,
+      staleTime: 300000,
+      retry: 1,
     },
     mutations: {
       retry: false,

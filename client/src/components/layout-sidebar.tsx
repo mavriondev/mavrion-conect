@@ -2,19 +2,8 @@ import { useState, useEffect, useRef, createContext, useContext } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
-import {
-  LayoutDashboard, Briefcase, LogOut, Magnet, Zap,
-  Telescope, Building2, Users, ChevronDown, Download, BadgeCheck,
-  XCircle, FileText, FileSignature, Menu, X, Layers, TreePine, Pickaxe,
-  Home, Wheat, Factory, Target, Settings2, Plug, Map,
-  KanbanSquare, BookOpen, Globe, AlertTriangle, Bug, Handshake,
-  DollarSign,
-  Network,
-  Landmark,
-  Sun, Moon, ClipboardCheck, Shield, Activity,
-} from "lucide-react";
+import { LayoutDashboard, LogOut, Zap, Search, Telescope, Building2, Users, ChevronDown, Menu, X, Layers, TreePine, Pickaxe, Settings2, Plug, Sun, Moon, Bug, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useServiceStatus } from "@/hooks/use-service-status";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useTheme } from "@/components/theme-provider";
 import { LanguageSelector } from "@/components/language-selector";
@@ -24,30 +13,46 @@ interface SidebarContextValue {
   open: boolean;
   setOpen: (v: boolean) => void;
   toggle: () => void;
+  collapsed: boolean;
+  setCollapsed: (v: boolean) => void;
+  toggleCollapsed: () => void;
 }
 export const SidebarContext = createContext<SidebarContextValue>({
   open: false,
   setOpen: () => {},
   toggle: () => {},
+  collapsed: false,
+  setCollapsed: () => {},
+  toggleCollapsed: () => {},
 });
 export function useSidebar() { return useContext(SidebarContext); }
 
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem("sidebar-collapsed") === "true"; } catch { return false; }
+  });
   const [location] = useLocation();
   useEffect(() => { setOpen(false); }, [location]);
+  const toggleCollapsed = () => {
+    setCollapsed(prev => {
+      const next = !prev;
+      try { localStorage.setItem("sidebar-collapsed", String(next)); } catch {}
+      return next;
+    });
+  };
   return (
-    <SidebarContext.Provider value={{ open, setOpen, toggle: () => setOpen(o => !o) }}>
+    <SidebarContext.Provider value={{ open, setOpen, toggle: () => setOpen(o => !o), collapsed, setCollapsed, toggleCollapsed }}>
       {children}
     </SidebarContext.Provider>
   );
 }
 
-type ModuleKey = "dashboard" | "prospeccao" | "empresas" | "crm" | "matching" | "connectors" | "users" | "ativos" | "propostas";
+type ModuleKey = "dashboard" | "prospeccao" | "empresas" | "connectors" | "users" | "ativos" ;
 const ROLE_DEFAULTS: Record<string, Record<ModuleKey, boolean>> = {
-  admin:    { dashboard: true, prospeccao: true, empresas: true, crm: true, matching: true, connectors: true, users: true, ativos: true, propostas: true },
-  manager:  { dashboard: true, prospeccao: true, empresas: true, crm: true, matching: true, connectors: false, users: false, ativos: true, propostas: true },
-  operator: { dashboard: true, prospeccao: true, empresas: true, crm: true, matching: true, connectors: false, users: false, ativos: true, propostas: false },
+  admin:    { dashboard: true, prospeccao: true, empresas: true, connectors: true, users: true, ativos: true },
+  manager:  { dashboard: true, prospeccao: true, empresas: true, connectors: false, users: false, ativos: true },
+  operator: { dashboard: true, prospeccao: true, empresas: true, connectors: false, users: false, ativos: true },
 };
 function hasPermission(user: any, module: ModuleKey): boolean {
   if (!user) return false;
@@ -59,17 +64,17 @@ function hasPermission(user: any, module: ModuleKey): boolean {
 export function MobileTopBar() {
   const { toggle } = useSidebar();
   return (
-    <div className="md:hidden fixed top-0 left-0 right-0 z-40 h-14 bg-sidebar-background border-b border-sidebar-border flex items-center px-4 gap-3 shadow-md">
+    <div className="md:hidden fixed top-0 left-0 right-0 z-40 h-14 bg-sidebar-background/95 backdrop-blur-xl border-b border-white/[0.06] flex items-center px-4 gap-3">
       <button
         onClick={toggle}
-        className="p-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+        className="p-2 rounded-xl text-white/60 hover:text-white hover:bg-white/10 transition-all duration-150"
         aria-label="Abrir menu"
         data-testid="button-mobile-menu"
       >
         <Menu className="w-5 h-5" />
       </button>
-      <div className="flex items-center gap-2 font-bold text-lg text-white">
-        <div className="w-6 h-6 rounded-md bg-sidebar-primary flex items-center justify-center">
+      <div className="flex items-center gap-2.5 font-semibold text-[15px] text-white tracking-tight">
+        <div className="w-7 h-7 rounded-lg bg-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-500/20">
           <Zap className="w-3.5 h-3.5 text-white fill-current" />
         </div>
         Mavrion Connect
@@ -78,16 +83,8 @@ export function MobileTopBar() {
   );
 }
 
-function SectionLabel({ label }: { label: string }) {
-  return (
-    <div className="px-3 pt-5 pb-1.5 text-[10px] font-bold uppercase tracking-widest text-sidebar-foreground/35 select-none">
-      {label}
-    </div>
-  );
-}
-
-function NavLink({ href, icon: Icon, label, exact = true, status }: {
-  href: string; icon: any; label: string; exact?: boolean; status?: "online" | "offline";
+function NavLink({ href, icon: Icon, label, exact = true, collapsed = false }: {
+  href: string; icon: any; label: string; exact?: boolean; collapsed?: boolean;
 }) {
   const [location] = useLocation();
   const isActive = exact ? location === href : location.startsWith(href);
@@ -95,27 +92,20 @@ function NavLink({ href, icon: Icon, label, exact = true, status }: {
     <Link
       href={href}
       className={cn(
-        "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group",
+        "flex items-center rounded-xl text-[13px] font-medium transition-all duration-200 group",
+        collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2.5",
         isActive
-          ? "bg-sidebar-primary text-white shadow-lg shadow-sidebar-primary/20"
-          : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-white"
+          ? "bg-white/[0.12] text-white shadow-sm"
+          : "text-white/55 hover:bg-white/[0.07] hover:text-white/90"
       )}
       data-testid={`nav${href.replace(/\//g, "-") || "-home"}`}
+      title={collapsed ? label : undefined}
     >
       <Icon className={cn(
-        "w-4.5 h-4.5 w-5 h-5 shrink-0 transition-transform group-hover:scale-110",
-        isActive ? "text-white" : "text-sidebar-foreground/50 group-hover:text-white"
+        "w-[18px] h-[18px] shrink-0 transition-all duration-200",
+        isActive ? "text-emerald-400" : "text-white/40 group-hover:text-white/70"
       )} />
-      <span className="flex-1">{label}</span>
-      {status && (
-        <span title={status === "online" ? "Serviço online" : "Serviço indisponível"}>
-          {status === "online" ? (
-            <span className="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_6px_rgba(74,222,128,0.6)] inline-block" />
-          ) : (
-            <AlertTriangle className="w-3.5 h-3.5 text-yellow-400 animate-pulse" />
-          )}
-        </span>
-      )}
+      {!collapsed && <span className="flex-1 truncate">{label}</span>}
     </Link>
   );
 }
@@ -129,26 +119,26 @@ function SubLink({ href, icon: Icon, label, exact = false }: {
     <Link
       href={href}
       className={cn(
-        "flex items-center gap-2.5 pl-9 pr-3 py-2 rounded-lg text-sm transition-all duration-200 group",
+        "flex items-center gap-2.5 pl-9 pr-3 py-2 rounded-lg text-[13px] transition-all duration-200 group",
         isActive
-          ? "bg-sidebar-primary/80 text-white"
-          : "text-sidebar-foreground/55 hover:bg-sidebar-accent hover:text-white"
+          ? "text-emerald-400 bg-emerald-400/[0.08]"
+          : "text-white/45 hover:text-white/80 hover:bg-white/[0.04]"
       )}
       data-testid={`nav${href.replace(/\//g, "-")}`}
     >
       <Icon className={cn(
-        "w-3.5 h-3.5 shrink-0",
-        isActive ? "text-white" : "text-sidebar-foreground/40 group-hover:text-white"
+        "w-3.5 h-3.5 shrink-0 transition-all duration-200",
+        isActive ? "text-emerald-400" : "text-white/35 group-hover:text-white/60"
       )} />
-      {label}
+      <span className="truncate">{label}</span>
     </Link>
   );
 }
 
 function ExpandableNav({
-  href, icon: Icon, label, children, exact = false, activePaths,
+  href, icon: Icon, label, children, exact = false, activePaths, collapsed = false,
 }: {
-  href: string; icon: any; label: string; children: React.ReactNode; exact?: boolean; activePaths?: string[];
+  href: string; icon: any; label: string; children: React.ReactNode; exact?: boolean; activePaths?: string[]; collapsed?: boolean;
 }) {
   const [location] = useLocation();
   const isActive = activePaths
@@ -156,33 +146,98 @@ function ExpandableNav({
     : (exact ? location === href : location.startsWith(href));
   const [expanded, setExpanded] = useState(isActive);
 
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [popoverTop, setPopoverTop] = useState(0);
+  const hideTimeout = useRef<ReturnType<typeof setTimeout>>();
+
+  const showPopover = () => {
+    if (hideTimeout.current) clearTimeout(hideTimeout.current);
+    if (btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setPopoverTop(rect.top);
+    }
+    setPopoverOpen(true);
+  };
+  const startHide = () => {
+    hideTimeout.current = setTimeout(() => setPopoverOpen(false), 150);
+  };
+  const cancelHide = () => {
+    if (hideTimeout.current) clearTimeout(hideTimeout.current);
+  };
+
+  if (collapsed) {
+    return (
+      <div className="relative">
+        <button
+          ref={btnRef}
+          onMouseEnter={showPopover}
+          onMouseLeave={startHide}
+          className={cn(
+            "w-full flex items-center justify-center py-2.5 rounded-xl text-[13px] font-medium transition-all duration-200 group",
+            isActive
+              ? "bg-white/[0.12] text-white shadow-sm"
+              : "text-white/55 hover:bg-white/[0.07] hover:text-white/90"
+          )}
+          title={label}
+          data-testid={`nav${href.replace(/\//g, "-")}-toggle`}
+        >
+          <Icon className={cn(
+            "w-[18px] h-[18px] shrink-0 transition-all duration-200",
+            isActive ? "text-emerald-400" : "text-white/40 group-hover:text-white/70"
+          )} />
+        </button>
+        {popoverOpen && (
+          <div
+            className="fixed z-[9999]"
+            style={{ left: 68, top: popoverTop }}
+            onMouseEnter={cancelHide}
+            onMouseLeave={startHide}
+          >
+            <div className="bg-sidebar-background border border-white/[0.08] rounded-xl shadow-xl py-2 px-1 min-w-[180px]">
+              <div className="px-2 pb-1.5 mb-1 border-b border-white/[0.06] text-[11px] font-semibold text-white/50 uppercase tracking-wider">
+                {label}
+              </div>
+              <div className="space-y-0.5">
+                {children}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div>
       <button
         onClick={() => setExpanded(o => !o)}
         className={cn(
-          "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group",
+          "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-200 group",
           isActive
-            ? "bg-sidebar-primary text-white shadow-lg shadow-sidebar-primary/20"
-            : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-white"
+            ? "bg-white/[0.12] text-white shadow-sm"
+            : "text-white/55 hover:bg-white/[0.07] hover:text-white/90"
         )}
         data-testid={`nav${href.replace(/\//g, "-")}-toggle`}
       >
         <Icon className={cn(
-          "w-5 h-5 shrink-0 transition-transform group-hover:scale-110",
-          isActive ? "text-white" : "text-sidebar-foreground/50 group-hover:text-white"
+          "w-[18px] h-[18px] shrink-0 transition-all duration-200",
+          isActive ? "text-emerald-400" : "text-white/40 group-hover:text-white/70"
         )} />
-        <span className="flex-1 text-left">{label}</span>
+        <span className="flex-1 text-left truncate">{label}</span>
         <ChevronDown className={cn(
-          "w-4 h-4 shrink-0 transition-transform duration-200",
+          "w-3.5 h-3.5 shrink-0 transition-transform duration-300 ease-out text-white/25",
           expanded ? "rotate-180" : ""
         )} />
       </button>
-      {expanded && (
-        <div className="mt-1 space-y-0.5">
+      <div className={cn(
+        "overflow-hidden transition-all duration-300 ease-out",
+        expanded ? "max-h-96 opacity-100 mt-1" : "max-h-0 opacity-0"
+      )}>
+        <div className="space-y-0.5 pb-1">
           {children}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -192,7 +247,7 @@ function ThemeToggleButton() {
   return (
     <button
       onClick={toggleTheme}
-      className="p-1.5 rounded-md text-sidebar-foreground/50 hover:text-white hover:bg-white/10 transition-colors"
+      className="p-2 rounded-xl text-white/40 hover:text-white/80 hover:bg-white/[0.07] transition-all duration-200"
       title={theme === "light" ? "Dark mode" : "Light mode"}
       data-testid="btn-theme-toggle"
     >
@@ -203,8 +258,7 @@ function ThemeToggleButton() {
 
 export default function Sidebar() {
   const { user, logout } = useAuth();
-  const { open, setOpen } = useSidebar();
-  const { data: serviceStatus } = useServiceStatus();
+  const { open, setOpen, collapsed, toggleCollapsed } = useSidebar();
   const { t } = useI18n();
   const { data: orgSettings } = useQuery({
     queryKey: ["/api/org/settings"],
@@ -229,82 +283,75 @@ export default function Sidebar() {
 
   const getInitials = (name: string) => name.substring(0, 2).toUpperCase();
 
-  const sidebarContent = (
+  const sidebarContent = (isCollapsed: boolean = false) => (
     <>
-      <div className="h-16 flex items-center px-4 border-b border-sidebar-border bg-sidebar-background/50 backdrop-blur-sm shrink-0">
-        <div className="flex items-center gap-3 flex-1 min-w-0">
-          {logoUrl ? (
-            <img src={logoUrl} alt="Logo" className="h-9 w-9 object-contain shrink-0 rounded-md" data-testid="img-sidebar-logo" />
-          ) : (
-            <div className="w-9 h-9 rounded-lg bg-sidebar-primary flex items-center justify-center shrink-0">
-              <Zap className="w-5 h-5 text-white fill-current" />
+      <div className={cn("h-16 flex items-center border-b border-white/[0.06] shrink-0", isCollapsed ? "px-2 justify-center" : "px-5")}>
+        {isCollapsed ? (
+          <button
+            onClick={toggleCollapsed}
+            className="p-2 rounded-xl text-white/40 hover:text-white/80 hover:bg-white/[0.07] transition-all duration-200"
+            title="Expandir menu"
+            data-testid="button-expand-sidebar"
+          >
+            <PanelLeftOpen className="w-5 h-5" />
+          </button>
+        ) : (
+          <>
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              {logoUrl ? (
+                <img src={logoUrl} alt="Logo" className="h-8 w-8 object-contain shrink-0 rounded-xl" data-testid="img-sidebar-logo" />
+              ) : (
+                <div className="w-8 h-8 rounded-xl bg-emerald-500 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/20">
+                  <Zap className="w-4 h-4 text-white fill-current" />
+                </div>
+              )}
+              <span className="truncate text-sm font-bold tracking-tight text-white" data-testid="text-sidebar-company">{companyName}</span>
             </div>
-          )}
-          <span className="truncate text-base font-bold tracking-tight text-white" data-testid="text-sidebar-company">{companyName}</span>
-        </div>
-        <button
-          onClick={() => setOpen(false)}
-          className="md:hidden p-1.5 rounded-md text-white/60 hover:text-white hover:bg-white/10 transition-colors"
-          aria-label="Fechar menu"
-        >
-          <X className="w-5 h-5" />
-        </button>
+            <button
+              onClick={toggleCollapsed}
+              className="hidden md:block p-2 rounded-xl text-white/40 hover:text-white/80 hover:bg-white/[0.07] transition-all duration-200"
+              title="Recolher menu"
+              data-testid="button-collapse-sidebar"
+            >
+              <PanelLeftClose className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setOpen(false)}
+              className="md:hidden p-2 rounded-xl text-white/50 hover:text-white hover:bg-white/10 transition-all duration-200"
+              aria-label="Fechar menu"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </>
+        )}
       </div>
 
-      <div className="flex-1 py-3 px-3 overflow-y-auto space-y-0.5">
+      <div className={cn("flex-1 py-3 overflow-y-auto space-y-1", isCollapsed ? "px-1.5" : "px-3")}>
 
         {hasPermission(user, "dashboard") && (
-          <NavLink href="/" icon={LayoutDashboard} label={t("nav.dashboard")} exact />
+          <NavLink href="/" icon={LayoutDashboard} label={t("nav.dashboard")} exact collapsed={isCollapsed} />
         )}
 
         {hasPermission(user, "prospeccao") && (
-          <ExpandableNav href="/prospeccao" icon={Telescope} label={t("nav.prospeccao")} activePaths={["/prospeccao", "/geo-rural", "/anm", "/fii-fundos"]}>
-            <SubLink href="/prospeccao" icon={Briefcase} label="Negócios / Investidores" exact />
-            <SubLink href="/geo-rural" icon={TreePine} label="Terras / Fazendas" />
+          <ExpandableNav href="/prospeccao" icon={Telescope} label={t("nav.prospeccao")} activePaths={["/prospeccao", "/geo-rural", "/anm"]} collapsed={isCollapsed}>
+            <SubLink href="/prospeccao" icon={Search} label="Empresas" exact />
+            <SubLink href="/geo-rural" icon={TreePine} label="Fazendas" />
             <SubLink href="/anm" icon={Pickaxe} label="Jazidas" />
-            <SubLink href="/fii-fundos" icon={Home} label="FII / Fundos" />
           </ExpandableNav>
         )}
 
         {hasPermission(user, "ativos") && (
-          <ExpandableNav href="/ativos" icon={Layers} label={t("nav.ativos")}>
-            <SubLink href="/ativos/tipo/NEGOCIO" icon={Briefcase} label="Negócios / Investidores" />
-            <SubLink href="/ativos/tipo/TERRA" icon={TreePine} label="Terras / Fazendas" />
-            <SubLink href="/ativos/tipo/MINA" icon={Pickaxe} label="Jazidas" />
-            <SubLink href="/ativos/tipo/FII_CRI" icon={Home} label="FII / Fundos" />
-          </ExpandableNav>
-        )}
-
-        {hasPermission(user, "matching") && (
-          <NavLink href="/matching" icon={Target} label={t("nav.matching")} exact />
-        )}
-
-        {hasPermission(user, "matching") && (
-          <NavLink href="/mapa-conexoes" icon={Network} label="Mapa de Conexões" />
-        )}
-
-        {hasPermission(user, "crm") && (
-          <ExpandableNav href="/crm" icon={KanbanSquare} label="CRM" activePaths={["/crm", "/empresas", "/propostas", "/contratos", "/crm/onboarding"]}>
-            <SubLink href="/crm" icon={KanbanSquare} label={t("nav.kanban")} exact />
+          <ExpandableNav href="/ativos" icon={Layers} label={t("nav.ativos")} activePaths={["/ativos", "/empresas"]} collapsed={isCollapsed}>
             <SubLink href="/empresas" icon={Building2} label={t("nav.empresas")} />
-            <SubLink href="/crm/onboarding" icon={ClipboardCheck} label="Onboarding" />
-            <SubLink href="/propostas" icon={FileText} label={t("nav.propostas")} />
-            <SubLink href="/contratos" icon={FileSignature} label={t("nav.contratos")} />
+            <SubLink href="/ativos/tipo/TERRA" icon={TreePine} label="Fazendas" />
+            <SubLink href="/ativos/tipo/MINA" icon={Pickaxe} label="Jazidas" />
           </ExpandableNav>
         )}
 
-        {/* Portal e Honorários temporariamente ocultos
-        {hasPermission(user, "crm") && (
-          <NavLink href="/portal-admin" icon={Globe} label={t("nav.portal")} />
-        )}
 
-        {hasPermission(user, "crm") && (
-          <NavLink href="/honorarios" icon={DollarSign} label={t("nav.honorarios")} />
-        )}
-        */}
 
         {(user?.role === "admin" || user?.role === "manager") ? (
-          <ExpandableNav href="/configuracoes" icon={Settings2} label={t("nav.configuracoes")} activePaths={["/configuracoes", "/connectors", "/users", "/error-reports", "/sicar-worker"]}>
+          <ExpandableNav href="/configuracoes" icon={Settings2} label={t("nav.configuracoes")} activePaths={["/configuracoes", "/connectors", "/users", "/error-reports"]} collapsed={isCollapsed}>
             <SubLink href="/configuracoes" icon={Settings2} label="Geral" exact />
             {hasPermission(user, "connectors") && (
               <SubLink href="/connectors" icon={Plug} label="Connectors" />
@@ -312,62 +359,85 @@ export default function Sidebar() {
             {hasPermission(user, "users") && (
               <SubLink href="/users" icon={Users} label="Usuários" />
             )}
-            <SubLink href="/sicar-worker" icon={Activity} label="SICAR Worker" />
             <SubLink href="/error-reports" icon={Bug} label="Erros & Relatórios" />
           </ExpandableNav>
         ) : (
-          <NavLink href="/configuracoes" icon={Settings2} label={t("nav.configuracoes")} />
+          <NavLink href="/configuracoes" icon={Settings2} label={t("nav.configuracoes")} collapsed={isCollapsed} />
         )}
 
       </div>
 
-      <div className="p-4 border-t border-sidebar-border bg-sidebar-accent/30 shrink-0 space-y-3">
-        <div className="flex items-center justify-between px-1">
-          <LanguageSelector />
-          <ThemeToggleButton />
-        </div>
-        <div className="flex items-center gap-3">
-          <Avatar className="h-9 w-9 border border-sidebar-border shadow-sm shrink-0">
-            <AvatarFallback className="bg-sidebar-primary text-white font-bold text-sm">
-              {user?.username ? getInitials(user.username) : "U"}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white truncate">{user?.username}</p>
-            <p className="text-xs text-sidebar-foreground/50 truncate capitalize">{user?.role || "User"}</p>
+      <div className={cn("border-t border-white/[0.06] shrink-0", isCollapsed ? "px-1.5 py-3 space-y-2" : "px-4 py-4 space-y-3")}>
+        {isCollapsed ? (
+          <div className="flex flex-col items-center gap-2.5">
+            <ThemeToggleButton />
+            <Avatar className="h-8 w-8 border border-white/10" title={user?.username}>
+              <AvatarFallback className="bg-emerald-600/80 text-white font-semibold text-[10px]">
+                {user?.username ? getInitials(user.username) : "U"}
+              </AvatarFallback>
+            </Avatar>
+            <button
+              onClick={() => logout()}
+              className="p-2 rounded-xl hover:bg-white/[0.07] text-white/35 hover:text-white/70 transition-all duration-200"
+              title="Logout"
+              data-testid="button-logout"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
-          <button
-            onClick={() => logout()}
-            className="p-1.5 rounded-md hover:bg-sidebar-accent text-sidebar-foreground/50 hover:text-white transition-colors shrink-0"
-            title="Logout"
-            data-testid="button-logout"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
-        </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between px-0.5">
+              <LanguageSelector />
+              <ThemeToggleButton />
+            </div>
+            <div className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/[0.04] transition-all duration-200">
+              <Avatar className="h-9 w-9 border border-white/10 shrink-0">
+                <AvatarFallback className="bg-emerald-600/80 text-white font-semibold text-xs">
+                  {user?.username ? getInitials(user.username) : "U"}
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] font-semibold text-white truncate">{user?.username}</p>
+                <p className="text-[11px] text-white/35 truncate capitalize">{user?.role || "User"}</p>
+              </div>
+              <button
+                onClick={() => logout()}
+                className="p-2 rounded-xl hover:bg-white/[0.07] text-white/35 hover:text-white/70 transition-all duration-200 shrink-0"
+                title="Logout"
+                data-testid="button-logout"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </>
   );
 
   return (
     <>
-      <aside className="fixed inset-y-0 left-0 z-40 w-64 bg-sidebar-background text-sidebar-foreground border-r border-sidebar-border hidden md:flex flex-col shadow-xl">
-        {sidebarContent}
+      <aside className={cn(
+        "fixed inset-y-0 left-0 z-40 bg-sidebar-background text-sidebar-foreground border-r border-white/[0.04] hidden md:flex flex-col transition-all duration-300 ease-out",
+        collapsed ? "w-[60px]" : "w-60"
+      )}>
+        {sidebarContent(collapsed)}
       </aside>
 
       {open && (
         <div
-          className="md:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
+          className="md:hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
           onClick={() => setOpen(false)}
           aria-hidden="true"
         />
       )}
 
       <aside className={cn(
-        "md:hidden fixed inset-y-0 left-0 z-50 w-72 bg-sidebar-background text-sidebar-foreground flex flex-col shadow-2xl transition-transform duration-300 ease-in-out",
+        "md:hidden fixed inset-y-0 left-0 z-50 w-72 bg-sidebar-background text-sidebar-foreground flex flex-col shadow-2xl transition-transform duration-300 ease-out",
         open ? "translate-x-0" : "-translate-x-full"
       )}>
-        {sidebarContent}
+        {sidebarContent(false)}
       </aside>
     </>
   );

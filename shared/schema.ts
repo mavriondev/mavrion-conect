@@ -224,7 +224,6 @@ export interface CamposEspecificos {
   enriquecimentoCompleto?: any;
   iaAnalise?: string;
   iaPricing?: string;
-  iaDueDiligence?: string;
   aceitaPermuta?: string;
   iaEnrichment?: Record<string, any>;
 
@@ -240,6 +239,14 @@ export interface CamposEspecificos {
   ccirAreaTotalIncra?: string;
   ccirConsultadoEm?: string;
   ccirRawData?: any;
+
+  // Base fundiária do ativo minerário (sobre o polígono do processo)
+  sigefParcelas?: any;
+  sigefParcelasUpdatedAt?: string;
+  carImoveis?: any;
+  carImoveisUpdatedAt?: string;
+  ccirImoveis?: any;
+  ccirImoveisUpdatedAt?: string;
 
   [key: string]: any;
 }
@@ -848,6 +855,27 @@ export const scmProcessos = pgTable("scm_processos", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+export const seiConsultas = pgTable("sei_consultas", {
+  id: serial("id").primaryKey(),
+  /** NUP normalizado só com dígitos (ex.: 48054832070202414) — chave do cache */
+  nup: text("nup").notNull().unique(),
+  /** NUP como exibido pelo SEI (ex.: 48054.832070/2024-14) */
+  nupFormatado: text("nup_formatado"),
+  /** Chave "numero/ano" do processo ANM (link com scm_processos), quando conhecida */
+  processoScm: text("processo_scm"),
+  tipoProcedimento: text("tipo_procedimento"),
+  dataGeracao: text("data_geracao"),
+  interessados: jsonb("interessados").default([]),
+  documentos: jsonb("documentos").default([]),
+  andamentos: jsonb("andamentos").default([]),
+  rawHtml: text("raw_html"),
+  consultadoPor: integer("consultado_por"),
+  consultadoEm: timestamp("consultado_em"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_sei_processo_scm").on(table.processoScm),
+]);
 export const tahTitulares = pgTable("tah_titulares", {
   id: serial("id").primaryKey(),
   processo: text("processo").notNull(),
@@ -868,6 +896,73 @@ export const tahTitulares = pgTable("tah_titulares", {
   uniqueIndex("idx_tah_processo_ano").on(table.processo, table.anoBase),
 ]);
 
+// Eventos de processos minerários — microdados SCM dos dados abertos da ANM
+// (arquivo ProcessoEvento.txt do microdados-scm.zip). Tabela provisionada por
+// ensure-tables.ts (não passa pelo drizzle push).
+export const anmEventosProcessos = pgTable("anm_eventos_processos", {
+  id: serial("id").primaryKey(),
+  numero: integer("numero").notNull(),
+  ano: integer("ano").notNull(),
+  processo: text("processo").notNull(),
+  idEvento: integer("id_evento"),
+  descricaoEvento: text("descricao_evento"),
+  dtEvento: text("dt_evento"),
+  obEvento: text("ob_evento"),
+  publicacaoDou: text("publicacao_dou"),
+  importadoEm: timestamp("importado_em").defaultNow(),
+}, (table) => [
+  index("idx_anm_eventos_processo").on(table.numero, table.ano),
+]);
+
+export const cfemArrecadacao = pgTable("cfem_arrecadacao", {
+  id: serial("id").primaryKey(),
+  processo: text("processo").notNull().default(""),
+  anoProcesso: integer("ano_processo").notNull().default(0),
+  ano: integer("ano").notNull(),
+  cpfCnpj: text("cpf_cnpj").notNull().default(""),
+  tipoPfPj: text("tipo_pf_pj"),
+  substancia: text("substancia").notNull().default(""),
+  uf: text("uf"),
+  codigoMunicipio: text("codigo_municipio").notNull().default(""),
+  municipio: text("municipio"),
+  quantidade: doublePrecision("quantidade"),
+  unidade: text("unidade").notNull().default(""),
+  valorRecolhido: doublePrecision("valor_recolhido"),
+  registros: integer("registros").default(0),
+  importadoEm: timestamp("importado_em").defaultNow(),
+}, (table) => [
+  index("idx_cfem_processo").on(table.processo, table.anoProcesso),
+  index("idx_cfem_cnpj").on(table.cpfCnpj),
+  index("idx_cfem_municipio").on(table.codigoMunicipio),
+  index("idx_cfem_ano").on(table.ano),
+  uniqueIndex("idx_cfem_unique").on(table.processo, table.anoProcesso, table.ano, table.cpfCnpj, table.substancia, table.codigoMunicipio, table.unidade),
+]);
+// Dívida ativa da União (dados abertos trimestrais da PGFN), agregada por
+// devedor e categoria (FGTS, Previdenciário, Não Previdenciário).
+export const pgfnDividaAtiva = pgTable("pgfn_divida_ativa", {
+  id: serial("id").primaryKey(),
+  cpfCnpj: text("cpf_cnpj").notNull(),
+  tipoPessoa: text("tipo_pessoa"),
+  nomeDevedor: text("nome_devedor"),
+  uf: text("uf"),
+  categoria: text("categoria").notNull(), // FGTS | PREVIDENCIARIO | NAO_PREVIDENCIARIO
+  inscricoes: integer("inscricoes").notNull().default(0),
+  valorConsolidado: doublePrecision("valor_consolidado").notNull().default(0),
+  referencia: text("referencia").notNull(), // ex.: 2026_trimestre_02
+  importadoEm: timestamp("importado_em").defaultNow(),
+}, (table) => [
+  index("idx_pgfn_cnpj").on(table.cpfCnpj),
+  uniqueIndex("idx_pgfn_unique").on(table.cpfCnpj, table.categoria),
+]);
+
+// Status persistente de importações de bases externas (CFEM, SIGBM, ...).
+// Uma linha por fonte; payload guarda o resultado completo da última rodada.
+export const importStatus = pgTable("import_status", {
+  fonte: text("fonte").primaryKey(),
+  payload: jsonb("payload").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const ibgeMunicipios = pgTable("ibge_municipios", {
   id: serial("id").primaryKey(),
   codigoIbge: integer("codigo_ibge").notNull().unique(),
@@ -887,3 +982,52 @@ export const companyRejectionLog = pgTable("company_rejection_log", {
   rejectedAt: timestamp("rejected_at").defaultNow(),
 });
 
+// === TEXTOS EXTRAÍDOS DE DOCUMENTOS DE ATIVOS (lidos pela IA) ===
+export const assetDocumentTexts = pgTable("asset_document_texts", {
+  id: serial("id").primaryKey(),
+  orgId: integer("org_id").references(() => organizations.id),
+  assetId: integer("asset_id").references(() => assets.id),
+  fileId: text("file_id").notNull(),
+  fileName: text("file_name").notNull(),
+  mimeType: text("mime_type"),
+  status: text("status").notNull().default("processando"), // processando | concluido | sem_texto | erro
+  metodo: text("metodo"), // pdf | word | txt | visao | visao_pdf
+  texto: text("texto"),
+  erro: text("erro"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_asset_doc_texts_asset").on(table.assetId),
+  uniqueIndex("idx_asset_doc_texts_file").on(table.fileId),
+]);
+export const insertAssetDocumentTextSchema = createInsertSchema(assetDocumentTexts).omit({ id: true, createdAt: true, updatedAt: true });
+export type AssetDocumentText = typeof assetDocumentTexts.$inferSelect;
+export type InsertAssetDocumentText = z.infer<typeof insertAssetDocumentTextSchema>;
+
+
+export const sigbmBarragens = pgTable("sigbm_barragens", {
+  id: serial("id").primaryKey(),
+  idAnm: integer("id_anm").notNull().unique(),
+  nome: text("nome"),
+  empreendedor: text("empreendedor"),
+  cpfCnpj: text("cpf_cnpj"),
+  nomeMina: text("nome_mina"),
+  uf: text("uf"),
+  municipio: text("municipio"),
+  latitude: doublePrecision("latitude"),
+  longitude: doublePrecision("longitude"),
+  categoriaRisco: text("categoria_risco"),
+  danoPotencial: text("dano_potencial"),
+  necessitaPaebm: text("necessita_paebm"),
+  inseridaPnsb: text("inserida_pnsb"),
+  nivelEmergencia: text("nivel_emergencia"),
+  situacaoOperacional: text("situacao_operacional"),
+  minerioPrincipal: text("minerio_principal"),
+  alturaAtual: doublePrecision("altura_atual"),
+  volumeAtual: doublePrecision("volume_atual"),
+  pessoasAfetadas: text("pessoas_afetadas"),
+  importadoEm: timestamp("importado_em").defaultNow(),
+}, (table) => [
+  index("idx_sigbm_cnpj").on(table.cpfCnpj),
+  index("idx_sigbm_uf").on(table.uf),
+]);

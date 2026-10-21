@@ -1,16 +1,14 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -21,11 +19,7 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Plus, Search, MapPin, DollarSign, Ruler, Building2, Eye, Pencil,
-  Trash2, Loader2, Filter, X, FileText, Layers, ChevronRight, TreePine,
-  Pickaxe, Briefcase, Home, Wheat, Factory, Mountain, Download, AlertTriangle,
-} from "lucide-react";
+import { Plus, Search, MapPin, DollarSign, Ruler, Building2, Eye, Pencil, Trash2, Filter, X, FileText, Layers, TreePine, Pickaxe, Briefcase, Home, Wheat, Factory, Mountain, Download, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -215,8 +209,8 @@ export function AtivoFormDialog({
   );
 
   const { data: companies = [] } = useQuery({
-    queryKey: ["/api/crm/companies"],
-    queryFn: () => apiRequest("GET", "/api/crm/companies").then(r => r.json()),
+    queryKey: ["/api/companies"],
+    queryFn: () => apiRequest("GET", "/api/companies").then(r => r.json()),
   });
 
   const importCompanyData = useCallback((companyId: string) => {
@@ -242,6 +236,18 @@ export function AtivoFormDialog({
     });
   }, [companies, toast]);
 
+  // Somente as chaves específicas do tipo que este formulário realmente edita
+  // (ex.: processoAnm, codigoCar). O restante de camposEspecificos (dados de
+  // enriquecimento) nunca é reenviado, evitando sobrescrever com cópia velha.
+  const camposDoFormulario = () => {
+    const gerenciadas: Record<string, any> = {};
+    for (const campo of CAMPOS_ESPECIFICOS[form.type] || []) {
+      const v = (form.camposEspecificos as any)?.[campo.key];
+      if (v !== undefined) gerenciadas[campo.key] = v;
+    }
+    return gerenciadas;
+  };
+
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title.trim()) { toast({ title: "Título é obrigatório", variant: "destructive" }); return; }
@@ -262,8 +268,11 @@ export function AtivoFormDialog({
         linkedCompanyId: (form.linkedCompanyId && form.linkedCompanyId !== "none")
           ? parseInt(form.linkedCompanyId) : null,
         statusAtivo: form.statusAtivo || "ativo",
+        // Envia somente as chaves que o formulário gerencia — o servidor faz
+        // merge atômico. Espalhar form.camposEspecificos (cópia da abertura do
+        // diálogo) regravaria enriquecimentos com valores desatualizados.
         camposEspecificos: {
-          ...(form.camposEspecificos ?? {}),
+          ...camposDoFormulario(),
           origemAtivo: form.origemAtivo || "prospeccao_interna",
           ...(form.origemAtivo === "oferta_recebida" || form.origemAtivo === "indicacao" ? {
             ofertanteNome: form.ofertanteNome || null,
@@ -279,13 +288,13 @@ export function AtivoFormDialog({
         },
       };
       if (isEdit) {
-        await apiRequest("PATCH", `/api/matching/assets/${initial.id}`, payload);
+        await apiRequest("PATCH", `/api/assets/${initial.id}`, payload);
         toast({ title: "Ativo atualizado!" });
       } else {
-        await apiRequest("POST", "/api/matching/assets", payload);
+        await apiRequest("POST", "/api/assets", payload);
         toast({ title: "Ativo cadastrado!" });
       }
-      queryClient.invalidateQueries({ queryKey: ["/api/matching/assets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
       onSaved();
       onOpenChange(false);
     } catch {
@@ -560,7 +569,7 @@ export function AtivoFormDialog({
               🔒 Exclusividade
             </p>
             <p className="text-xs text-red-700 dark:text-red-400">
-              Se preenchido, este ativo fica bloqueado para novo matching até a data informada.
+              Data limite da exclusividade deste ativo.
             </p>
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -863,9 +872,9 @@ export default function AtivosPage({ filterType }: { filterType?: string }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: assets = [], isLoading } = useQuery({
-    queryKey: ["/api/matching/assets"],
-    queryFn: () => apiRequest("GET", "/api/matching/assets").then(r => r.json()),
+  const { data: assets = [], isLoading, isError } = useQuery({
+    queryKey: ["/api/assets"],
+    queryFn: () => apiRequest("GET", "/api/assets").then(r => r.json()),
   });
 
   const [search, setSearch] = useState("");
@@ -912,8 +921,8 @@ export default function AtivosPage({ filterType }: { filterType?: string }) {
 
   const handleDelete = async () => {
     if (!deletingId) return;
-    await apiRequest("DELETE", `/api/matching/assets/${deletingId}`);
-    queryClient.invalidateQueries({ queryKey: ["/api/matching/assets"] });
+    await apiRequest("DELETE", `/api/assets/${deletingId}`);
+    queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
     setDeletingId(null);
     toast({ title: "Ativo excluído" });
   };
@@ -924,7 +933,7 @@ export default function AtivosPage({ filterType }: { filterType?: string }) {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold tracking-tight">Portfólio de Ativos</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Portfólio de Ativos</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             Gerencie terras, minas, negócios e outros ativos do portfólio
           </p>
@@ -1052,14 +1061,22 @@ export default function AtivosPage({ filterType }: { filterType?: string }) {
         </Card>
       )}
 
-      {/* Results */}
-      {isLoading ? (
+      {isError && (
+        <div className="text-center py-16 border-2 border-dashed border-red-200 rounded-xl" data-testid="ativos-error">
+          <AlertTriangle className="w-12 h-12 mx-auto text-red-400 mb-3" />
+          <h3 className="font-semibold text-lg mb-1">Erro ao carregar ativos</h3>
+          <p className="text-sm text-muted-foreground mb-4">Não foi possível buscar os dados. Tente recarregar a página.</p>
+          <Button variant="outline" onClick={() => window.location.reload()}>Recarregar</Button>
+        </div>
+      )}
+
+      {!isError && isLoading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[...Array(6)].map((_, i) => (
             <div key={i} className="h-40 bg-muted rounded-xl animate-pulse" />
           ))}
         </div>
-      ) : filtered.length === 0 ? (
+      ) : !isError && filtered.length === 0 ? (
         <div className="text-center py-16 border-2 border-dashed border-border rounded-xl">
           <Layers className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
           <h3 className="font-semibold text-lg mb-1">

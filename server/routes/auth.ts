@@ -43,7 +43,7 @@ export function registerAuthRoutes(app: Express, db: NodePgDatabase<any>) {
       if (existing.length > 0) return res.status(409).json({ message: "Usuário já existe" });
       const hashed = await hashPassword(password);
       const [newUser] = await db.insert(users).values({
-        username, password: hashed, role, permissions: permissions || {}, orgId: getOrgId(),
+        username, password: hashed, role, permissions: permissions || {}, orgId: getOrgId(req),
       } as any).returning({ id: users.id, username: users.username, role: users.role, permissions: users.permissions, createdAt: users.createdAt });
       res.status(201).json(newUser);
     } catch (err) {

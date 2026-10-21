@@ -3,11 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import {
-  LayoutDashboard, Magnet, Telescope, Building2, KanbanSquare, Target,
-  FileText, FileSignature, Layers, Map, TreePine, BarChart2, Plug, Users, Settings2,
-  Search, ChevronDown, ChevronRight, ArrowRight, Zap, BookOpen, Globe, Activity, Bug,
-} from "lucide-react";
+import { LayoutDashboard, Telescope, Building2, Layers, Map, TreePine, BarChart2, Plug, Users, Settings2, Search, ChevronDown, ChevronRight, ArrowRight, Zap, BookOpen, Activity, Bug } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Section {
@@ -88,102 +84,13 @@ const MANUAL_SECTIONS: Section[] = [
       },
       {
         title: "Dados Verificados na empresa",
-        content: "Na aba de detalhe, a secao 'Dados Verificados' (com borda verde) permite salvar: telefone principal, email, WhatsApp, nome do contato, cargo e observacoes. Esses dados ficam salvos e sao usados em todo o sistema — no CRM, nas propostas e no matching."
+        content: "Na aba de detalhe, a secao 'Dados Verificados' (com borda verde) permite salvar: telefone principal, email, WhatsApp, nome do contato, cargo e observacoes. Esses dados ficam salvos e sao usados em todo o sistema — nos cadastros e nas consultas."
       },
       {
         title: "Enrichment Web",
         content: "O botao 'Enriquecer' busca informacoes adicionais na web (telefones, emails, redes sociais) usando um scraper automatico. Os dados encontrados sao marcados como 'Enrichment Web' para diferencia-los dos dados da Receita Federal."
       }
     ]
-  },
-  {
-    id: "crm",
-    icon: KanbanSquare,
-    title: "CRM Kanban",
-    badge: "Pipeline",
-    badgeColor: "bg-green-500/10 text-green-600 border-green-200",
-    summary: "Painel Kanban visual para gerenciar deals em diferentes estagios. Dois pipelines: Investidor e Dono de Ativo.",
-    subsections: [
-      {
-        title: "Dois pipelines",
-        content: "O CRM tem dois pipelines separados: (1) Pipeline Investidor — para deals com fundos e investidores que buscam adquirir ativos. (2) Pipeline Dono de Ativo — para deals com proprietarios que querem vender. As abas no topo alternam entre eles."
-      },
-      {
-        title: "Estagios do Kanban",
-        content: "Cada pipeline tem colunas representando estagios do negocio (ex: Novo, Contato Inicial, Due Diligence, Proposta, Negociacao, Fechamento). Arraste os cards entre colunas conforme o deal avanca. O sistema registra a movimentacao automaticamente."
-      },
-      {
-        title: "Slide-over de detalhe",
-        content: "Ao clicar em um deal, abre um painel lateral com todos os detalhes: valor, empresa associada, notas, historico. Se a empresa tem Dados Verificados, eles aparecem em destaque com borda verde, facilitando o contato direto com o decisor."
-      },
-      {
-        title: "Criar deal manualmente",
-        content: "Voce pode criar deals diretamente no CRM clicando em 'Novo Deal'. Preencha empresa, titulo, valor e pipeline. Deals tambem sao criados automaticamente pelo Matching."
-      }
-    ],
-    flow: "Matching (Aceitar) → Deal criado → Kanban → Arrastar entre estágios → Fechamento"
-  },
-  {
-    id: "matching",
-    icon: Target,
-    title: "Deal Matching",
-    badge: "Motor de Sugestao",
-    badgeColor: "bg-purple-500/10 text-purple-600 border-purple-200",
-    summary: "Motor inteligente que cruza automaticamente ativos disponiveis com perfis de investidores, gerando sugestoes de negocio com score de compatibilidade.",
-    subsections: [
-      {
-        title: "Como funciona o Matching",
-        content: "O Matching e como um 'casamento' automatico entre ativos e investidores. Voce cadastra os ativos (fazendas, minas, negocios) com tipo, preco e localizacao. Depois cadastra perfis de investidores com suas preferencias (que tipos de ativo buscam, ticket minimo/maximo, regioes de interesse). O motor cruza tudo e gera sugestoes."
-      },
-      {
-        title: "Score de compatibilidade",
-        content: "Cada sugestao recebe um score de 0 a 100%, calculado assim: Tipo de ativo compativel (+40 pontos) — o tipo do ativo bate com as preferencias do investidor. Preco dentro do ticket (+40 pontos) — o preco pedido esta entre o ticket minimo e maximo do investidor. Regiao de interesse (+20 pontos) — a localizacao do ativo esta em uma regiao que o investidor busca. Score verde (80%+): match excelente. Amarelo (50-79%): match parcial. Vermelho (abaixo de 50%): match fraco."
-      },
-      {
-        title: "As tres abas",
-        content: "Sugestoes — mostra os matches gerados, com cards contendo o ativo, o investidor, o score e a analise detalhada. Voce pode aceitar ou rejeitar cada sugestao. Ativos — lista todos os ativos cadastrados no motor de matching. Voce pode adicionar novos ativos aqui. Investidores — lista todos os perfis de investidor cadastrados, com seus tipos de ativo, ticket e regioes."
-      },
-      {
-        title: "Executar Matching",
-        content: "Clique no botao 'Executar Matching' para rodar o motor. Ele varre todos os ativos e investidores, calcula os scores e gera novas sugestoes. Matches que ja existem nao sao duplicados. Use o filtro de score minimo para ver apenas os melhores resultados."
-      },
-      {
-        title: "Exemplo pratico",
-        content: "Voce cadastra o ativo 'Fazenda 1000ha em Goias — R$ 5M'. Cadastra o investidor 'Fundo Capital Verde' que busca TERRA e AGRO, ticket de R$ 3M a R$ 10M, regioes Centro-Oeste. Ao executar o matching, o sistema gera uma sugestao com score 100% (tipo bate, preco esta no range, regiao bate). Voce aceita e cria um deal no CRM para essa oportunidade."
-      },
-      {
-        title: "Aceitar vs Rejeitar",
-        content: "Aceitar um match sinaliza que voce vai prosseguir com a oportunidade — ideal criar um deal no CRM a partir dele. Rejeitar remove o match da lista ativa. Isso ajuda a manter o pipeline limpo e focado nas melhores oportunidades."
-      }
-    ],
-    flow: "Cadastrar Ativos → Cadastrar Investidores → Executar Matching → Sugestões com Score → Aceitar → Criar Deal no CRM"
-  },
-  {
-    id: "propostas",
-    icon: FileText,
-    title: "Propostas",
-    badge: "Documentos",
-    badgeColor: "bg-orange-500/10 text-orange-600 border-orange-200",
-    summary: "Gerador de propostas comerciais com templates editaveis, expressoes dinamicas que puxam dados do CRM, e exportacao para PDF.",
-    subsections: [
-      {
-        title: "Templates com editor rico",
-        content: "Na aba 'Templates', voce cria modelos de proposta usando o editor Tiptap (similar ao Google Docs). Formatacao completa: titulos, negrito, italico, listas, alinhamento, fontes e cores. Cada template tem um tipo: INVESTIDOR ou DONO DE ATIVO."
-      },
-      {
-        title: "Expressoes dinamicas",
-        content: "O grande diferencial e o uso de expressoes como {{empresa.razao_social}}, {{ativo.preco}}, {{data.hoje}}. Na hora de gerar a proposta, essas expressoes sao substituidas automaticamente pelos dados reais. Grupos disponiveis: Empresa (nome, CNPJ, cidade, estado, telefone, email), Ativo (titulo, tipo, preco, area, localizacao, matricula), Investidor (nome, ticket, regioes), Minha Empresa (nome, logo), Data (hoje por extenso, mes/ano)."
-      },
-      {
-        title: "Gerar proposta",
-        content: "Na aba 'Propostas Geradas', clique em 'Gerar Proposta'. Selecione o template, a empresa e o ativo. O sistema substitui todas as expressoes e cria um documento final pronto para enviar. Voce pode visualizar o resultado e exportar para PDF."
-      },
-      {
-        title: "Exportar PDF",
-        content: "O botao PDF gera um arquivo PDF profissional a partir da proposta renderizada. O PDF mantem a formatacao, fontes e layout do editor. Ideal para enviar por email ou imprimir."
-      }
-    ],
-    flow: "Criar Template → Inserir Expressões → Gerar Proposta (empresa + ativo) → Revisar → Exportar PDF"
   },
   {
     id: "ativos",
@@ -232,8 +139,8 @@ const MANUAL_SECTIONS: Section[] = [
         content: "Os resultados aparecem como poligonos coloridos no mapa Leaflet. Ao clicar em um poligono, um popup mostra os detalhes: Titular, Fase (badge azul), Substancia, Uso, Area, UF, Ano e Ultimo Evento (badge amarelo). Isso permite avaliar rapidamente se a area tem potencial."
       },
       {
-        title: "Da ANM ao CRM",
-        content: "Ao identificar um processo interessante (ex: uma area de calcario em 'Disponibilidade' no MT), voce pode importar como ativo e criar um deal no CRM para prospectar o titular ou requerer a area."
+        title: "Da ANM ao cadastro de ativos",
+        content: "Ao identificar um processo interessante (ex: uma area de calcario em 'Disponibilidade' no MT), voce pode importar como ativo para pesquisar o titular e os dados da area."
       }
     ],
     flow: "Filtrar (UF + Substância + Fase) → Ver no Mapa → Clicar Polígono → Analisar Detalhes → Importar como Ativo"
@@ -284,64 +191,6 @@ const MANUAL_SECTIONS: Section[] = [
     ]
   },
   {
-    id: "contratos",
-    icon: FileSignature,
-    title: "Contratos",
-    badge: "Comercial",
-    badgeColor: "bg-indigo-500/10 text-indigo-600 border-indigo-200",
-    summary: "Crie templates de contratos com variaveis dinamicas e gere documentos prontos para assinatura com exportacao PDF.",
-    subsections: [
-      {
-        title: "O que sao Contratos",
-        content: "O modulo de Contratos funciona igual ao de Propostas: voce cria templates com editor visual (Tiptap), insere variaveis como {{empresa.nome}}, {{ativo.titulo}}, {{contrato.foro}}, e depois gera o contrato final com os dados reais preenchidos automaticamente."
-      },
-      {
-        title: "Tipos de contrato",
-        content: "Existem 5 tipos: Compra e Venda, Cessao de Direitos, NDA (Acordo de Confidencialidade), Parceria e Custom (personalizado). Cada tipo serve como tag organizacional para facilitar a busca."
-      },
-      {
-        title: "Variaveis disponiveis",
-        content: "Sao 6 grupos de variaveis: Empresa (nome, CNPJ, endereco, etc.), Ativo (titulo, tipo, area, preco, etc.), Investidor (nome, perfil, contato), Minha Empresa (nome, CNPJ, responsavel), Data (hoje, extenso, ano) e Contrato (valor, prazo, foro, garantia, objeto)."
-      },
-      {
-        title: "Gerar contrato",
-        content: "Na aba 'Contratos Gerados', clique em 'Gerar Contrato'. Selecione um template, a empresa, o ativo (opcional) e preencha campos como foro, prazo e valor. O sistema substitui todas as variaveis e gera o documento final."
-      },
-      {
-        title: "Exportar PDF",
-        content: "Apos gerar o contrato, voce pode visualiza-lo e exportar como PDF para envio ou assinatura. O PDF mantem a formatacao do editor."
-      }
-    ],
-    flow: "Criar Template → Inserir Variáveis → Gerar Contrato (empresa + ativo) → Preview → Exportar PDF"
-  },
-  {
-    id: "portal-investidor",
-    icon: Globe,
-    title: "Portal do Investidor",
-    badge: "Comercial",
-    badgeColor: "bg-indigo-500/10 text-indigo-600 border-indigo-200",
-    summary: "Portal publico para apresentar oportunidades de investimento. Investidores demonstram interesse e seus dados sao rastreados no painel admin.",
-    subsections: [
-      {
-        title: "O que e o Portal",
-        content: "O Portal do Investidor e uma pagina publica (acessivel sem login) que apresenta os ativos/negocios publicados pela equipe. Investidores interessados preenchem um formulario com nome, email, telefone e empresa para demonstrar interesse."
-      },
-      {
-        title: "Nivel de visibilidade",
-        content: "Cada publicacao pode ter nivel 'Teaser' (mostra tipo, regiao e area, valor aparece como 'Sob consulta') ou 'Completo' (mostra todos os dados publicos incluindo valor). Dados sensiveis como matricula e empresa proprietaria nunca sao expostos."
-      },
-      {
-        title: "Admin do Portal",
-        content: "No painel interno (/portal-admin), voce gerencia as publicacoes: criar nova publicacao vinculada a um ativo, publicar/arquivar, e acompanhar os interessados que enviaram formulario. Cada interessado pode ter status: Novo, Contatado ou Fechado."
-      },
-      {
-        title: "Conformidade legal",
-        content: "O portal segue boas praticas para o mercado brasileiro: teasers publicos com acesso completo mediante cadastro, rastreabilidade dos interessados, e dados sensiveis protegidos. Isso atende requisitos de LGPD e regulacao CVM para apresentacao de oportunidades."
-      }
-    ],
-    flow: "Admin publica ativo → Portal exibe teaser → Investidor preenche formulário → Admin recebe no painel → Contato e negociação"
-  },
-  {
     id: "status-servicos",
     icon: Activity,
     title: "Status de Servicos Externos",
@@ -387,7 +236,7 @@ const MANUAL_SECTIONS: Section[] = [
     subsections: [
       {
         title: "Papeis e permissoes",
-        content: "Admin: acesso total a todos os modulos, incluindo Connectors, Usuarios e Configuracoes. Manager: acesso a Dashboard, Prospeccao, Empresas, CRM, Matching, Ativos e Propostas. Operador: acesso a Dashboard, Prospeccao, Empresas, CRM, Matching e Ativos. As permissoes podem ser customizadas por usuario."
+        content: "Admin: acesso total a todos os modulos, incluindo Connectors, Usuarios e Configuracoes. Manager: acesso a Dashboard, Prospeccao, Empresas e Ativos. Operador: acesso a Dashboard, Prospeccao, Empresas e Ativos. As permissoes podem ser customizadas por usuario."
       },
       {
         title: "Gerenciar usuarios",
@@ -441,13 +290,7 @@ const FLUXO_COMPLETO = [
   { step: "1", label: "Prospectar", desc: "Buscar empresas por CNPJ, CNAE ou filtros avancados", module: "prospeccao" },
   { step: "2", label: "Importar Empresa", desc: "Salvar a empresa na base para acompanhamento", module: "empresas" },
   { step: "3", label: "Verificar Contato", desc: "Pesquisar e confirmar dados de contato na página da empresa", module: "empresas" },
-  { step: "4", label: "Promover a Deal", desc: "Criar deal no CRM com dados verificados pre-preenchidos", module: "crm" },
   { step: "5", label: "Cadastrar Ativo", desc: "Registrar o imovel/mina/negocio com preco e detalhes", module: "ativos" },
-  { step: "6", label: "Matching", desc: "Rodar o motor para casar ativo com investidor ideal", module: "matching" },
-  { step: "7", label: "Proposta", desc: "Gerar documento comercial com dados reais e exportar PDF", module: "propostas" },
-  { step: "8", label: "Contrato", desc: "Gerar contrato com template e variaveis preenchidas", module: "contratos" },
-  { step: "9", label: "Portal", desc: "Publicar ativo no portal para captar investidores", module: "portal-investidor" },
-  { step: "10", label: "Fechar", desc: "Mover deal no Kanban ate o fechamento", module: "crm" },
 ];
 
 function SectionCard({ section, isExpanded, onToggle }: {
@@ -601,7 +444,7 @@ export default function ManualPage() {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Buscar no manual... (ex: matching, proposta, CNPJ)"
+            placeholder="Buscar no manual... (ex: jazidas, ANM, CNPJ)"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="pl-9"

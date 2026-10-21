@@ -322,118 +322,541 @@ export interface SigefParcelaDetalhe extends SigefParcela {
   centroide?: { lat: number; lon: number };
 }
 
-export async function consultarParcelasSIGEF(cnpj: string): Promise<SigefParcela[]> {
-  const apiKey = process.env.INFOSIMPLES_API_KEY;
-  if (!apiKey) {
-    console.warn('[SIGEF] INFOSIMPLES_API_KEY não configurada');
-    return [];
-  }
-
-  try {
-    const cnpjLimpo = cnpj.replace(/\D/g, '');
-    const res = await axios.post(
-      'https://api.infosimples.com/api/v2/consultas/incra/sigef/parcelas',
-      { cnpj: cnpjLimpo, token: apiKey },
-      { timeout: 30000 }
-    );
-
-    const parcelas = res.data?.data || [];
-    return parcelas.map((p: any) => ({
-      codigo: p.codigo || p.code || '',
-      area: parseFloat(p.area_ha || p.area || 0),
-      municipio: p.municipio || '',
-      uf: p.uf || p.estado || '',
-      situacao: p.situacao || p.status || '',
-      matricula: p.matricula || '',
-      cartorio: p.cartorio || '',
-      dataRegistro: p.data_registro || '',
-    }));
-  } catch (err) {
-    console.error('[SIGEF] Erro ao consultar parcelas:', err);
-    return [];
-  }
+export interface CCIRResult {
+  proprietarios: Array<{ nome: string; cpfCnpj: string; tipo?: string }>;
+  denominacao: string;
+  codigoIncra: string;
+  nirf: string;
+  modulosFiscais: number | null;
+  classificacaoFundiaria: string;
+  fracaoMinimaParcelamento: string;
+  situacaoCadastral: string;
+  dataEmissao: string;
+  areaTotalIncra: string;
+  rawData: any;
 }
 
-export async function consultarDetalhesParcela(codigoParcela: string): Promise<SigefParcelaDetalhe | null> {
-  const apiKey = process.env.INFOSIMPLES_API_KEY;
-  if (!apiKey) return null;
+export async function consultarParcelasSIGEF(_cnpj: string): Promise<SigefParcela[]> {
+  console.warn('[SIGEF] consultarParcelasSIGEF por CNPJ desativado (InfoSimples removido). Use consultarSIGEFPublicoPorCoordenadas.');
+  return [];
+}
 
+async function sigefRequestWithRetry(url: string, options: any, maxRetries = 2): Promise<any> {
+  let lastError: any = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await axios.get(url, options);
+    } catch (err: any) {
+      lastError = err;
+      const status = err.response?.status;
+      if (status === 404 || status === 400) {
+        throw err;
+      }
+      const isRetryable = !status || status >= 500 || err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' || err.code === 'ECONNRESET';
+      if (!isRetryable || attempt >= maxRetries) {
+        throw err;
+      }
+      const delay = Math.min(1000 * Math.pow(2, attempt), 4000);
+      console.log(`[SIGEF] Retry ${attempt + 1}/${maxRetries} após ${delay}ms para ${url.substring(0, 80)}...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw lastError;
+}
+
+export async function consultarSIGEFPorDocumento(cpfCnpj: string): Promise<CCIRResult | null> {
   try {
-    const res = await axios.post(
-      'https://api.infosimples.com/api/v2/consultas/incra/sigef/parcela/detalhes',
-      { codigo: codigoParcela, token: apiKey },
-      { timeout: 30000 }
-    );
+    const docLimpo = cpfCnpj.replace(/\D/g, '');
+    if (docLimpo.length < 11) return null;
 
-    const data = res.data?.data?.[0] || {};
-    const verticesRaw = data.vertices || data.pontos || [];
-    const vertices = verticesRaw.map((v: any) => ({
-      lat: parseFloat(v.lat || v.latitude || 0),
-      lon: parseFloat(v.lon || v.longitude || 0),
-    }));
+    console.log(`[SIGEF-DOC] Consultando parcelas por documento: ${docLimpo.substring(0, 3)}***`);
 
-    let centroide = undefined;
-    if (vertices.length > 0) {
-      const avgLat = vertices.reduce((s: number, v: any) => s + v.lat, 0) / vertices.length;
-      const avgLon = vertices.reduce((s: number, v: any) => s + v.lon, 0) / vertices.length;
-      centroide = { lat: avgLat, lon: avgLon };
+    const SIGEF_PER_REQUEST_TIMEOUT = 10000;
+
+    const wfsEndpoints = [
+      { base: 'https://sigef.incra.gov.br/geo/wfs', typeName: 'parcela_publica', geomField: 'geom' },
+      { base: 'https://sigef.incra.gov.br/geo/parcela/wfs', typeName: 'sigef_publica:parcela_publica', geomField: 'geom' },
+    ];
+
+    let features: any[] = [];
+    let allFailed = true;
+    let lastError: any = null;
+
+    for (const endpoint of wfsEndpoints) {
+      const cqlFilter = `detentor_cpf_cnpj='${docLimpo}'`;
+      const params = new URLSearchParams({
+        service: 'WFS',
+        version: '1.0.0',
+        request: 'GetFeature',
+        typeName: endpoint.typeName,
+        outputFormat: 'application/json',
+        CQL_FILTER: cqlFilter,
+        maxFeatures: '10',
+      });
+
+      try {
+        const res = await sigefRequestWithRetry(`${endpoint.base}?${params.toString()}`, {
+          timeout: SIGEF_PER_REQUEST_TIMEOUT,
+          headers: { 'Accept': 'application/json' },
+        });
+
+        allFailed = false;
+        if (res.data?.features && Array.isArray(res.data.features) && res.data.features.length > 0) {
+          console.log(`[SIGEF-DOC] ${endpoint.base} retornou ${res.data.features.length} parcela(s) por documento`);
+          features = res.data.features;
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        const status = err.response?.status || 'N/A';
+        console.warn(`[SIGEF-DOC] ${endpoint.base} falhou (status=${status}): ${err.message}`);
+      }
     }
 
+    if (features.length === 0) {
+      if (allFailed && lastError) {
+        const isTimeout = lastError.code === 'ECONNABORTED' || lastError.code === 'ETIMEDOUT';
+        const sigefError = new Error(isTimeout ? 'SIGEF não respondeu (timeout)' : `SIGEF erro: ${lastError.message}`);
+        (sigefError as any).code = isTimeout ? 'ECONNABORTED' : 'SIGEF_ERROR';
+        throw sigefError;
+      }
+      console.log('[SIGEF-DOC] Nenhuma parcela encontrada por documento');
+      return null;
+    }
+
+    const feat = features[0];
+    const props = feat.properties || {};
+
+    const codigo = props.parcela_codigo || props.codigo || props.code || props.parcela_co || props.cod_parcela || '';
+    const detentorNome = props.detentor_nome || props.nome_detentor || props.nome || props.proprietario || '';
+    const detentorDoc = props.detentor_cpf_cnpj || props.cpf_cnpj || props.documento || props.cpf || props.cnpj || '';
+    const detentorTipo = props.detentor_tipo || props.tipo_detentor || props.tipo || '';
+    const areaHa = parseFloat(props.area_hectare || props.area_ha || props.area || 0);
+    const municipio = props.municipio_nome || props.municipio || props.nome_municipio || '';
+    const uf = props.uf || props.estado || props.sigla_uf || '';
+    const situacao = props.situacao || props.status || props.situacao_parcela || '';
+    const matricula = props.matricula || props.num_matricula || '';
+    const cartorio = props.cartorio || props.serventia || props.nome_cartorio || '';
+    const denominacao = props.denominacao || props.nome_imovel || '';
+    const dataRegistro = props.data_registro || props.data_certificacao || props.data_submissao || '';
+
+    console.log(`[SIGEF-DOC] Parcela encontrada: código=${codigo}, área=${areaHa}ha, ${municipio}/${uf}`);
+
+    const proprietarios: Array<{ nome: string; cpfCnpj: string; tipo?: string }> = [];
+
+    if (detentorNome || detentorDoc) {
+      proprietarios.push({
+        nome: detentorNome,
+        cpfCnpj: mascararDocumento(detentorDoc),
+        tipo: detentorTipo || 'Detentor SIGEF',
+      });
+    }
+
+    for (const f of features.slice(1)) {
+      const fp = f.properties || {};
+      const fNome = fp.detentor_nome || fp.nome_detentor || fp.nome || '';
+      const fDoc = fp.detentor_cpf_cnpj || fp.cpf_cnpj || fp.documento || '';
+      const fTipo = fp.detentor_tipo || fp.tipo_detentor || fp.tipo || '';
+      if (fNome || fDoc) {
+        const docMascarado = mascararDocumento(fDoc);
+        if (!proprietarios.some(p => p.nome === fNome && p.cpfCnpj === docMascarado)) {
+          proprietarios.push({ nome: fNome, cpfCnpj: docMascarado, tipo: fTipo || 'Detentor SIGEF' });
+        }
+      }
+    }
+
+    const modulosFiscais = props.modulos_fiscais != null ? parseFloat(props.modulos_fiscais) : null;
+    let classificacao = '';
+    if (modulosFiscais !== null) {
+      if (modulosFiscais <= 1) classificacao = 'Minifúndio';
+      else if (modulosFiscais <= 4) classificacao = 'Pequena propriedade';
+      else if (modulosFiscais <= 15) classificacao = 'Média propriedade';
+      else classificacao = 'Grande propriedade';
+    }
+
+    const denominacaoFinal = denominacao || (municipio ? `Parcela Certificada — ${municipio}/${uf}` : `Parcela ${codigo}`);
+
     return {
-      codigo: codigoParcela,
-      area: parseFloat(data.area_ha || 0),
-      municipio: data.municipio || '',
-      uf: data.uf || '',
-      situacao: data.situacao || '',
-      matricula: data.matricula || '',
-      cartorio: data.cartorio || '',
-      dataRegistro: data.data_registro || '',
-      vertices,
-      centroide,
+      proprietarios,
+      denominacao: denominacaoFinal,
+      codigoIncra: codigo,
+      nirf: props.nirf || '',
+      modulosFiscais,
+      classificacaoFundiaria: classificacao,
+      fracaoMinimaParcelamento: modulosFiscais ? `${(modulosFiscais * 0.25).toFixed(2)} módulos fiscais` : '',
+      situacaoCadastral: situacao ? `${situacao} (SIGEF/INCRA)` : '',
+      dataEmissao: dataRegistro,
+      areaTotalIncra: areaHa ? `${areaHa.toFixed(4)} ha` : '',
+      rawData: { ...props, fonte: 'SIGEF API Pública (por documento)', matricula, cartorio, geometry: feat.geometry },
     };
-  } catch (err) {
-    console.error('[SIGEF] Erro ao consultar detalhes:', err);
+  } catch (err: any) {
+    const isRetryable = err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' || err.code === 'ECONNRESET' || err.code === 'SIGEF_ERROR';
+    if (isRetryable) {
+      throw err;
+    }
+    console.error('[SIGEF-DOC] Erro ao consultar por documento:', err.message || err);
     return null;
   }
 }
 
-export async function consultarParcelaSIGEFPorCoordenadas(lat: number, lon: number): Promise<string | null> {
-  const apiKey = process.env.INFOSIMPLES_API_KEY;
-  if (!apiKey) return null;
+export function isSicarDisponivel(): boolean {
+  return !!process.env.SICAR_DATABASE_URL;
+}
 
+let _sicarWarningLogged = false;
+export function logSicarWarningOnce(): void {
+  if (!_sicarWarningLogged && !process.env.SICAR_DATABASE_URL) {
+    console.warn('[CCIR-SICAR] SICAR_DATABASE_URL não configurada — fallback SICAR não disponível');
+    _sicarWarningLogged = true;
+  }
+}
+
+export async function consultarSIGEFPublicoPorCoordenadas(lat: number, lon: number): Promise<CCIRResult | null> {
   try {
-    const res = await axios.post(
-      'https://api.infosimples.com/api/v2/consultas/incra/sigef/parcelas',
-      { latitude: String(lat), longitude: String(lon), token: apiKey },
-      { timeout: 30000 }
+    const pointWkt = `POINT(${lon} ${lat})`;
+    console.log(`[SIGEF-PUB] Consultando parcelas por coordenada: lat=${lat}, lon=${lon}`);
+
+    const SIGEF_PER_REQUEST_TIMEOUT = 8000;
+    const SIGEF_GLOBAL_TIMEOUT = 10000;
+
+    const wfsEndpoints = [
+      { base: 'https://sigef.incra.gov.br/geo/wfs', typeName: 'parcela_publica', geomField: 'geom' },
+      { base: 'https://sigef.incra.gov.br/geo/parcela/wfs', typeName: 'sigef_publica:parcela_publica', geomField: 'geom' },
+      { base: 'https://acervofundiario.incra.gov.br/i3geo/ogc.php', typeName: 'parcelas_sigef_publica', geomField: 'the_geom' },
+    ];
+
+    let features: any[] = [];
+
+    const tryEndpoint = async (endpoint: typeof wfsEndpoints[0]): Promise<any[]> => {
+      const filters = [
+        `INTERSECTS(${endpoint.geomField}, ${pointWkt})`,
+        `DWITHIN(${endpoint.geomField}, ${pointWkt}, 1000, meters)`,
+      ];
+
+      for (const cqlFilter of filters) {
+        const params = new URLSearchParams({
+          service: 'WFS',
+          version: '1.0.0',
+          request: 'GetFeature',
+          typeName: endpoint.typeName,
+          outputFormat: 'application/json',
+          CQL_FILTER: cqlFilter,
+          maxFeatures: '5',
+        });
+
+        try {
+          const res = await sigefRequestWithRetry(`${endpoint.base}?${params.toString()}`, {
+            timeout: SIGEF_PER_REQUEST_TIMEOUT,
+            headers: { 'Accept': 'application/json' },
+          });
+
+          if (res.data?.features && Array.isArray(res.data.features) && res.data.features.length > 0) {
+            console.log(`[SIGEF-PUB] ${endpoint.base} retornou ${res.data.features.length} parcela(s)`);
+            return res.data.features;
+          }
+        } catch (err: any) {
+          const status = err.response?.status || 'N/A';
+          console.warn(`[SIGEF-PUB] ${endpoint.base} falhou (status=${status}): ${err.message}`);
+        }
+      }
+
+      const bbox = `${lon - 0.01},${lat - 0.01},${lon + 0.01},${lat + 0.01}`;
+      const bboxParams = new URLSearchParams({
+        service: 'WFS',
+        version: '1.0.0',
+        request: 'GetFeature',
+        typeName: endpoint.typeName,
+        outputFormat: 'application/json',
+        bbox: bbox,
+        maxFeatures: '5',
+      });
+
+      try {
+        const res = await sigefRequestWithRetry(`${endpoint.base}?${bboxParams.toString()}`, {
+          timeout: SIGEF_PER_REQUEST_TIMEOUT,
+          headers: { 'Accept': 'application/json' },
+        });
+        if (res.data?.features && Array.isArray(res.data.features) && res.data.features.length > 0) {
+          console.log(`[SIGEF-PUB] BBOX em ${endpoint.base} retornou ${res.data.features.length} parcela(s)`);
+          return res.data.features;
+        }
+      } catch (err: any) {
+        console.warn(`[SIGEF-PUB] BBOX ${endpoint.base} falhou: ${err.message}`);
+      }
+
+      return [];
+    };
+
+    const globalTimeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('[SIGEF-PUB] Timeout global de 10s atingido')), SIGEF_GLOBAL_TIMEOUT)
     );
 
-    const parcelas = res.data?.data || [];
-    if (!Array.isArray(parcelas) || parcelas.length === 0) return null;
+    let allEndpointsFailed = false;
+    let lastEndpointError: any = null;
+    try {
+      const endpointPromises = wfsEndpoints.map(ep => tryEndpoint(ep));
+      const results = await Promise.race([
+        Promise.any(
+          endpointPromises.map(p => p.then(feats => {
+            if (feats.length === 0) throw new Error('empty');
+            return feats;
+          }))
+        ),
+        globalTimeout,
+      ]);
+      if (Array.isArray(results) && results.length > 0) {
+        features = results;
+      }
+    } catch (err: any) {
+      console.warn(`[SIGEF-PUB] Todas as consultas falharam ou timeout: ${err.message}`);
+      allEndpointsFailed = true;
+      lastEndpointError = err;
+    }
 
-    const parcela = parcelas[0];
-    const cpfCnpj = parcela.cpf || parcela.cnpj || parcela.cpf_cnpj || parcela.documento || '';
-    if (cpfCnpj) return cpfCnpj;
+    if (features.length === 0) {
+      if (allEndpointsFailed && lastEndpointError) {
+        const isTimeout = lastEndpointError.message?.includes('Timeout') || lastEndpointError.code === 'ECONNABORTED' || lastEndpointError.code === 'ETIMEDOUT';
+        const sigefError = new Error(isTimeout ? 'SIGEF não respondeu (timeout)' : `SIGEF erro: ${lastEndpointError.message}`);
+        (sigefError as any).code = isTimeout ? 'ECONNABORTED' : 'SIGEF_ERROR';
+        throw sigefError;
+      }
+      console.log('[SIGEF-PUB] Nenhuma parcela encontrada nas coordenadas');
+      return null;
+    }
 
-    const codigo = parcela.codigo || parcela.code || '';
-    if (!codigo) return null;
+    const feat = features[0];
+    const props = feat.properties || {};
 
-    const detalhes = await consultarDetalhesParcela(codigo);
-    if (!detalhes) return null;
+    const codigo = props.parcela_codigo || props.codigo || props.code || props.parcela_co || props.cod_parcela || '';
+    const detentorNome = props.detentor_nome || props.nome_detentor || props.nome || props.proprietario || '';
+    const detentorDoc = props.detentor_cpf_cnpj || props.cpf_cnpj || props.documento || props.cpf || props.cnpj || '';
+    const detentorTipo = props.detentor_tipo || props.tipo_detentor || props.tipo || '';
+    const areaHa = parseFloat(props.area_hectare || props.area_ha || props.area || 0);
+    const municipio = props.municipio_nome || props.municipio || props.nome_municipio || '';
+    const uf = props.uf || props.estado || props.sigla_uf || '';
+    const situacao = props.situacao || props.status || props.situacao_parcela || '';
+    const matricula = props.matricula || props.num_matricula || '';
+    const cartorio = props.cartorio || props.serventia || props.nome_cartorio || '';
+    const denominacao = props.denominacao || props.nome_imovel || '';
+    const dataRegistro = props.data_registro || props.data_certificacao || props.data_submissao || '';
 
-    const rawDetalhes = (detalhes as any);
-    return rawDetalhes.cpf || rawDetalhes.cnpj || rawDetalhes.cpf_cnpj || rawDetalhes.documento || null;
+    console.log(`[SIGEF-PUB] Parcela encontrada: código=${codigo}, área=${areaHa}ha, ${municipio}/${uf}, situação=${situacao}`);
+    if (detentorNome) console.log(`[SIGEF-PUB] Detentor: ${detentorNome}`);
+
+    const proprietarios: Array<{ nome: string; cpfCnpj: string; tipo?: string }> = [];
+
+    if (detentorNome || detentorDoc) {
+      proprietarios.push({
+        nome: detentorNome,
+        cpfCnpj: mascararDocumento(detentorDoc),
+        tipo: detentorTipo || 'Detentor SIGEF',
+      });
+    }
+
+    for (const f of features.slice(1)) {
+      const fp = f.properties || {};
+      const fNome = fp.detentor_nome || fp.nome_detentor || fp.nome || '';
+      const fDoc = fp.detentor_cpf_cnpj || fp.cpf_cnpj || fp.documento || '';
+      const fTipo = fp.detentor_tipo || fp.tipo_detentor || fp.tipo || '';
+      if (fNome || fDoc) {
+        const docMascarado = mascararDocumento(fDoc);
+        if (!proprietarios.some(p => p.nome === fNome && p.cpfCnpj === docMascarado)) {
+          proprietarios.push({ nome: fNome, cpfCnpj: docMascarado, tipo: fTipo || 'Detentor SIGEF' });
+        }
+      }
+    }
+
+    const modulosFiscais = props.modulos_fiscais != null ? parseFloat(props.modulos_fiscais) : null;
+    let classificacao = '';
+    if (modulosFiscais !== null) {
+      if (modulosFiscais <= 1) classificacao = 'Minifúndio';
+      else if (modulosFiscais <= 4) classificacao = 'Pequena propriedade';
+      else if (modulosFiscais <= 15) classificacao = 'Média propriedade';
+      else classificacao = 'Grande propriedade';
+    }
+
+    const denominacaoFinal = denominacao || (municipio ? `Parcela Certificada — ${municipio}/${uf}` : `Parcela ${codigo}`);
+
+    return {
+      proprietarios,
+      denominacao: denominacaoFinal,
+      codigoIncra: codigo,
+      nirf: props.nirf || '',
+      modulosFiscais,
+      classificacaoFundiaria: classificacao,
+      fracaoMinimaParcelamento: modulosFiscais ? `${(modulosFiscais * 0.25).toFixed(2)} módulos fiscais` : '',
+      situacaoCadastral: situacao ? `${situacao} (SIGEF/INCRA)` : '',
+      dataEmissao: dataRegistro,
+      areaTotalIncra: areaHa ? `${areaHa.toFixed(4)} ha` : '',
+      rawData: { ...props, fonte: 'SIGEF API Pública', matricula, cartorio, geometry: feat.geometry },
+    };
   } catch (err: any) {
-    console.error('[SIGEF] Erro ao consultar por coordenadas:', err.message || err);
+    const isRetryable = err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' || err.code === 'ECONNRESET' || err.code === 'SIGEF_ERROR';
+    if (isRetryable) {
+      throw err;
+    }
+    console.error('[SIGEF-PUB] Erro ao consultar API pública:', err.message || err);
     return null;
   }
 }
+
+function mascararDocumento(doc: string): string {
+  if (!doc) return '';
+  return doc;
+}
+
 
 export interface ClimaResult {
   precipitacaoMedia: number;
   temperaturaMaxMedia: number;
   temperaturaMinMedia: number;
   fonte: string;
+  precipitacaoAnual?: number;
+  precipitacaoMensal?: number[];
+  temperaturaMensal?: number[];
+  mesesSecos?: string[];
+  mesesChuvosos?: string[];
+  anoReferencia?: number;
+}
+
+const MESES_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+const climaCache = new Map<string, { data: ClimaResult; ts: number }>();
+const CLIMA_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
+
+function diasNoMes(mes: number, ano: number): number {
+  return new Date(ano, mes + 1, 0).getDate();
+}
+
+export async function consultarClimaNASAPower(lat: number, lon: number): Promise<ClimaResult | null> {
+  const anoFim = new Date().getFullYear() - 1;
+  const anoInicio = anoFim - 4;
+  const cacheKey = `openmeteo_${lat.toFixed(2)}_${lon.toFixed(2)}_${anoInicio}_${anoFim}`;
+  const cached = climaCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CLIMA_CACHE_TTL) {
+    return cached.data;
+  }
+
+  try {
+    const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${anoInicio}-01-01&end_date=${anoFim}-12-31&daily=precipitation_sum,temperature_2m_max,temperature_2m_min,temperature_2m_mean&timezone=America/Sao_Paulo`;
+    const resp = await axios.get(url, { timeout: 25000 });
+    const daily = resp.data?.daily;
+    if (!daily?.precipitation_sum || !daily?.time) {
+      console.error('[Open-Meteo] Dados diários ausentes');
+      return null;
+    }
+
+    const dates: string[] = daily.time;
+    const precArr: (number | null)[] = daily.precipitation_sum;
+    const tmaxArr: (number | null)[] = daily.temperature_2m_max || [];
+    const tminArr: (number | null)[] = daily.temperature_2m_min || [];
+    const tmeanArr: (number | null)[] = daily.temperature_2m_mean || [];
+
+    const nAnos = anoFim - anoInicio + 1;
+    const precipMensalAcum = new Array(12).fill(0);
+    const tempMensalAcum = new Array(12).fill(0);
+    const tempMensalCount = new Array(12).fill(0);
+    let tmaxMax = -999;
+    let tminMin = 999;
+    const tmaxAllVals: number[] = [];
+    const tminAllVals: number[] = [];
+
+    for (let i = 0; i < dates.length; i++) {
+      const m = parseInt(dates[i].split('-')[1], 10) - 1;
+      precipMensalAcum[m] += (precArr[i] ?? 0);
+      if (tmeanArr[i] != null) {
+        tempMensalAcum[m] += tmeanArr[i]!;
+        tempMensalCount[m]++;
+      }
+      if (tmaxArr[i] != null) tmaxAllVals.push(tmaxArr[i]!);
+      if (tminArr[i] != null) tminAllVals.push(tminArr[i]!);
+    }
+
+    const precipMensal = precipMensalAcum.map(v => parseFloat((v / nAnos).toFixed(1)));
+    const precipAnual = parseFloat(precipMensal.reduce((s, v) => s + v, 0).toFixed(1));
+    const temperaturaMensal = tempMensalAcum.map((v, i) =>
+      tempMensalCount[i] > 0 ? parseFloat((v / tempMensalCount[i]).toFixed(1)) : 0
+    );
+
+    if (tmaxAllVals.length > 0) {
+      tmaxAllVals.sort((a, b) => b - a);
+      tmaxMax = parseFloat((tmaxAllVals.slice(0, Math.ceil(tmaxAllVals.length * 0.05)).reduce((s, v) => s + v, 0) / Math.ceil(tmaxAllVals.length * 0.05)).toFixed(1));
+    }
+    if (tminAllVals.length > 0) {
+      tminAllVals.sort((a, b) => a - b);
+      tminMin = parseFloat((tminAllVals.slice(0, Math.ceil(tminAllVals.length * 0.05)).reduce((s, v) => s + v, 0) / Math.ceil(tminAllVals.length * 0.05)).toFixed(1));
+    }
+
+    const mesesSecos = precipMensal.map((v, i) => v < 60 ? MESES_PT[i] : null).filter(Boolean) as string[];
+    const mesesChuvosos = precipMensal.map((v, i) => v > 150 ? MESES_PT[i] : null).filter(Boolean) as string[];
+
+    const result: ClimaResult = {
+      precipitacaoMedia: parseFloat((precipAnual / 12).toFixed(1)),
+      precipitacaoAnual: precipAnual,
+      precipitacaoMensal: precipMensal,
+      temperaturaMensal,
+      temperaturaMaxMedia: tmaxMax > -999 ? tmaxMax : 0,
+      temperaturaMinMedia: tminMin < 999 ? tminMin : 0,
+      mesesSecos,
+      mesesChuvosos,
+      anoReferencia: anoFim,
+      fonte: `Open-Meteo ERA5 (${anoInicio}-${anoFim})`,
+    };
+    climaCache.set(cacheKey, { data: result, ts: Date.now() });
+    return result;
+  } catch (err: any) {
+    console.error('[Open-Meteo] Erro, tentando NASA POWER fallback:', err.message);
+    try {
+      const url = `https://power.larc.nasa.gov/api/temporal/monthly/point?parameters=PRECTOTCORR,T2M,T2M_MAX,T2M_MIN&community=AG&longitude=${lon}&latitude=${lat}&start=${anoFim}&end=${anoFim}&format=JSON`;
+      const resp = await axios.get(url, { timeout: 20000 });
+      const params = resp.data?.properties?.parameter;
+      if (!params?.PRECTOTCORR || !params?.T2M) return null;
+
+      const prec = params.PRECTOTCORR;
+      const temp = params.T2M;
+      const tmax = params.T2M_MAX || {};
+      const tmin = params.T2M_MIN || {};
+
+      const precipMensal: number[] = [];
+      const tempMensalArr: number[] = [];
+      let precipAnual = 0;
+      let tmaxMax2 = -999;
+      let tminMin2 = 999;
+
+      for (let m = 0; m < 12; m++) {
+        const key = `${anoFim}${String(m + 1).padStart(2, '0')}`;
+        const dias = diasNoMes(m, anoFim);
+        const precMes = parseFloat(((prec[key] ?? 0) * dias).toFixed(1));
+        precipMensal.push(precMes);
+        precipAnual += precMes;
+        const t = temp[key];
+        tempMensalArr.push(t != null ? parseFloat(t.toFixed(1)) : 0);
+        if (tmax[key] != null && tmax[key] > tmaxMax2) tmaxMax2 = tmax[key];
+        if (tmin[key] != null && tmin[key] < tminMin2) tminMin2 = tmin[key];
+      }
+      precipAnual = parseFloat(precipAnual.toFixed(1));
+      const mesesSecos = precipMensal.map((v, i) => v < 60 ? MESES_PT[i] : null).filter(Boolean) as string[];
+      const mesesChuvosos = precipMensal.map((v, i) => v > 150 ? MESES_PT[i] : null).filter(Boolean) as string[];
+
+      const fallbackResult: ClimaResult = {
+        precipitacaoMedia: parseFloat((precipAnual / 12).toFixed(1)),
+        precipitacaoAnual: precipAnual,
+        precipitacaoMensal: precipMensal,
+        temperaturaMensal: tempMensalArr,
+        temperaturaMaxMedia: tmaxMax2 > -999 ? parseFloat(tmaxMax2.toFixed(1)) : 0,
+        temperaturaMinMedia: tminMin2 < 999 ? parseFloat(tminMin2.toFixed(1)) : 0,
+        mesesSecos,
+        mesesChuvosos,
+        anoReferencia: anoFim,
+        fonte: `NASA POWER (${anoFim})`,
+      };
+      climaCache.set(cacheKey, { data: fallbackResult, ts: Date.now() });
+      return fallbackResult;
+    } catch (err2: any) {
+      console.error('[NASA POWER fallback] Erro:', err2.message);
+      return null;
+    }
+  }
 }
 
 export async function consultarClimaEmbrapa(lat: number, lon: number): Promise<ClimaResult | null> {
@@ -776,7 +1199,6 @@ export interface EnriquecimentoAgroCompleto {
   cultivares: CultivaresResult[];
   produtividade: ProdutividadeResult[];
   ndviSatveg: SATVegNDVIResult | null;
-  parcelasSigef: SigefParcela[];
   scoreAgro: number;
   resumo: string;
 }
@@ -792,12 +1214,12 @@ export async function enriquecerFazenda(params: {
 
   const hasEmbrapaKeys = !!(process.env.EMBRAPA_CONSUMER_KEY || process.env.EMBRAPA_CLIENT_ID);
 
-  const [soloResult, climaResult, ndviSatveg, parcelasSigef] = await Promise.all([
+  const [soloResult, nasaPowerResult, ndviSatveg] = await Promise.all([
     consultarSoloSoilGrids(lat, lon),
-    hasEmbrapaKeys ? consultarClimaEmbrapa(lat, lon) : Promise.resolve(null),
+    consultarClimaNASAPower(lat, lon),
     hasEmbrapaKeys ? consultarNDVISATVeg(lat, lon) : Promise.resolve(null),
-    cnpj ? consultarParcelasSIGEF(cnpj) : Promise.resolve([]),
   ]);
+  const climaResult = nasaPowerResult || (hasEmbrapaKeys ? await consultarClimaEmbrapa(lat, lon) : null);
 
   const culturas = culturaPrincipal ? [culturaPrincipal] : ['soja', 'milho'];
   let zarc: ZarcResult[] = [];
@@ -818,9 +1240,9 @@ export async function enriquecerFazenda(params: {
   }
 
   const scoreAgro = calcularScoreAgro(soloResult, zarc, ndviSatveg);
-  const resumo = gerarResumoAgro(soloResult, zarc, produtividade, parcelasSigef, climaResult, ndviSatveg);
+  const resumo = gerarResumoAgro(soloResult, zarc, produtividade, climaResult, ndviSatveg);
 
-  return { solo: soloResult, clima: climaResult, zarc, cultivares, produtividade, ndviSatveg, parcelasSigef, scoreAgro, resumo };
+  return { solo: soloResult, clima: climaResult, zarc, cultivares, produtividade, ndviSatveg, scoreAgro, resumo };
 }
 
 function calcularScoreAgro(solo: SoilGridsResult | null, zarc: ZarcResult[], ndvi?: SATVegNDVIResult | null): number {
@@ -867,7 +1289,6 @@ function gerarResumoAgro(
   solo: SoilGridsResult | null,
   zarc: ZarcResult[],
   produtividade: ProdutividadeResult[],
-  parcelas: SigefParcela[],
   clima?: ClimaResult | null,
   ndvi?: SATVegNDVIResult | null,
 ): string {
@@ -912,33 +1333,14 @@ function gerarResumoAgro(
     partes.push(`${label} ${val.toFixed(2)} (${cls}, ${ndvi.fonte})`);
   }
 
-  if (parcelas.length > 0) {
-    const totalHa = parcelas.reduce((s, p) => s + p.area, 0).toFixed(0);
-    partes.push(`${parcelas.length} parcela(s) certificada(s) no SIGEF — total: ${totalHa} ha`);
-  }
-
   return partes.length > 0 ? partes.join('. ') + '.' : 'Análise agro indisponível.';
-}
-
-export interface CCIRResult {
-  proprietarios: Array<{ nome: string; cpfCnpj: string; tipo?: string }>;
-  denominacao: string;
-  codigoIncra: string;
-  nirf: string;
-  modulosFiscais: number | null;
-  classificacaoFundiaria: string;
-  fracaoMinimaParcelamento: string;
-  situacaoCadastral: string;
-  dataEmissao: string;
-  areaTotalIncra: string;
-  rawData: any;
 }
 
 export async function consultarCCIRViaSICAR(lat: number, lon: number, cafProdutores?: any[]): Promise<CCIRResult | null> {
   try {
     const sicarDbUrl = process.env.SICAR_DATABASE_URL;
     if (!sicarDbUrl) {
-      console.warn('[CCIR-SICAR] SICAR_DATABASE_URL não configurada');
+      logSicarWarningOnce();
       return null;
     }
 
@@ -1043,70 +1445,3 @@ export async function consultarCCIRViaSICAR(lat: number, lon: number, cafProduto
   }
 }
 
-export async function consultarCCIR(cpfOuCnpj: string): Promise<CCIRResult | null> {
-  const apiKey = process.env.INFOSIMPLES_API_KEY;
-  if (!apiKey) {
-    console.warn('[CCIR] INFOSIMPLES_API_KEY não configurada');
-    return null;
-  }
-
-  try {
-    const documento = cpfOuCnpj.replace(/\D/g, '');
-    const isCnpj = documento.length > 11;
-
-    const payload: Record<string, string> = {
-      token: apiKey,
-    };
-    if (isCnpj) {
-      payload.cnpj = documento;
-    } else {
-      payload.cpf = documento;
-    }
-
-    const res = await axios.post(
-      'https://api.infosimples.com/api/v2/consultas/incra/ccir',
-      payload,
-      { timeout: 60000 }
-    );
-
-    const responseData = res.data;
-    const data = responseData?.data?.[0] || responseData?.data || {};
-
-    const proprietarios: Array<{ nome: string; cpfCnpj: string; tipo?: string }> = [];
-    const propsRaw = data.proprietarios || data.detentores || data.titulares || [];
-    if (Array.isArray(propsRaw)) {
-      for (const p of propsRaw) {
-        proprietarios.push({
-          nome: p.nome || p.name || p.razao_social || '',
-          cpfCnpj: p.cpf || p.cnpj || p.cpf_cnpj || p.documento || '',
-          tipo: p.tipo || p.qualificacao || p.type || '',
-        });
-      }
-    }
-
-    if (proprietarios.length === 0 && (data.nome_proprietario || data.cpf_cnpj_proprietario)) {
-      proprietarios.push({
-        nome: data.nome_proprietario || data.nome || '',
-        cpfCnpj: data.cpf_cnpj_proprietario || data.cpf || data.cnpj || '',
-        tipo: data.tipo_proprietario || '',
-      });
-    }
-
-    return {
-      proprietarios,
-      denominacao: data.denominacao || data.nome_imovel || data.denominacao_imovel || '',
-      codigoIncra: data.codigo_imovel || data.codigo_incra || data.cod_imovel || '',
-      nirf: data.nirf || data.numero_nirf || '',
-      modulosFiscais: data.modulos_fiscais != null ? parseFloat(data.modulos_fiscais) : null,
-      classificacaoFundiaria: data.classificacao_fundiaria || data.classificacao || '',
-      fracaoMinimaParcelamento: data.fracao_minima_parcelamento || data.fracao_minima || '',
-      situacaoCadastral: data.situacao_cadastral || data.situacao || '',
-      dataEmissao: data.data_emissao || data.emissao || '',
-      areaTotalIncra: data.area_total || data.area || '',
-      rawData: data,
-    };
-  } catch (err: any) {
-    console.error('[CCIR] Erro ao consultar CCIR:', err.message || err);
-    return null;
-  }
-}

@@ -11,6 +11,11 @@ const TTL_SECONDS = {
   ibge_pam: 60 * 60 * 24,
   cotacao: 60 * 60 * 1,
   due_diligence: 60 * 60 * 24,
+  dou: 60 * 60 * 24, // busca do Diário Oficial da União (Imprensa Nacional)
+  querido_diario: 60 * 60 * 24, // busca em diários oficiais municipais (Querido Diário)
+  sigef_geometrias: 60 * 60 * 24 * 30, // geometrias das parcelas por ativo — chave inclui o timestamp da consulta SIGEF, então refazer a consulta invalida naturalmente
+  car_geometrias: 60 * 60 * 24 * 30, // geometrias dos imóveis CAR por ativo — mesma mecânica de invalidação por timestamp
+  sncr_detentor: 60 * 60 * 24 * 180, // CSV do SNCR por município — base declaratória, muda devagar; captcha 1x por município
 };
 
 type CacheNS = keyof typeof TTL_SECONDS;

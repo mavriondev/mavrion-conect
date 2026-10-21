@@ -5,13 +5,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Landmark, Search, ExternalLink, Loader2 } from "lucide-react";
+import { Landmark, Search, ExternalLink, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 
 export default function FiiFundosPage() {
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["/api/cvm/fundos", query],
     queryFn: () => apiRequest("GET", `/api/cvm/fundos?q=${encodeURIComponent(query)}`).then(r => r.json()),
     enabled: query.length >= 3,
@@ -19,10 +19,23 @@ export default function FiiFundosPage() {
 
   const fundos = data?.fundos || [];
 
+  if (isError) {
+    return (
+      <div className="p-4 md:p-8 max-w-2xl mx-auto text-center space-y-4 pt-16 md:pt-20" data-testid="error-fii">
+        <AlertTriangle className="w-12 h-12 text-destructive mx-auto" />
+        <p className="text-lg font-medium">Erro ao carregar fundos</p>
+        <p className="text-sm text-muted-foreground">Não foi possível carregar os dados. Tente novamente.</p>
+        <Button variant="outline" onClick={() => window.location.reload()} data-testid="button-reload-fii">
+          <RefreshCw className="w-4 h-4 mr-2" /> Recarregar
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-6">
       <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-fii-title">
+        <h1 className="text-xl font-semibold flex items-center gap-2" data-testid="text-fii-title">
           <Landmark className="w-6 h-6 text-emerald-600" />
           FII / Fundos — CVM
         </h1>

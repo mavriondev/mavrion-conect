@@ -1,12 +1,5 @@
 import { z } from 'zod';
-import { 
-  insertUserSchema, insertConnectorSchema, insertCompanySchema,
-  insertContactSchema, insertDealSchema, 
-  insertAssetSchema, insertInvestorProfileSchema, insertPipelineStageSchema,
-  users, connectors, companies, contacts, deals, assets, 
-  investorProfiles, matchSuggestions, pipelineStages,
-  organizations
-} from './schema';
+import { insertConnectorSchema, insertCompanySchema, insertAssetSchema, users, connectors, companies, assets } from './schema';
 
 export type {
   User, InsertUser,
@@ -84,123 +77,15 @@ export const api = {
       responses: { 200: z.object({ success: z.boolean(), message: z.string() }) }
     }
   },
-  crm: {
-    companies: {
-      list: {
-        method: 'GET' as const,
-        path: '/api/crm/companies' as const,
-        responses: { 200: z.array(z.custom<typeof companies.$inferSelect>()) }
-      },
-      create: {
-        method: 'POST' as const,
-        path: '/api/crm/companies' as const,
-        input: insertCompanySchema,
-        responses: { 201: z.custom<typeof companies.$inferSelect>() }
-      }
-    },
-    contacts: {
-      list: {
-        method: 'GET' as const,
-        path: '/api/crm/contacts' as const,
-        responses: { 200: z.array(z.custom<typeof contacts.$inferSelect>()) }
-      },
-      create: {
-        method: 'POST' as const,
-        path: '/api/crm/contacts' as const,
-        input: insertContactSchema,
-        responses: { 201: z.custom<typeof contacts.$inferSelect>() }
-      }
-    },
-    deals: {
-      list: {
-        method: 'GET' as const,
-        path: '/api/crm/deals' as const,
-        input: z.object({ pipelineType: z.string().optional() }).optional(),
-        responses: { 
-          200: z.array(z.custom<typeof deals.$inferSelect & { company: typeof companies.$inferSelect | null }>()) 
-        }
-      },
-      create: {
-        method: 'POST' as const,
-        path: '/api/crm/deals' as const,
-        input: insertDealSchema,
-        responses: { 201: z.custom<typeof deals.$inferSelect>() }
-      },
-      update: {
-        method: 'PATCH' as const,
-        path: '/api/crm/deals/:id' as const,
-        input: insertDealSchema.partial(),
-        responses: { 200: z.custom<typeof deals.$inferSelect>() }
-      }
-    },
-    stages: {
-      list: {
-        method: 'GET' as const,
-        path: '/api/crm/stages' as const,
-        responses: { 200: z.array(z.custom<typeof pipelineStages.$inferSelect>()) }
-      }
-    }
+  companies: {
+    list: { method: 'GET' as const, path: '/api/companies' as const, responses: { 200: z.array(z.custom<typeof companies.$inferSelect>()) } },
+    create: { method: 'POST' as const, path: '/api/companies' as const, input: insertCompanySchema, responses: { 201: z.custom<typeof companies.$inferSelect>() } },
   },
-  matching: {
-    assets: {
-      list: {
-        method: 'GET' as const,
-        path: '/api/matching/assets' as const,
-        responses: { 200: z.array(z.custom<typeof assets.$inferSelect>()) }
-      },
-      create: {
-        method: 'POST' as const,
-        path: '/api/matching/assets' as const,
-        input: insertAssetSchema,
-        responses: { 201: z.custom<typeof assets.$inferSelect>() }
-      }
-    },
-    investors: {
-      list: {
-        method: 'GET' as const,
-        path: '/api/matching/investors' as const,
-        responses: { 200: z.array(z.custom<typeof investorProfiles.$inferSelect>()) }
-      },
-      create: {
-        method: 'POST' as const,
-        path: '/api/matching/investors' as const,
-        input: insertInvestorProfileSchema,
-        responses: { 201: z.custom<typeof investorProfiles.$inferSelect>() }
-      }
-    },
-    suggestions: {
-      list: {
-        method: 'GET' as const,
-        path: '/api/matching/suggestions' as const,
-        responses: { 
-          200: z.array(z.custom<typeof matchSuggestions.$inferSelect & { 
-            asset: typeof assets.$inferSelect,
-            investor: typeof investorProfiles.$inferSelect
-          }>()) 
-        }
-      },
-      run: {
-        method: 'POST' as const,
-        path: '/api/matching/run' as const,
-        responses: { 200: z.object({ success: z.boolean(), matchesFound: z.number(), details: z.object({ totalAssets: z.number(), totalInvestors: z.number(), totalCompanies: z.number(), assetsSkipped: z.number(), pairsEvaluated: z.number(), existingSuggestions: z.number() }).optional() }) }
-      }
-    }
+  assets: {
+    list: { method: 'GET' as const, path: '/api/assets' as const, responses: { 200: z.array(z.custom<typeof assets.$inferSelect>()) } },
+    create: { method: 'POST' as const, path: '/api/assets' as const, input: insertAssetSchema, responses: { 201: z.custom<typeof assets.$inferSelect>() } },
   },
-  stats: {
-    dashboard: {
-      method: 'GET' as const,
-      path: '/api/stats/dashboard' as const,
-      responses: {
-        200: z.object({
-          leadsCount: z.number(),
-          activeDealsCount: z.number(),
-          assetsCount: z.number(),
-          investorsCount: z.number(),
-          matchesCount: z.number()
-        })
-      }
-    }
-  }
+
 };
 
 export function buildUrl(path: string, params?: Record<string, string | number>): string {

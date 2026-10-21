@@ -6,20 +6,15 @@ import {
   getProcessoFromCache,
   getProcessosByTitularCnpj,
   getScmStatus,
+  cleanScmHtmlForDocument,
 } from "../lib/scm-scraper";
-import { db } from "../db";
-import { companies, assets } from "@shared/schema";
-import { eq, and, or, isNull } from "drizzle-orm";
+import { persistTitularCnpjOnAsset, parseAssetId } from "./anm-enrichment";
 import { getOrgId } from "../lib/tenant";
 
 const ensureAuth = (req: Request, res: Response, next: NextFunction) => {
   if (!(req as any).isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
   next();
 };
-
-const cnpjaHeaders = () => ({
-  "Authorization": process.env.CNPJA_API_KEY || "",
-});
 
 function getUserId(req: Request): number {
   return (req as any).user?.id || 0;
@@ -35,6 +30,12 @@ export function registerScmRoutes(app: Express) {
       const result = await initSession(processo.trim(), getUserId(req));
       res.json(result);
     } catch (err: any) {
+      if (err.message === "processo_invalido") {
+        return res.status(400).json({ message: `Número de processo ANM inválido: "${req.body?.processo}". Formato esperado: número/ano (ex.: 831522/1984).` });
+      }
+      if (err.message === "scm_timeout") {
+        return res.status(504).json({ message: "O SCM da ANM não respondeu. O site pode estar indisponível no momento — tente novamente." });
+      }
       console.error("[SCM] Erro ao iniciar sessão:", err.message);
       res.status(500).json({ message: "Não foi possível acessar o SCM. Tente novamente." });
     }
@@ -42,7 +43,7 @@ export function registerScmRoutes(app: Express) {
 
   app.get("/api/scm/captcha/imagem/:sessionId", ensureAuth, async (req: Request, res: Response) => {
     try {
-      const imgBuffer = await getCaptchaImage(req.params.sessionId, getUserId(req));
+      const imgBuffer = await getCaptchaImage(String(req.params.sessionId), getUserId(req));
       res.set("Content-Type", "image/png");
       res.set("Cache-Control", "no-cache, no-store");
       res.send(imgBuffer);
@@ -56,49 +57,33 @@ export function registerScmRoutes(app: Express) {
 
   app.post("/api/scm/captcha/resolver", ensureAuth, async (req: Request, res: Response) => {
     try {
-      const { sessionId, captcha, assetId } = req.body;
+      const { sessionId, captcha } = req.body;
       if (!sessionId || !captcha) {
         return res.status(400).json({ message: "sessionId e captcha são obrigatórios" });
       }
 
       const userId = getUserId(req);
-      const orgId = getOrgId(req);
-
       const result = await submitCaptcha(sessionId, captcha.trim(), userId);
 
       if (!result.success) {
         return res.json(result);
       }
 
-      let companyId: number | null = null;
-      let enrichmentSteps: string[] = [];
-
-      if (result.data?.titularCnpj && assetId) {
-        const numericAssetId = Number(assetId);
-        if (!isNaN(numericAssetId)) {
-          const [asset] = await db.select().from(assets).where(eq(assets.id, numericAssetId)).limit(1);
-          if (asset && asset.orgId === orgId) {
-            try {
-              const enrichResult = await linkAndEnrichCompany(
-                result.data.titularCnpj,
-                result.data.titularNome,
-                numericAssetId,
-                orgId
-              );
-              companyId = enrichResult.companyId;
-              enrichmentSteps = enrichResult.steps;
-            } catch (enrichErr: any) {
-              console.warn("[SCM] Erro no enriquecimento:", enrichErr.message);
-              enrichmentSteps.push("Erro no enriquecimento automático");
-            }
-          }
-        }
+      // Persiste o titular resolvido pela consulta SCM no ativo (merge atômico),
+      // para que continue visível na sub-aba Titular em visitas futuras.
+      const assetIdNum = parseAssetId(req.body.assetId);
+      const cnpjScm = String(result.data?.titularCnpj || "").replace(/\D/g, "");
+      if (assetIdNum && cnpjScm.length === 14) {
+        await persistTitularCnpjOnAsset(assetIdNum, getOrgId(req), cnpjScm, "SCM", result.data?.titularNome || null);
       }
 
+      const responseData = { ...result.data };
+      delete responseData.rawHtml;
+
       res.json({
-        ...result,
-        companyId,
-        enrichmentSteps,
+        success: true,
+        data: responseData,
+        hasDocument: !!result.data?.rawHtml,
       });
     } catch (err: any) {
       console.error("[SCM] Erro ao resolver captcha:", err.message);
@@ -108,21 +93,24 @@ export function registerScmRoutes(app: Express) {
 
   app.get("/api/scm/processo/:numero/:ano", ensureAuth, async (req: Request, res: Response) => {
     try {
-      const processo = `${req.params.numero}/${req.params.ano}`.trim();
       if (!req.params.numero || !req.params.ano) {
         return res.status(400).json({ message: "Processo obrigatório (formato: numero/ano)" });
       }
-
-      const cached = await getProcessoFromCache(processo);
+      // getProcessoFromCache normaliza o formato (pontos, zeros à esquerda)
+      // e ignora/limpa registros sem dados reais do processo
+      const cached = await getProcessoFromCache(`${req.params.numero}/${req.params.ano}`);
       if (!cached) {
+        res.set("X-Expected-404", "1");
         return res.status(404).json({
           message: "Processo não consultado via SCM. Use o fluxo de captcha para consultar.",
           scmConsultado: false,
         });
       }
 
+      const { rawHtml, ...rest } = cached as any;
       res.json({
-        ...cached,
+        ...rest,
+        hasDocument: !!rawHtml,
         titular: {
           nome: cached.titularNome,
           cnpj: cached.titularCnpj,
@@ -136,9 +124,31 @@ export function registerScmRoutes(app: Express) {
     }
   });
 
+  app.get("/api/scm/documento/:numero/:ano", ensureAuth, async (req: Request, res: Response) => {
+    try {
+      const cached = await getProcessoFromCache(`${req.params.numero}/${req.params.ano}`);
+      if (!cached || !(cached as any).rawHtml) {
+        res.set("X-Expected-404", "1");
+        return res.status(404).json({ message: "Documento SCM não disponível para este processo." });
+      }
+      const cleanedHtml = cleanScmHtmlForDocument(
+        (cached as any).rawHtml,
+        (cached as any).processo,
+        (cached as any).consultadoEm
+      );
+      res.set("Content-Type", "text/html; charset=utf-8");
+      res.set("Content-Disposition", `attachment; filename="SCM_${(cached as any).numero}_${(cached as any).ano}.html"`);
+      res.set("X-Content-Type-Options", "nosniff");
+      res.send(cleanedHtml);
+    } catch (err: any) {
+      console.error("[SCM-DOC] Route error:", err.message);
+      res.status(500).json({ message: "Erro ao baixar documento" });
+    }
+  });
+
   app.get("/api/scm/titular/:cnpj", ensureAuth, async (req: Request, res: Response) => {
     try {
-      const rows = await getProcessosByTitularCnpj(req.params.cnpj);
+      const rows = await getProcessosByTitularCnpj(String(req.params.cnpj));
       res.json(rows);
     } catch (err: any) {
       res.status(500).json({ message: "Erro ao consultar titular" });
@@ -155,100 +165,3 @@ export function registerScmRoutes(app: Express) {
   });
 }
 
-async function linkAndEnrichCompany(
-  cnpj: string,
-  titularNome: string | null,
-  assetId: number,
-  orgId: number
-): Promise<{ companyId: number | null; steps: string[] }> {
-  const steps: string[] = [];
-  const clean = cnpj.replace(/\D/g, "");
-  const formatted = clean.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
-
-  const existing = await db.select().from(companies).where(
-    and(
-      or(eq(companies.cnpj, clean), eq(companies.cnpj, formatted)),
-      or(eq(companies.orgId, orgId), isNull(companies.orgId))
-    )
-  ).limit(1);
-
-  let companyId: number | null = null;
-  let existed = false;
-
-  if (existing.length > 0) {
-    companyId = existing[0].id;
-    existed = true;
-    steps.push("Empresa já cadastrada no sistema");
-  } else {
-    const [created] = await db.insert(companies).values({
-      legalName: titularNome || "Titular ANM",
-      cnpj: formatted,
-      orgId,
-    }).returning();
-    companyId = created.id;
-    steps.push("Empresa criada no CRM");
-  }
-
-  if (companyId && assetId && !isNaN(assetId)) {
-    await db.update(assets).set({ linkedCompanyId: companyId }).where(
-      and(eq(assets.id, assetId), eq(assets.orgId, orgId))
-    );
-    steps.push("Empresa vinculada ao ativo");
-  }
-
-  if (companyId && process.env.CNPJA_API_KEY) {
-    try {
-      const detailUrl = `https://api.cnpja.com/office/${clean}?strategy=CACHE_IF_FRESH&maxAge=30`;
-      const detailResp = await fetch(detailUrl, { headers: cnpjaHeaders() });
-
-      if (detailResp.ok) {
-        const cnpjaDetail = await detailResp.json() as any;
-        const updateData: Record<string, any> = {};
-
-        if (cnpjaDetail.company?.name) updateData.legalName = cnpjaDetail.company.name;
-        if (cnpjaDetail.mainActivity?.text) updateData.cnaePrincipal = cnpjaDetail.mainActivity.text;
-        if (cnpjaDetail.sideActivities?.length) {
-          updateData.cnaeSecundarios = cnpjaDetail.sideActivities.map((a: any) => a.text);
-        }
-        if (cnpjaDetail.company?.size?.text) updateData.porte = cnpjaDetail.company.size.text;
-        if (cnpjaDetail.alias) updateData.tradeName = cnpjaDetail.alias;
-        if (cnpjaDetail.company?.equity) updateData.shareCapital = cnpjaDetail.company.equity;
-
-        const phones = (cnpjaDetail.phones || []).map((p: any) => `(${p.area}) ${p.number}`);
-        if (phones.length) updateData.phones = phones;
-        const emails = (cnpjaDetail.emails || []).map((e: any) => e.address);
-        if (emails.length) updateData.emails = emails;
-
-        if (cnpjaDetail.address) {
-          updateData.address = {
-            street: cnpjaDetail.address.street,
-            number: cnpjaDetail.address.number,
-            district: cnpjaDetail.address.district,
-            city: cnpjaDetail.address.city,
-            state: cnpjaDetail.address.state,
-            zip: cnpjaDetail.address.zip,
-          };
-        }
-
-        const existingEnrich = existed ? ((existing[0] as any)?.enrichmentData || {}) : {};
-        updateData.enrichmentData = {
-          ...existingEnrich,
-          cnpja: cnpjaDetail,
-          scmResolve: { method: "scm_captcha", timestamp: new Date().toISOString() },
-        };
-
-        if (Object.keys(updateData).length > 0) {
-          await db.update(companies).set(updateData).where(eq(companies.id, companyId!));
-          steps.push("Dados enriquecidos via Receita Federal (CNAE, sócios, endereço, contatos)");
-        }
-      } else {
-        steps.push("CNPJA não disponível — dados parciais salvos");
-      }
-    } catch (cnpjaErr: any) {
-      console.warn("[SCM] CNPJA error:", cnpjaErr.message);
-      steps.push("Erro no enriquecimento via CNPJA");
-    }
-  }
-
-  return { companyId, steps };
-}

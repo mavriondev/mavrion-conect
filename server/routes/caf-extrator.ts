@@ -148,7 +148,7 @@ export function registerCafExtratorRoutes(app: Express) {
   });
 
   app.get("/api/caf-extrator/varredura/:id", requireAuth, (req, res) => {
-    const job = varredurasAtivas.get(req.params.id);
+    const job = varredurasAtivas.get(String(req.params.id));
     if (!job) return res.status(404).json({ error: "Não encontrada" });
     res.json(job);
   });
@@ -156,8 +156,8 @@ export function registerCafExtratorRoutes(app: Express) {
   app.post("/api/caf-extrator/varredura/:id/cancelar", requireAuth, async (req, res) => {
     try {
       const { cancelarJob } = await import("../services/caf-crawler");
-      if (!varredurasAtivas.has(req.params.id)) return res.status(404).json({ error: "Não encontrada" });
-      cancelarJob(req.params.id);
+      if (!varredurasAtivas.has(String(req.params.id))) return res.status(404).json({ error: "Não encontrada" });
+      cancelarJob(String(req.params.id));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -177,7 +177,7 @@ export function registerCafExtratorRoutes(app: Express) {
 
     const end = () => { clearInterval(interval); res.end(); };
     const interval = setInterval(() => {
-      const job = varredurasAtivas.get(req.params.id);
+      const job = varredurasAtivas.get(String(req.params.id));
       if (!job) { res.write(`data: ${JSON.stringify({ error: "not_found" })}\n\n`); end(); return; }
       res.write(`data: ${JSON.stringify(job)}\n\n`);
       if (["concluido", "erro", "pausado"].includes(job.status)) end();
@@ -285,7 +285,7 @@ export function registerCafExtratorRoutes(app: Express) {
         .select()
         .from(norionCafRegistros)
         .where(and(
-          eq(norionCafRegistros.id, parseInt(req.params.id)),
+          eq(norionCafRegistros.id, parseInt(String(req.params.id))),
           eq(norionCafRegistros.orgId, orgId)
         ))
         .limit(1);
@@ -311,7 +311,7 @@ export function registerCafExtratorRoutes(app: Express) {
         .select({ dadosExtras: norionCafRegistros.dadosExtras })
         .from(norionCafRegistros)
         .where(and(
-          eq(norionCafRegistros.id, parseInt(req.params.id)),
+          eq(norionCafRegistros.id, parseInt(String(req.params.id))),
           eq(norionCafRegistros.orgId, orgId)
         ))
         .limit(1);
@@ -329,7 +329,7 @@ export function registerCafExtratorRoutes(app: Express) {
             classificadoEm: new Date().toISOString(),
           },
         })
-        .where(eq(norionCafRegistros.id, parseInt(req.params.id)))
+        .where(eq(norionCafRegistros.id, parseInt(String(req.params.id))))
         .returning();
 
       res.json({ success: true, data: atualizado });
@@ -344,7 +344,7 @@ export function registerCafExtratorRoutes(app: Express) {
       await db
         .delete(norionCafRegistros)
         .where(and(
-          eq(norionCafRegistros.id, parseInt(req.params.id)),
+          eq(norionCafRegistros.id, parseInt(String(req.params.id))),
           eq(norionCafRegistros.orgId, orgId)
         ));
       res.json({ success: true });
@@ -380,7 +380,7 @@ export function registerCafExtratorRoutes(app: Express) {
   app.get("/api/caf-extrator/municipios/:uf", requireAuth, async (req: Request, res: Response) => {
     try {
       const { default: axios } = await import("axios");
-      const uf = req.params.uf.toUpperCase();
+      const uf = String(req.params.uf).toUpperCase();
       const r = await axios.get(
         `https://servicodados.ibge.gov.br/api/v1/localidades/estados/${uf}/municipios`,
         { timeout: 10000 }

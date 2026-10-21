@@ -1,5 +1,5 @@
-import { useState, useRef, useCallback, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useRef, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,12 +11,9 @@ import { Slider } from "@/components/ui/slider";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Settings, Upload, Building2, HardDrive, CheckCircle2, XCircle,
-  Link, Image, Save, ExternalLink, Crop, ZoomIn, RotateCw, Trash2,
-  Phone, MessageCircle, Database,
-} from "lucide-react";
+import { Settings, Upload, Building2, HardDrive, CheckCircle2, XCircle, Link, Image, Save, Crop, ZoomIn, Trash2, Database, Pickaxe, Loader2, Activity, AlertTriangle, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 
 export default function ConfiguracoesPage() {
   const queryClient = useQueryClient();
@@ -29,9 +26,6 @@ export default function ConfiguracoesPage() {
 
   const [companyName, setCompanyName] = useState("");
   const [currentLogo, setCurrentLogo] = useState("");
-  const [showcasePhone, setShowcasePhone] = useState("");
-  const [showcaseWhatsapp, setShowcaseWhatsapp] = useState("");
-  const [showcasePhoneLoaded, setShowcasePhoneLoaded] = useState(false);
 
   if (settings && companyName === "" && (settings as any).company_name) {
     setCompanyName((settings as any).company_name || "");
@@ -39,11 +33,7 @@ export default function ConfiguracoesPage() {
   if (settings && currentLogo === "" && (settings as any).logo_url) {
     setCurrentLogo((settings as any).logo_url || "");
   }
-  if (settings && !showcasePhoneLoaded) {
-    setShowcasePhone((settings as any).showcase_phone || "");
-    setShowcaseWhatsapp((settings as any).showcase_whatsapp || "");
-    setShowcasePhoneLoaded(true);
-  }
+
 
   const saveSetting = async (key: string, value: any) => {
     await apiRequest("PUT", `/api/org/settings/${key}`, { value });
@@ -63,7 +53,7 @@ export default function ConfiguracoesPage() {
   return (
     <div className="p-4 md:p-6 max-w-3xl space-y-4 md:space-y-6">
       <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="page-title-configuracoes">
+        <h1 className="text-xl font-semibold flex items-center gap-2" data-testid="page-title-configuracoes">
           <Settings className="w-6 h-6 text-primary" /> Configurações
         </h1>
         <p className="text-sm text-muted-foreground mt-1">Gerencie as configurações da sua organização e integrações</p>
@@ -74,7 +64,7 @@ export default function ConfiguracoesPage() {
           <CardTitle className="text-base flex items-center gap-2">
             <Building2 className="w-4 h-4 text-muted-foreground" /> Identidade da Empresa
           </CardTitle>
-          <CardDescription>Esses dados aparecem automaticamente nas propostas e contratos gerados</CardDescription>
+          <CardDescription>Identidade exibida no sistema</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="space-y-2">
@@ -108,53 +98,7 @@ export default function ConfiguracoesPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Phone className="w-4 h-4 text-muted-foreground" /> Contato da Vitrine
-          </CardTitle>
-          <CardDescription>Telefone e WhatsApp exibidos na página pública de vitrine dos ativos</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="space-y-2">
-            <Label>Telefone de contato</Label>
-            <div className="flex gap-2">
-              <Input
-                value={showcasePhone}
-                onChange={e => setShowcasePhone(e.target.value)}
-                placeholder="Ex: (11) 99999-9999"
-                data-testid="input-showcase-phone"
-              />
-              <Button variant="outline" onClick={() => saveSetting("showcase_phone", showcasePhone)} data-testid="btn-save-showcase-phone">
-                <Save className="w-4 h-4 mr-1.5" /> Salvar
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Número de telefone exibido na vitrine pública do ativo
-            </p>
-          </div>
 
-          <Separator />
-
-          <div className="space-y-2">
-            <Label>WhatsApp</Label>
-            <div className="flex gap-2">
-              <Input
-                value={showcaseWhatsapp}
-                onChange={e => setShowcaseWhatsapp(e.target.value)}
-                placeholder="Ex: 5511999999999"
-                data-testid="input-showcase-whatsapp"
-              />
-              <Button variant="outline" onClick={() => saveSetting("showcase_whatsapp", showcaseWhatsapp)} data-testid="btn-save-showcase-whatsapp">
-                <Save className="w-4 h-4 mr-1.5" /> Salvar
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Número do WhatsApp com código do país (sem +). Ex: 5511999999999. Usado no botão de contato da vitrine.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>
@@ -215,6 +159,10 @@ export default function ConfiguracoesPage() {
           </div>
         </CardContent>
       </Card>
+
+      <SaudeBasesAnmPanel />
+
+      <MineracaoPanel />
 
       <Card>
         <CardHeader>
@@ -645,5 +593,429 @@ function CropDialog({ open, onOpenChange, imageSrc, onCropComplete, uploading }:
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function SaudeBasesAnmPanel() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const isAdmin = (user as any)?.role === "admin" || (user as any)?.role === "superadmin";
+  const [startingFonte, setStartingFonte] = useState<string | null>(null);
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["/api/admin/bases-anm/saude"],
+    queryFn: () => apiRequest("GET", "/api/admin/bases-anm/saude").then(r => r.json()),
+    enabled: isAdmin,
+    refetchInterval: (query) =>
+      ((query.state.data as any)?.bases?.some((b: any) => b.importRunning || b.status === "rodando") ? 5000 : 60000),
+  });
+
+  if (!isAdmin) return null;
+
+  const bases: any[] = (data as any)?.bases || [];
+
+  const reimportar = async (base: any) => {
+    setStartingFonte(base.fonte);
+    try {
+      const res = await fetch(base.reimportarEndpoint, { method: "POST", credentials: "include" });
+      const json = await res.json().catch(() => ({} as any));
+      if (res.status === 409) {
+        toast({ title: "Importação já em andamento", description: "Aguarde a conclusão da importação atual antes de iniciar outra." });
+      } else if (!res.ok) {
+        throw new Error(json?.message || "Erro ao iniciar importação");
+      } else {
+        toast({ title: `Importação ${base.nome.split(" — ")[0]} iniciada`, description: json?.message || "A importação roda em segundo plano. O status é atualizado automaticamente." });
+      }
+    } catch (e: any) {
+      toast({ title: `Erro ao importar ${base.nome.split(" — ")[0]}`, description: e?.message, variant: "destructive" });
+    } finally {
+      setStartingFonte(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/bases-anm/saude"] });
+    }
+  };
+
+  const fmtNum = (n: number | undefined | null) => new Intl.NumberFormat("pt-BR").format(Number(n || 0));
+  const fmtData = (d: string | null | undefined) => (d ? new Date(d).toLocaleString("pt-BR") : "—");
+
+  const statusBadge = (status: string) => {
+    switch (status) {
+      case "ok":
+        return <Badge className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-0 gap-1"><CheckCircle2 className="w-3 h-3" /> OK</Badge>;
+      case "rodando":
+        return <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-0 gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Rodando</Badge>;
+      case "erro":
+        return <Badge className="bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-0 gap-1"><XCircle className="w-3 h-3" /> Erro</Badge>;
+      case "vazia":
+        return <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-0 gap-1"><AlertTriangle className="w-3 h-3" /> Vazia</Badge>;
+      default:
+        return <Badge variant="outline">{status}</Badge>;
+    }
+  };
+
+  return (
+    <Card data-testid="card-saude-bases-anm">
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2">
+          <Activity className="w-4 h-4 text-muted-foreground" /> Saúde das Bases ANM
+        </CardTitle>
+        <CardDescription>
+          Última atualização, resultado da última carga e alertas de estagnação das bases locais (TAH, CFEM, SIGBM, PGFN)
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" /> Carregando saúde das bases...
+          </div>
+        ) : isError ? (
+          <p className="text-sm text-muted-foreground">Não foi possível carregar a saúde das bases ANM.</p>
+        ) : (
+          bases.map((base, i) => {
+            const ui = base.ultimaImportacao;
+            return (
+              <div key={base.fonte}>
+                {i > 0 && <Separator className="mb-4" />}
+                <div className="space-y-2" data-testid={`saude-base-${base.fonte}`}>
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Database className="w-4 h-4 text-muted-foreground" />
+                      <p className="text-sm font-medium">{base.nome}</p>
+                      {statusBadge(base.status)}
+                      {base.alertas?.length > 0 && (
+                        <Badge className="bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-0 gap-1" data-testid={`badge-alerta-${base.fonte}`}>
+                          <AlertTriangle className="w-3 h-3" /> {base.alertas.length} alerta{base.alertas.length > 1 ? "s" : ""}
+                        </Badge>
+                      )}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => reimportar(base)}
+                      disabled={base.importRunning || base.status === "rodando" || startingFonte === base.fonte}
+                      data-testid={`button-reimportar-${base.fonte}`}
+                    >
+                      {startingFonte === base.fonte
+                        ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                        : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />}
+                      {base.importRunning || base.status === "rodando" ? "Importando..." : "Reimportar"}
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <div className="p-3 border rounded-lg">
+                      <p className="text-xs text-muted-foreground">Registros</p>
+                      <p className="text-sm font-semibold" data-testid={`text-registros-${base.fonte}`}>{fmtNum(base.totalRegistros)}</p>
+                    </div>
+                    <div className="p-3 border rounded-lg">
+                      <p className="text-xs text-muted-foreground">Última carga</p>
+                      <p className="text-sm font-semibold" data-testid={`text-ultima-carga-${base.fonte}`}>{fmtData(base.ultimaCarga)}</p>
+                    </div>
+                    <div className="p-3 border rounded-lg col-span-2 md:col-span-1">
+                      <p className="text-xs text-muted-foreground">Última rodada</p>
+                      <p className="text-sm font-semibold">
+                        {ui
+                          ? (ui.status === "running" ? "em andamento" : ui.status === "completed" ? "concluída" : "com erro")
+                          : "—"}
+                        {ui?.finishedAt ? ` · ${fmtData(ui.finishedAt)}` : ui?.startedAt ? ` · iniciada ${fmtData(ui.startedAt)}` : ""}
+                      </p>
+                    </div>
+                  </div>
+                  {ui?.status === "completed" && (
+                    <p className="text-xs text-muted-foreground">
+                      {fmtNum(ui.imported)} registro(s) importado(s){Number(ui.errors || 0) > 0 ? ` · ${fmtNum(ui.errors)} erro(s)` : ""}
+                      {ui.validacao ? ` · Validação: ${ui.validacao}` : ""}
+                      {ui.referencia ? ` · Referência: ${ui.referencia}` : ""}
+                    </p>
+                  )}
+                  {ui?.status === "error" && ui?.errorDetails && (
+                    <p className="text-xs text-red-600 dark:text-red-400" data-testid={`text-erro-${base.fonte}`}>
+                      Erro na última carga: {ui.errorDetails}
+                    </p>
+                  )}
+                  {ui?.validacao && ui?.status !== "completed" && (
+                    <p className="text-xs text-muted-foreground">Validação: {ui.validacao}</p>
+                  )}
+                  {base.alertas?.map((a: any) => (
+                    <div key={a.id} className="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3">
+                      <p className="text-xs font-medium text-red-800 dark:text-red-300">{a.title}</p>
+                      {a.description && <p className="text-xs text-red-700 dark:text-red-400 mt-0.5">{a.description}</p>}
+                      {a.createdAt && <p className="text-[11px] text-red-600/70 dark:text-red-400/70 mt-0.5">Alerta aberto em {fmtData(a.createdAt)}</p>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function MineracaoPanel() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const isAdmin = (user as any)?.role === "admin" || (user as any)?.role === "superadmin";
+  const [importStarting, setImportStarting] = useState(false);
+
+  const { data: tah, isLoading: tahLoading } = useQuery({
+    queryKey: ["/api/tah/status"],
+    queryFn: () => apiRequest("GET", "/api/tah/status").then(r => r.json()),
+    refetchInterval: (query) => ((query.state.data as any)?.importRunning ? 5000 : false),
+  });
+
+  const { data: scm, isLoading: scmLoading } = useQuery({
+    queryKey: ["/api/scm/status"],
+    queryFn: () => apiRequest("GET", "/api/scm/status").then(r => r.json()),
+  });
+
+  const [pgfnImportStarting, setPgfnImportStarting] = useState(false);
+  const { data: pgfn, isLoading: pgfnLoading } = useQuery({
+    queryKey: ["/api/pgfn/status"],
+    queryFn: () => apiRequest("GET", "/api/pgfn/status").then(r => r.json()),
+    refetchInterval: (query) => ((query.state.data as any)?.importRunning ? 5000 : false),
+  });
+  const pgfnImportRunning = (pgfn as any)?.importRunning === true;
+
+  const importarPgfn = async () => {
+    setPgfnImportStarting(true);
+    try {
+      const res = await fetch("/api/pgfn/importar", { method: "POST", credentials: "include" });
+      const data = await res.json().catch(() => ({} as any));
+      if (res.status === 409) {
+        toast({ title: "Importação já em andamento", description: "Aguarde a conclusão da importação atual antes de iniciar outra." });
+      } else if (!res.ok) {
+        throw new Error(data?.message || "Erro ao iniciar importação");
+      } else {
+        toast({ title: "Importação PGFN iniciada", description: "O download (~1,4 GB no total) e a importação rodam em segundo plano. O status é atualizado automaticamente." });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/pgfn/status"] });
+    } catch (e: any) {
+      toast({ title: "Erro ao iniciar importação PGFN", description: e?.message, variant: "destructive" });
+    } finally {
+      setPgfnImportStarting(false);
+    }
+  };
+
+  const importRunning = (tah as any)?.importRunning === true;
+
+  const importarTah = async () => {
+    setImportStarting(true);
+    try {
+      const res = await fetch("/api/tah/importar", { method: "POST", credentials: "include" });
+      const data = await res.json().catch(() => ({} as any));
+      if (res.status === 409) {
+        toast({ title: "Importação já em andamento", description: "Aguarde a conclusão da importação atual antes de iniciar outra." });
+      } else if (!res.ok) {
+        throw new Error(data?.message || "Erro ao iniciar importação");
+      } else {
+        toast({ title: "Importação TAH iniciada", description: "O download e a importação rodam em segundo plano. O status é atualizado automaticamente." });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/tah/status"] });
+    } catch (e: any) {
+      toast({ title: "Erro ao iniciar importação TAH", description: e?.message, variant: "destructive" });
+    } finally {
+      setImportStarting(false);
+    }
+  };
+
+  const fmt = (n: number | undefined | null) => new Intl.NumberFormat("pt-BR").format(Number(n || 0));
+  const ultima = (tah as any)?.ultimaImportacao;
+  const ufEntries = Object.entries(((scm as any)?.porUf || {}) as Record<string, number>)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6);
+
+  return (
+    <Card data-testid="card-mineracao">
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2">
+          <Pickaxe className="w-4 h-4 text-muted-foreground" /> Sistema — Bases de Mineração
+        </CardTitle>
+        <CardDescription>
+          Status das bases locais usadas nas consultas de jazidas: TAH (Taxa Anual por Hectare) e processos minerários do SCM/ANM
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Database className="w-4 h-4 text-muted-foreground" />
+              <p className="text-sm font-medium">Base TAH — Taxa Anual por Hectare (ANM)</p>
+              {importRunning && (
+                <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-0 gap-1.5" data-testid="badge-tah-importando">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Importação em andamento
+                </Badge>
+              )}
+            </div>
+            {isAdmin && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={importarTah}
+                disabled={importRunning || importStarting}
+                data-testid="button-importar-tah"
+              >
+                {importStarting
+                  ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  : <Upload className="w-3.5 h-3.5 mr-1.5" />}
+                {importRunning ? "Importando..." : "Importar TAH"}
+              </Button>
+            )}
+          </div>
+          {tahLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> Carregando status...
+            </div>
+          ) : tah ? (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 border rounded-lg">
+                <p className="text-xs text-muted-foreground">Registros na base</p>
+                <p className="text-lg font-semibold" data-testid="text-tah-total">{fmt((tah as any).totalRegistros)}</p>
+              </div>
+              <div className="p-3 border rounded-lg">
+                <p className="text-xs text-muted-foreground">Com CNPJ/CPF do titular</p>
+                <p className="text-lg font-semibold" data-testid="text-tah-com-cnpj">{fmt((tah as any).comCnpjCpf)}</p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Não foi possível carregar o status da base TAH.</p>
+          )}
+          {ultima && (
+            <p className="text-xs text-muted-foreground" data-testid="text-tah-ultima-importacao">
+              Última importação: {ultima.status === "running" ? "em andamento" : ultima.status === "completed" ? "concluída" : "com erro"}
+              {ultima.finishedAt
+                ? ` em ${new Date(ultima.finishedAt).toLocaleString("pt-BR")}`
+                : ultima.startedAt ? ` — iniciada em ${new Date(ultima.startedAt).toLocaleString("pt-BR")}` : ""}
+              {ultima.status === "completed" ? ` · ${fmt(ultima.imported)} registros importados` : ""}
+              {ultima.status === "error" && ultima.errorDetails ? ` · ${ultima.errorDetails}` : ""}
+            </p>
+          )}
+          {!isAdmin && (
+            <p className="text-xs text-muted-foreground">A importação da base TAH é restrita a administradores.</p>
+          )}
+        </div>
+
+        <Separator />
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Database className="w-4 h-4 text-muted-foreground" />
+              <p className="text-sm font-medium">Base PGFN — Dívida Ativa da União (dados abertos)</p>
+              {pgfnImportRunning && (
+                <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-0 gap-1.5" data-testid="badge-pgfn-importando">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Importação em andamento
+                </Badge>
+              )}
+            </div>
+            {isAdmin && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={importarPgfn}
+                disabled={pgfnImportRunning || pgfnImportStarting}
+                data-testid="button-importar-pgfn"
+              >
+                {pgfnImportStarting
+                  ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  : <Upload className="w-3.5 h-3.5 mr-1.5" />}
+                {pgfnImportRunning ? "Importando..." : "Importar PGFN"}
+              </Button>
+            )}
+          </div>
+          {pgfnLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> Carregando status...
+            </div>
+          ) : pgfn ? (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 border rounded-lg">
+                  <p className="text-xs text-muted-foreground">Devedores na base</p>
+                  <p className="text-lg font-semibold" data-testid="text-pgfn-total">{fmt((pgfn as any).totalRegistros)}</p>
+                </div>
+                <div className="p-3 border rounded-lg">
+                  <p className="text-xs text-muted-foreground">Trimestre de referência</p>
+                  <p className="text-lg font-semibold" data-testid="text-pgfn-referencia">
+                    {(pgfn as any).referencia ? String((pgfn as any).referencia).replace(/^(\d{4})_trimestre_0?(\d+)$/, "$1 T$2") : "—"}
+                  </p>
+                </div>
+              </div>
+              {Array.isArray((pgfn as any).porCategoria) && (pgfn as any).porCategoria.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {(pgfn as any).porCategoria.map((c: any) => (
+                    <Badge key={c.categoria} variant="outline" className="text-xs font-normal">
+                      {c.categoria === "NAO_PREVIDENCIARIO" ? "Não Previdenciário" : c.categoria === "PREVIDENCIARIO" ? "Previdenciário" : c.categoria}: {fmt(c.devedores)}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+              {(pgfn as any).ultimaImportacao && (
+                <p className="text-xs text-muted-foreground" data-testid="text-pgfn-ultima-importacao">
+                  Última importação: {(pgfn as any).ultimaImportacao.status === "running" ? "em andamento" : (pgfn as any).ultimaImportacao.status === "completed" ? "concluída" : "com erro"}
+                  {(pgfn as any).ultimaImportacao.finishedAt
+                    ? ` em ${new Date((pgfn as any).ultimaImportacao.finishedAt).toLocaleString("pt-BR")}`
+                    : (pgfn as any).ultimaImportacao.startedAt ? ` — iniciada em ${new Date((pgfn as any).ultimaImportacao.startedAt).toLocaleString("pt-BR")}` : ""}
+                  {(pgfn as any).ultimaImportacao.status === "error" && (pgfn as any).ultimaImportacao.errorDetails ? ` · ${(pgfn as any).ultimaImportacao.errorDetails}` : ""}
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Usada nas certidões do titular (dívida ativa). A PGFN publica dumps trimestrais; a importação completa baixa ~1,4 GB e pode levar bastante tempo.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">Não foi possível carregar o status da base PGFN.</p>
+          )}
+          {!isAdmin && (
+            <p className="text-xs text-muted-foreground">A importação da base PGFN é restrita a administradores.</p>
+          )}
+        </div>
+
+        <Separator />
+
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Pickaxe className="w-4 h-4 text-muted-foreground" />
+            <p className="text-sm font-medium">Scraper SCM — Processos Minerários (ANM)</p>
+          </div>
+          {scmLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> Carregando status...
+            </div>
+          ) : scm ? (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 border rounded-lg">
+                  <p className="text-xs text-muted-foreground">Processos consultados</p>
+                  <p className="text-lg font-semibold" data-testid="text-scm-total">{fmt((scm as any).total)}</p>
+                </div>
+                <div className="p-3 border rounded-lg">
+                  <p className="text-xs text-muted-foreground">Com CNPJ do titular</p>
+                  <p className="text-lg font-semibold" data-testid="text-scm-com-cnpj">{fmt((scm as any).comCnpj)}</p>
+                </div>
+              </div>
+              {(scm as any).ultimaConsulta && (
+                <p className="text-xs text-muted-foreground" data-testid="text-scm-ultima-consulta">
+                  Última consulta ao SCM: {new Date((scm as any).ultimaConsulta).toLocaleString("pt-BR")}
+                </p>
+              )}
+              {ufEntries.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {ufEntries.map(([uf, count]) => (
+                    <Badge key={uf} variant="outline" className="text-xs font-normal">{uf}: {fmt(count)}</Badge>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">
+                A base cresce conforme processos são consultados no SCM (com captcha) nas telas de jazidas.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">Não foi possível carregar o status do scraper SCM.</p>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

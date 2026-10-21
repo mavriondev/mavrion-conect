@@ -1,8 +1,11 @@
 import type { Express } from "express";
-import { analyzeAsset, summarizeCompany, naturalLanguageSearch, generateReport, diagnoseError, scoreLeadAI, pricingAdvisor, monitorErrors, pipelineIntelligence, dueDiligenceCheck } from "../lib/ai-agents";
+import { mapAiError } from "../lib/ai-error";
+import { analyzeAsset, summarizeCompany, naturalLanguageSearch, diagnoseError, pricingAdvisor, monitorErrors, deepIntelligenceAnalysis } from "../lib/ai-agents";
 import { db } from "../db";
-import { assets, companies, errorReports, leads } from "@shared/schema";
-import { eq, sql } from "drizzle-orm";
+import { storage } from "../storage";
+import { companies, errorReports } from "@shared/schema";
+import { eq } from "drizzle-orm";
+
 
 const rateLimitMap = new Map<number, number>();
 const RATE_LIMIT_MS = 5000;
@@ -25,13 +28,8 @@ export function registerAiRoutes(app: Express) {
       const analise = await analyzeAsset(assetId, user.orgId);
 
       try {
-        const [ativo] = await db.select().from(assets).where(eq(assets.id, assetId));
-        if (ativo) {
-          const campos = ativo.camposEspecificos ?? {};
-          campos.iaAnalise = analise;
-          campos.iaAnaliseDate = new Date().toISOString();
-          await db.update(assets).set({ camposEspecificos: campos }).where(eq(assets.id, assetId));
-        }
+        // merge atômico: só o delta, sem regravar o objeto inteiro
+        await storage.mergeAssetCampos(assetId, { iaAnalise: analise, iaAnaliseDate: new Date().toISOString() });
       } catch (e: any) {
         console.error("[AI] Erro ao persistir análise:", e.message);
       }
@@ -39,7 +37,8 @@ export function registerAiRoutes(app: Express) {
       res.json({ analise });
     } catch (error: any) {
       console.error("[AI] Erro analyze-asset:", error.message);
-      res.status(500).json({ message: error.message || "Erro ao analisar ativo" });
+      const mapped = mapAiError(error, "Erro ao analisar ativo");
+      res.status(mapped.status).json({ message: mapped.message });
     }
   });
 
@@ -67,7 +66,8 @@ export function registerAiRoutes(app: Express) {
       res.json({ resumo });
     } catch (error: any) {
       console.error("[AI] Erro summarize-company:", error.message);
-      res.status(500).json({ message: error.message || "Erro ao resumir empresa" });
+      const mapped = mapAiError(error, "Erro ao resumir empresa");
+      res.status(mapped.status).json({ message: mapped.message });
     }
   });
 
@@ -85,23 +85,8 @@ export function registerAiRoutes(app: Express) {
       res.json(resultado);
     } catch (error: any) {
       console.error("[AI] Erro search:", error.message);
-      res.status(500).json({ message: error.message || "Erro na busca" });
-    }
-  });
-
-  app.post("/api/ai/generate-report", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
-    const user = req.user as any;
-    if (!checkRateLimit(user.id)) return res.status(429).json({ message: "Aguarde alguns segundos" });
-
-    try {
-      const { assetId, companyId } = req.body;
-      if (!assetId || !companyId) return res.status(400).json({ message: "assetId e companyId obrigatórios" });
-      const relatorio = await generateReport(Number(assetId), Number(companyId), user.orgId);
-      res.json({ relatorio });
-    } catch (error: any) {
-      console.error("[AI] Erro generate-report:", error.message);
-      res.status(500).json({ message: error.message || "Erro ao gerar relatório" });
+      const mapped = mapAiError(error, "Erro na busca");
+      res.status(mapped.status).json({ message: mapped.message });
     }
   });
 
@@ -129,42 +114,8 @@ export function registerAiRoutes(app: Express) {
       res.json({ diagnostico });
     } catch (error: any) {
       console.error("[AI] Erro diagnose-error:", error.message);
-      res.status(500).json({ message: error.message || "Erro ao diagnosticar" });
-    }
-  });
-
-  // ═══════════════════════════════════════════════════════════
-  // NEW AGENTS (6-10)
-  // ═══════════════════════════════════════════════════════════
-
-  app.post("/api/ai/score-lead/:id", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
-    const user = req.user as any;
-    if (!checkRateLimit(user.id)) return res.status(429).json({ message: "Aguarde alguns segundos" });
-
-    try {
-      const leadId = Number(req.params.id);
-      const result = await scoreLeadAI(leadId, user.orgId);
-
-      try {
-        await db.update(leads).set({
-          score: result.score,
-          scoreBreakdownJson: {
-            aiScore: result.score,
-            justificativa: result.justificativa,
-            ativoRecomendado: result.ativoRecomendado,
-            scoredAt: new Date().toISOString(),
-            model: "gpt-4o-mini",
-          },
-        }).where(eq(leads.id, leadId));
-      } catch (e: any) {
-        console.error("[AI] Erro ao persistir score:", e.message);
-      }
-
-      res.json(result);
-    } catch (error: any) {
-      console.error("[AI] Erro score-lead:", error.message);
-      res.status(500).json({ message: error.message || "Erro ao qualificar lead" });
+      const mapped = mapAiError(error, "Erro ao diagnosticar");
+      res.status(mapped.status).json({ message: mapped.message });
     }
   });
 
@@ -178,13 +129,8 @@ export function registerAiRoutes(app: Express) {
       const analise = await pricingAdvisor(assetId, user.orgId);
 
       try {
-        const [ativo] = await db.select().from(assets).where(eq(assets.id, assetId));
-        if (ativo) {
-          const campos = ativo.camposEspecificos ?? {};
-          campos.iaPricing = analise;
-          campos.iaPricingDate = new Date().toISOString();
-          await db.update(assets).set({ camposEspecificos: campos }).where(eq(assets.id, assetId));
-        }
+        // merge atômico: só o delta, sem regravar o objeto inteiro
+        await storage.mergeAssetCampos(assetId, { iaPricing: analise, iaPricingDate: new Date().toISOString() });
       } catch (e: any) {
         console.error("[AI] Erro ao persistir pricing:", e.message);
       }
@@ -192,7 +138,8 @@ export function registerAiRoutes(app: Express) {
       res.json({ analise });
     } catch (error: any) {
       console.error("[AI] Erro pricing-advisor:", error.message);
-      res.status(500).json({ message: error.message || "Erro na sugestão de preço" });
+      const mapped = mapAiError(error, "Erro na sugestão de preço");
+      res.status(mapped.status).json({ message: mapped.message });
     }
   });
 
@@ -206,49 +153,36 @@ export function registerAiRoutes(app: Express) {
       res.json({ resumo });
     } catch (error: any) {
       console.error("[AI] Erro monitor-errors:", error.message);
-      res.status(500).json({ message: error.message || "Erro no monitoramento" });
+      const mapped = mapAiError(error, "Erro no monitoramento");
+      res.status(mapped.status).json({ message: mapped.message });
     }
   });
 
-  app.post("/api/ai/pipeline-briefing", async (req, res) => {
-    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
-    const user = req.user as any;
-    if (!checkRateLimit(user.id)) return res.status(429).json({ message: "Aguarde alguns segundos" });
-
-    try {
-      const briefing = await pipelineIntelligence(user.orgId);
-      res.json({ briefing });
-    } catch (error: any) {
-      console.error("[AI] Erro pipeline-briefing:", error.message);
-      res.status(500).json({ message: error.message || "Erro no briefing" });
-    }
-  });
-
-  app.post("/api/ai/due-diligence/:id", async (req, res) => {
+  app.post("/api/ai/deep-intel/:id", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     const user = req.user as any;
     if (!checkRateLimit(user.id)) return res.status(429).json({ message: "Aguarde alguns segundos" });
 
     try {
       const assetId = Number(req.params.id);
-      const analise = await dueDiligenceCheck(assetId, user.orgId);
+      const result = await deepIntelligenceAnalysis(assetId, user.orgId);
 
       try {
-        const [ativo] = await db.select().from(assets).where(eq(assets.id, assetId));
-        if (ativo) {
-          const campos = ativo.camposEspecificos ?? {};
-          campos.iaDueDiligence = analise;
-          campos.iaDueDiligenceDate = new Date().toISOString();
-          await db.update(assets).set({ camposEspecificos: campos }).where(eq(assets.id, assetId));
-        }
+        // merge atômico: só o delta, sem regravar o objeto inteiro
+        await storage.mergeAssetCampos(assetId, {
+          iaDeepIntel: result,
+          iaDeepIntelDate: new Date().toISOString(),
+          iaDeepIntelHash: result.insumosHash,
+        });
       } catch (e: any) {
-        console.error("[AI] Erro ao persistir due diligence:", e.message);
+        console.error("[AI] Erro ao persistir deep intel:", e.message);
       }
 
-      res.json({ analise });
+      res.json({ success: true, data: result });
     } catch (error: any) {
-      console.error("[AI] Erro due-diligence:", error.message);
-      res.status(500).json({ message: error.message || "Erro na due diligence" });
+      console.error("[AI] Erro deep-intel:", error.message);
+      const mapped = mapAiError(error, "Erro na investigação inteligente");
+      res.status(mapped.status).json({ message: mapped.message });
     }
   });
 }

@@ -5,7 +5,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -41,16 +41,14 @@ const MODULES: { key: string; label: string }[] = [
   { key: "prospeccao",  label: "Prospecção" },
   { key: "empresas",    label: "Empresas" },
 
-  { key: "crm",         label: "Deals & CRM" },
-  { key: "matching",    label: "Matching" },
   { key: "connectors",  label: "Connectors" },
   { key: "users",       label: "Usuários (admin)" },
 ];
 
 const ROLE_DEFAULTS: Record<string, Record<string, boolean>> = {
-  admin:    { dashboard: true, prospeccao: true, empresas: true, crm: true, matching: true, connectors: true, users: true },
-  manager:  { dashboard: true, prospeccao: true, empresas: true, crm: true, matching: true, connectors: false, users: false },
-  operator: { dashboard: true, prospeccao: true, empresas: true, crm: true, matching: true, connectors: false, users: false },
+  admin:    { dashboard: true, prospeccao: true, empresas: true, connectors: true, users: true },
+  manager:  { dashboard: true, prospeccao: true, empresas: true, connectors: false, users: false },
+  operator: { dashboard: true, prospeccao: true, empresas: true, connectors: false, users: false },
 };
 
 const ROLE_ICON: Record<string, any> = {
@@ -311,7 +309,7 @@ export default function UsersPage() {
             </div>
             <div>
               <p className="font-semibold text-gray-600 mb-1">Operador</p>
-              <p>Dashboard, Prospecção, Empresas, CRM, Matching e Ativos.</p>
+              <p>Dashboard, Prospecção, Empresas e Ativos.</p>
             </div>
           </div>
         </CardContent>

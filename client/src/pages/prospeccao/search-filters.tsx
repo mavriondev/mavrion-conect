@@ -8,8 +8,6 @@ import { Label } from "@/components/ui/label";
 import {
   Search,
   X,
-  Phone,
-  Mail,
   Loader2,
 } from "lucide-react";
 import { CnaePicker } from "./cnae-tree";
@@ -24,15 +22,12 @@ export interface Filters {
   statuses: number[];
   natures: number[];
   simples: "" | "true" | "false";
-  mei: "" | "true" | "false";
-  head: "" | "true" | "false";
-  hasPhone: boolean;
-  hasEmail: boolean;
-  foundedFrom: string;
-  foundedTo: string;
-  equityMin: string;
-  equityMax: string;
   ddds: string[];
+  ceps: string[];
+  bairros: string[];
+  ageMin: string;
+  ageMax: string;
+  socioName: string;
 }
 
 export const INITIAL_FILTERS: Filters = {
@@ -45,15 +40,12 @@ export const INITIAL_FILTERS: Filters = {
   statuses: [2],
   natures: [],
   simples: "",
-  mei: "",
-  head: "",
-  hasPhone: false,
-  hasEmail: false,
-  foundedFrom: "",
-  foundedTo: "",
-  equityMin: "",
-  equityMax: "",
   ddds: [],
+  ceps: [],
+  bairros: [],
+  ageMin: "",
+  ageMax: "",
+  socioName: "",
 };
 
 const ESTADOS = [
@@ -122,15 +114,12 @@ export function getActiveFilterCount(filters: Filters): number {
     filters.statuses.length > 0 && !(filters.statuses.length === 1 && filters.statuses[0] === 2),
     filters.natures.length > 0,
     filters.simples,
-    filters.mei,
-    filters.head,
-    filters.hasPhone,
-    filters.hasEmail,
-    filters.foundedFrom,
-    filters.foundedTo,
-    filters.equityMin,
-    filters.equityMax,
     filters.ddds.length > 0,
+    filters.ceps.length > 0,
+    filters.bairros.length > 0,
+    filters.ageMin,
+    filters.ageMax,
+    filters.socioName,
   ].filter(Boolean).length;
 }
 
@@ -153,6 +142,8 @@ export default function SearchFilters({
 }: SearchFiltersProps) {
   const [dddInput, setDddInput] = useState("");
   const [cityInput, setCityInput] = useState("");
+  const [cepInput, setCepInput] = useState("");
+  const [bairroInput, setBairroInput] = useState("");
 
   const toggleState = (s: string) =>
     setFilters(f => ({ ...f, states: f.states.includes(s) ? f.states.filter(x => x !== s) : [...f.states, s] }));
@@ -180,6 +171,22 @@ export default function SearchFilters({
       setFilters(f => ({ ...f, ddds: [...f.ddds, ddd] }));
     }
     setDddInput("");
+  };
+
+  const addCep = () => {
+    const cep = cepInput.trim().replace(/\D/g, "");
+    if (cep.length === 8 && !filters.ceps.includes(cep)) {
+      setFilters(f => ({ ...f, ceps: [...f.ceps, cep] }));
+    }
+    setCepInput("");
+  };
+
+  const addBairro = () => {
+    const bairro = bairroInput.trim().toUpperCase();
+    if (bairro && !filters.bairros.includes(bairro)) {
+      setFilters(f => ({ ...f, bairros: [...f.bairros, bairro] }));
+    }
+    setBairroInput("");
   };
 
   return (
@@ -290,6 +297,93 @@ export default function SearchFilters({
           )}
         </div>
 
+        <div className="space-y-1.5">
+          <Label>CEP</Label>
+          <div className="flex gap-1.5">
+            <Input
+              placeholder="Ex: 01310100"
+              value={cepInput}
+              onChange={e => setCepInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && addCep()}
+              maxLength={9}
+              className="w-32"
+              data-testid="input-filtro-cep"
+            />
+            <Button size="sm" variant="outline" onClick={addCep} data-testid="button-adicionar-cep">Adicionar</Button>
+          </div>
+          <p className="text-xs text-muted-foreground">8 dígitos, sem hífen</p>
+          {filters.ceps.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {filters.ceps.map(cep => (
+                <Badge key={cep} variant="secondary" className="gap-1 cursor-pointer" onClick={() => setFilters(f => ({ ...f, ceps: f.ceps.filter(c => c !== cep) }))} data-testid={`badge-cep-${cep}`}>
+                  {cep.replace(/(\d{5})(\d{3})/, "$1-$2")} <X className="w-3 h-3" />
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Bairro</Label>
+          <div className="flex gap-1.5">
+            <Input
+              placeholder="Ex: CENTRO, JARDINS"
+              value={bairroInput}
+              onChange={e => setBairroInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && addBairro()}
+              className="flex-1"
+              data-testid="input-filtro-bairro"
+            />
+            <Button size="sm" variant="outline" onClick={addBairro} data-testid="button-adicionar-bairro">Adicionar</Button>
+          </div>
+          {filters.bairros.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {filters.bairros.map(bairro => (
+                <Badge key={bairro} variant="secondary" className="gap-1 cursor-pointer" onClick={() => setFilters(f => ({ ...f, bairros: f.bairros.filter(b => b !== bairro) }))} data-testid={`badge-bairro-${bairro}`}>
+                  {bairro} <X className="w-3 h-3" />
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Sócio / Administrador</Label>
+          <Input
+            placeholder="Nome do sócio ou administrador"
+            value={filters.socioName}
+            onChange={e => setFilters(f => ({ ...f, socioName: e.target.value }))}
+            data-testid="input-filtro-socio"
+          />
+          <p className="text-xs text-muted-foreground">Busca empresas onde essa pessoa é sócia</p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Idade da Empresa (anos)</Label>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">Mínimo</p>
+              <Input
+                type="number"
+                placeholder="0"
+                value={filters.ageMin}
+                onChange={e => setFilters(f => ({ ...f, ageMin: e.target.value }))}
+                data-testid="input-age-min"
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">Máximo</p>
+              <Input
+                type="number"
+                placeholder="∞"
+                value={filters.ageMax}
+                onChange={e => setFilters(f => ({ ...f, ageMax: e.target.value }))}
+                data-testid="input-age-max"
+              />
+            </div>
+          </div>
+        </div>
+
         <div className="space-y-2">
           <Label>Porte</Label>
           {PORTES.map(p => (
@@ -345,99 +439,6 @@ export default function SearchFilters({
           />
         </div>
 
-        <div className="space-y-2">
-          <Label>MEI</Label>
-          <ToggleGroup
-            value={filters.mei}
-            onChange={v => setFilters(f => ({ ...f, mei: v as Filters["mei"] }))}
-            options={[{ value: "", label: "Todos" }, { value: "true", label: "MEI" }, { value: "false", label: "Não MEI" }]}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label>Tipo de Estabelecimento</Label>
-          <ToggleGroup
-            value={filters.head}
-            onChange={v => setFilters(f => ({ ...f, head: v as Filters["head"] }))}
-            options={[{ value: "", label: "Todos" }, { value: "true", label: "Matriz" }, { value: "false", label: "Filial" }]}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label>Contactabilidade</Label>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="has-phone"
-              checked={filters.hasPhone}
-              onCheckedChange={v => setFilters(f => ({ ...f, hasPhone: Boolean(v) }))}
-              data-testid="checkbox-has-phone"
-            />
-            <Label htmlFor="has-phone" className="font-normal text-sm cursor-pointer flex items-center gap-1">
-              <Phone className="w-3.5 h-3.5" /> Tem telefone cadastrado
-            </Label>
-          </div>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="has-email"
-              checked={filters.hasEmail}
-              onCheckedChange={v => setFilters(f => ({ ...f, hasEmail: Boolean(v) }))}
-              data-testid="checkbox-has-email"
-            />
-            <Label htmlFor="has-email" className="font-normal text-sm cursor-pointer flex items-center gap-1">
-              <Mail className="w-3.5 h-3.5" /> Tem e-mail cadastrado
-            </Label>
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <Label>Data de Abertura</Label>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">De</p>
-              <Input
-                type="date"
-                value={filters.foundedFrom}
-                onChange={e => setFilters(f => ({ ...f, foundedFrom: e.target.value }))}
-                data-testid="input-founded-from"
-              />
-            </div>
-            <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">Até</p>
-              <Input
-                type="date"
-                value={filters.foundedTo}
-                onChange={e => setFilters(f => ({ ...f, foundedTo: e.target.value }))}
-                data-testid="input-founded-to"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <Label>Capital Social (R$)</Label>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">Mínimo</p>
-              <Input
-                type="number"
-                placeholder="0"
-                value={filters.equityMin}
-                onChange={e => setFilters(f => ({ ...f, equityMin: e.target.value }))}
-                data-testid="input-equity-min"
-              />
-            </div>
-            <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">Máximo</p>
-              <Input
-                type="number"
-                placeholder="∞"
-                value={filters.equityMax}
-                onChange={e => setFilters(f => ({ ...f, equityMax: e.target.value }))}
-                data-testid="input-equity-max"
-              />
-            </div>
-          </div>
-        </div>
 
         <Button
           className="w-full"

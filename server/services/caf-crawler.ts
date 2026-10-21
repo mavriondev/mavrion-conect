@@ -164,7 +164,7 @@ async function consultarApiPaginada(params: {
   idSituacao?: number;
   pagina: number;
   tamanhoPagina: number;
-}): Promise<{ dados: CafApiResult[]; sucesso: boolean }> {
+}): Promise<{ dados: CafApiResult[]; sucesso: boolean; httpStatus?: number; motivo?: string }> {
   try {
     const queryParams = new URLSearchParams();
     if (params.uf) queryParams.set('uf', params.uf);
@@ -182,11 +182,14 @@ async function consultarApiPaginada(params: {
       return { dados: res.data.dados || [], sucesso: true };
     }
 
+    const motivo = res.status === 403
+      ? "IP bloqueado pelo servidor do CAF (gov.br). A API do governo está rejeitando conexões deste servidor."
+      : `API retornou status ${res.status}`;
     console.log(`[CAF] API retornou status ${res.status}, código ${res.data?.codigo}: ${res.data?.mensagem}`);
-    return { dados: [], sucesso: false };
+    return { dados: [], sucesso: false, httpStatus: res.status, motivo };
   } catch (err: any) {
     console.error(`[CAF] Erro na consulta API JSON: ${err.message}`);
-    return { dados: [], sucesso: false };
+    return { dados: [], sucesso: false, motivo: `Erro de conexão: ${err.message}` };
   }
 }
 

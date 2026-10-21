@@ -28,9 +28,14 @@ async function comparePasswords(supplied: string, stored: string) {
   return timingSafeEqual(hashedBuf, suppliedBuf);
 }
 
+export function sanitizeUser(user: SelectUser): Omit<SelectUser, "password"> {
+  const { password, ...safeUser } = user;
+  return safeUser;
+}
+
 export function setupAuth(app: Express) {
   const sessionSettings: session.SessionOptions = {
-    secret: process.env.SESSION_SECRET || "REDACTED_CREDENTIAL_CONFIGURE_ENV",
+    secret: process.env.SESSION_SECRET || "default_b2b_secret_key",
     resave: false,
     saveUninitialized: false,
     store: storage.sessionStore,
@@ -69,7 +74,7 @@ export function setupAuth(app: Express) {
   });
 
   app.post("/api/login", passport.authenticate("local"), (req, res) => {
-    res.status(200).json(req.user);
+    res.status(200).json(sanitizeUser(req.user as SelectUser));
   });
 
   app.post("/api/logout", (req, res, next) => {
@@ -81,6 +86,6 @@ export function setupAuth(app: Express) {
 
   app.get("/api/user", (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    res.json(req.user);
+    res.json(sanitizeUser(req.user as SelectUser));
   });
 }
