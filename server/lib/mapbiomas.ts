@@ -13,7 +13,12 @@ export interface MapBiomasResult {
     para: string;
     ano: number;
   }>;
+  /** Contagem de alertas. Só vale quando `alertasConsultados` é true; caso contrário é 0 por falta de resposta, não por ausência. */
   alertasDesmatamento: number;
+  /** false = a consulta de alertas falhou/não respondeu — NÃO significa "sem alertas". */
+  alertasConsultados: boolean;
+  /** "propriedade" = alertas do CAR informado; "regiao" = alertas numa caixa de ~4 km (podem ser de vizinhos). */
+  alertasEscopo: "propriedade" | "regiao";
   areaDesmatadaHa: number;
   bioma: string;
   bacia: string;
@@ -200,6 +205,7 @@ export async function getUsoTerraMapBiomas(
     let classeAtual = 0;
     let usoAtual = "Não identificado";
     let embargoMapbiomas = 0;
+    let alertasConsultados = false;
     let propriedade: MapBiomasResult["propriedade"] = null;
 
     if (token) {
@@ -283,12 +289,14 @@ export async function getUsoTerraMapBiomas(
       }
 
       if (alertsData?.alerts?.collection) {
+        alertasConsultados = true;
         const collection = alertsData.alerts.collection;
         alertCount = collection.length;
         totalArea = collection.reduce((s: number, a: any) => s + (a.areaHa || 0), 0);
       }
 
       if (ruralData?.ruralProperty) {
+        alertasConsultados = true;
         const rp = ruralData.ruralProperty;
         const rpAlerts = rp.alerts || [];
         propriedade = {
@@ -317,6 +325,8 @@ export async function getUsoTerraMapBiomas(
       historico,
       transicoes,
       alertasDesmatamento: alertCount,
+      alertasConsultados,
+      alertasEscopo: carCode && propriedade ? "propriedade" : "regiao",
       areaDesmatadaHa: Math.round(totalArea * 100) / 100,
       bioma,
       bacia,

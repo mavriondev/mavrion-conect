@@ -27,6 +27,7 @@ import { Map } from "lucide-react";
 import DocumentsPanel from "@/components/documents-panel";
 import { AnmEnrichmentTabs, ANM_TAB_GROUPS } from "@/components/anm-enrichment-tabs";
 import DueDiligenceFundiaria from "@/components/due-diligence-fundiaria";
+import VerificacoesTerraCard from "@/components/verificacoes-terra-card";
 import { SigefDetentoresDialog } from "@/components/sigef-detentores-dialog";
 import { EnrichmentProgressBar } from "@/components/enrichment-progress-bar";
 
@@ -876,7 +877,7 @@ function AmbientalTab({ assetId, camposEspecificos }: { assetId: number; camposE
                 <p className="text-[10px] text-muted-foreground">DETER</p>
               </div>
               <div className="bg-muted/40 rounded-lg p-2.5 text-center">
-                <p className="text-xl font-bold" data-testid="text-mapbiomas-alertas">{mapbiomas?.alertasDesmatamento ?? "—"}</p>
+                <p className="text-xl font-bold" data-testid="text-mapbiomas-alertas">{mapbiomas?.alertasConsultados === false ? "—" : (mapbiomas?.alertasDesmatamento ?? "—")}</p>
                 <p className="text-[10px] text-muted-foreground">MapBiomas</p>
               </div>
             </div>
@@ -3582,10 +3583,18 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                         </div>
                       </div>
                     )}
-                    {mb.alertasDesmatamento === 0 && (
-                      <p className="text-xs text-green-600 flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Sem alertas de desmatamento
+                    {mb.alertasConsultados === false && (
+                      <p className="text-xs text-muted-foreground">
+                        Alertas de desmatamento não consultados (fonte sem resposta) — isso não significa ausência de alertas.
                       </p>
+                    )}
+                    {mb.alertasConsultados !== false && mb.alertasDesmatamento === 0 && (
+                      <p className="text-xs text-muted-foreground flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Nenhum alerta retornado pela consulta (não confirma ausência)
+                      </p>
+                    )}
+                    {mb.alertasDesmatamento > 0 && mb.alertasEscopo === "regiao" && (
+                      <p className="text-[10px] text-muted-foreground">Alertas numa área de ~4 km ao redor — podem ser de propriedades vizinhas (informe o CAR para filtrar).</p>
                     )}
                   </CardContent>
                 </Card>
@@ -3652,6 +3661,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
 
         {/* ── Due Diligence Fundiária Tab ── */}
         <TabsContent value="duediligence" className="mt-4 space-y-4">
+          <VerificacoesTerraCard assetId={Number(id)} />
           <DueDiligenceFundiaria
             assetId={Number(id)}
             codigoIncra={ativo.camposEspecificos?.ccirCodigoIncra || ativo.camposEspecificos?.codigoIncra || ativo.camposEspecificos?.enrichment?.codigoIncra}

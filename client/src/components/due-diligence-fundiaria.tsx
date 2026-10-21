@@ -517,7 +517,7 @@ export default function DueDiligenceFundiaria({
             <CardTitle className="text-sm flex items-center justify-between">
               <span className="flex items-center gap-2">
                 <MapPin className="w-4 h-4 text-purple-500" />
-                Sobreposições (TI / Quilombola / UC)
+                Sobreposições (TI / Quilombola / UC / Assentamento)
               </span>
               {expandedSections.sobreposicoes ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </CardTitle>
@@ -527,7 +527,7 @@ export default function DueDiligenceFundiaria({
               <>
                 <div className={cn("rounded-lg p-3 text-center",
                   sobreposicoes.riscoMaximo === 'alto' ? "bg-red-50" :
-                  sobreposicoes.riscoMaximo === 'medio' ? "bg-yellow-50" :
+                  sobreposicoes.riscoMaximo === 'medio' || sobreposicoes.riscoMaximo === 'indeterminado' ? "bg-yellow-50" :
                   "bg-green-50"
                 )}>
                   {sobreposicoes.totalSobreposicoes > 0 ? (
@@ -543,12 +543,24 @@ export default function DueDiligenceFundiaria({
                       )}>sobreposição(ões) detectada(s)</p>
                     </>
                   ) : (
+                    sobreposicoes.riscoMaximo === 'indeterminado' ? (
+                      <>
+                        <AlertCircle className="w-6 h-6 text-yellow-600 mx-auto" />
+                        <p className="text-xs text-yellow-700 font-medium mt-1" data-testid="text-sobreposicao-indeterminada">
+                          Não foi possível consultar todas as camadas — resultado indeterminado
+                        </p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                          Falha de fonte não significa ausência de restrição. Tente novamente.
+                        </p>
+                      </>
+                    ) : (
                     <>
                       <CheckCircle2 className="w-6 h-6 text-green-600 mx-auto" />
                       <p className="text-xs text-green-700 font-medium mt-1" data-testid="text-sem-sobreposicao">
-                        Sem sobreposições detectadas
+                        Nenhuma sobreposição detectada nas camadas consultadas
                       </p>
                     </>
+                    )
                   )}
                 </div>
                 <div className="grid grid-cols-3 gap-1.5 text-center">
@@ -567,7 +579,7 @@ export default function DueDiligenceFundiaria({
                 </div>
                 {expandedSections.sobreposicoes && (
                   <div className="space-y-1 max-h-[200px] overflow-y-auto">
-                    {[...(sobreposicoes.terrasIndigenas || []), ...(sobreposicoes.quilombolas || []), ...(sobreposicoes.unidadesConservacao || [])].map((area: any, i: number) => (
+                    {[...(sobreposicoes.terrasIndigenas || []), ...(sobreposicoes.quilombolas || []), ...(sobreposicoes.unidadesConservacao || []), ...(sobreposicoes.assentamentos || [])].map((area: any, i: number) => (
                       <div key={i} className={cn("text-xs rounded px-2.5 py-2 space-y-0.5",
                         area.nivelRisco === 'alto' ? "bg-red-50" : "bg-yellow-50"
                       )} data-testid={`row-sobreposicao-${i}`}>
@@ -576,6 +588,7 @@ export default function DueDiligenceFundiaria({
                           <Badge variant="outline" className="text-[10px]">{area.tipo}</Badge>
                         </div>
                         {area.categoria && <p className="text-muted-foreground">{area.categoria}</p>}
+                        {area.aVerificar && <p className="text-[10px] text-yellow-700">{area.aVerificar}</p>}
                         {(area.percentualSobreposicao > 0 || area.areaIntersecaoHa > 0) && (
                           <div className="flex gap-2 text-[10px]">
                             {area.percentualSobreposicao > 0 && (

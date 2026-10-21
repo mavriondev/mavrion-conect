@@ -38,7 +38,9 @@ Ausência em base pública **não** é ausência na realidade. O sistema só mos
 ## Ainda NÃO corrigido (decisões/validação)
 - Hub: dois métodos de argila ainda coexistem (`argila_pct` SoilGrids e `argila_media` OpenGeoHub); o filtro prefere o OpenGeoHub.
 - Viés de chuva do ERA5 (validar com valores reais).
-- `lib/embrapa.ts` `getDadosClimaticos` é código morto com `|| 0`.
+- Uso do solo é o da classe no ponto central (MapBiomas via API), não a proporção de cada uso na área. A proporção real exige ler o raster do MapBiomas dentro do polígono (ideal: no Hub, como a argila).
+- Camadas WFS (IBGE rodovia/ferrovia, INCRA assentamentos) não puderam ser testadas aqui; nomes de camada IBGE `BC100_Trecho_Rodoviario_L` / `BC100_Trecho_Ferroviario_L` são os esperados, e assentamentos só consulta se `INCRA_ASSENTAMENTOS_WFS_LAYER` estiver definida.
+- Silos/armazéns, cobertura de celular e outorgas de água: sem fonte confiável integrada ainda.
 
 ## Ativos já cadastrados
 Mantêm valores antigos até reanálise. O lote `/api/geo/batch-analyze` agora também seleciona ativos cujo `attributes_json.geoMetodo` ≠ `v2-interior` (máx. 50 por chamada — repetir até zerar). Flags antigas `false` continuam ambíguas e devem ser lidas como "não detectado".
@@ -54,3 +56,21 @@ Mantêm valores antigos até reanálise. O lote `/api/geo/batch-analyze` agora t
 - Novos (passam): `npx tsx server/lib/__tests__/geo-medicao.test.ts`, `.../agro-solo-clima.test.ts`.
 - `tsc`: 6 erros de base, idênticos na `main` (xlsx indisponível no sandbox + antigos). Nenhum novo.
 - 15 dos 28 testes existentes exigem `DATABASE_URL` — rodar no Replit.
+
+## Terceira rodada: verificações da terra com estados de confiança
+Aprovado: sobreposições, uso do solo, NDVI, logística, APP/RL, histórico e estados de confiança. Removidos do escopo a pedido: preço de referência, dossiê em PDF e checklist de visita.
+
+**Corrigido nos módulos existentes (mesmo princípio: falha de fonte não é ausência):**
+- `due-diligence-fundiaria.ts`: cada camada (TI, quilombola, UC, assentamento opcional) registra `consultada`/`falhou`; se algo falhou e nada foi achado, o risco é `indeterminado` (antes: `nenhum`). Áreas sem geometria ou com cálculo de interseção falho ficam "a verificar" (antes: sumiam). Associação feição↔área por `featKey` (antes por posição, desalinhava). Erro do PostGIS agora propaga (antes virava 0 ha). Resultado com falha não vai para cache.
+- `sentinel.ts`: sem valores inventados (0,5/0/1/0,1 quando faltava dado); pixels sem observação saem da média (antes contavam como NDVI 0); estatística no polígono (antes caixa envolvente com vizinhos); "data da imagem" virou período do composto.
+- `mapbiomas.ts`: `alertasConsultados` e `alertasEscopo` (propriedade × região de ~4 km); tela não mostra mais "Sem alertas" quando a consulta falhou.
+- `lib/embrapa.ts` removido (sem importadores; tinha `|| 0`).
+
+**Novo:**
+- `server/lib/confianca-dados.ts`: estado (`confirmado` humano / `indicado` por fonte / `sem_dado`) × achado (`detectado` / `nao_detectado` / `indeterminado`), validade por tipo, projeção pública (só faixas, nunca sobreposição/CAR/local) — base do site de fazendas.
+- `server/lib/verificacoes-terra.ts` + `server/routes/verificacoes.ts`: executa sobreposições, alertas, uso do solo, referência de RL (só biomas com 20% inequívocos), NDVI, rodovia/ferrovia mais próximas e APP mínima (faixa de 30 m dos cursos d'água do IBGE).
+- Tabela `asset_verificacoes` (criada sozinha no startup; histórico append-only). Rotas: `GET /api/assets/:id/verificacoes`, `GET .../historico`, `POST .../executar`, `POST .../:chave/confirmar`.
+- Cartão "Verificações da terra" na aba Due Diligence do ativo, com confirmação manual (vendedor/documento/visita) e aviso de divergência quando uma fonte nova contradiz uma confirmação.
+- Testes novos: `confianca-dados.test.ts`, `risco-sobreposicao.test.ts` (rodar com `DATABASE_URL` definida).
+
+**Para ativar:** definir `SENTINEL_HUB_CLIENT_ID/SECRET` (NDVI) e as credenciais do MapBiomas já usadas; opcional `INCRA_ASSENTAMENTOS_WFS_LAYER`. A tabela nova é criada no próximo start.

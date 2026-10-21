@@ -20,7 +20,9 @@ export interface ProdesResult {
 
 export interface SobreposicaoArea {
   nome: string;
-  tipo: 'TI' | 'Quilombola' | 'UC';
+  tipo: 'TI' | 'Quilombola' | 'UC' | 'Assentamento';
+  /** liga a área à sua geometria em geoJsonFeatures (antes era por posição e desalinhava) */
+  featKey?: string;
   categoria?: string;
   percentualSobreposicao: number;
   areaIntersecaoHa: number;
@@ -33,8 +35,16 @@ export interface SobreposicaoResult {
   terrasIndigenas: SobreposicaoArea[];
   quilombolas: SobreposicaoArea[];
   unidadesConservacao: SobreposicaoArea[];
+  assentamentos?: SobreposicaoArea[];
   totalSobreposicoes: number;
-  riscoMaximo: 'alto' | 'medio' | 'baixo' | 'nenhum';
+  /**
+   * 'nenhum' só quando TODAS as camadas responderam e nenhuma sobreposição foi encontrada.
+   * 'indeterminado' quando alguma camada falhou e nada foi encontrado nas demais
+   * (falha de fonte não é ausência de restrição).
+   */
+  riscoMaximo: 'alto' | 'medio' | 'baixo' | 'nenhum' | 'indeterminado';
+  /** Resultado da consulta de cada camada: 'consultada' ou 'falhou'. */
+  camadas?: Record<'terraIndigena' | 'quilombola' | 'unidadeConservacao' | 'assentamento', 'consultada' | 'falhou' | 'nao_configurada'>;
   fonte: string;
   consultadoEm: string;
   geoJsonFeatures?: any[];
@@ -301,6 +311,22 @@ export async function consultarProdesHistorico(
   }
 }
 
+export function calcularRiscoSobreposicao(r: {
+  terrasIndigenas: SobreposicaoArea[];
+  quilombolas: SobreposicaoArea[];
+  unidadesConservacao: SobreposicaoArea[];
+  assentamentos?: SobreposicaoArea[];
+  camadas?: SobreposicaoResult['camadas'];
+}): SobreposicaoResult['riscoMaximo'] {
+  const assent = r.assentamentos || [];
+  if (r.terrasIndigenas.length > 0 || r.quilombolas.length > 0 || assent.length > 0) return 'alto';
+  if (r.unidadesConservacao.some(uc => uc.nivelRisco === 'alto')) return 'alto';
+  if (r.unidadesConservacao.length > 0) return 'medio';
+  // Nada encontrado: só vale "nenhum" se todas as camadas consultadas responderam.
+  if (r.camadas && Object.values(r.camadas).includes('falhou')) return 'indeterminado';
+  return 'nenhum';
+}
+
 export async function consultarSobreposicoes(
   lat: number,
   lon: number,
@@ -321,7 +347,13 @@ export async function consultarSobreposicoes(
   const terrasIndigenas: SobreposicaoArea[] = [];
   const quilombolas: SobreposicaoArea[] = [];
   const unidadesConservacao: SobreposicaoArea[] = [];
+  const assentamentos: SobreposicaoArea[] = [];
   const allOverlapFeatures: any[] = [];
+  const camadas: NonNullable<SobreposicaoResult['camadas']> = {
+    terraIndigena: 'falhou', quilombola: 'falhou', unidadeConservacao: 'falhou', assentamento: 'nao_configurada',
+  };
+  let featSeq = 0;
+  const nextKey = (t: string) => `${t}:${featSeq++}`;
 
   try {
     const tiParams = new URLSearchParams({
@@ -341,11 +373,14 @@ export async function consultarSobreposicoes(
       });
       if (tiRes.ok) {
         const tiData = await tiRes.json() as any;
+        if (Array.isArray(tiData?.features)) camadas.terraIndigena = 'consultada';
         for (const f of (tiData?.features || [])) {
           const p = f.properties || {};
           const nome = p.terrai_nom || p.terra_indi || p.nome || 'TI sem nome';
+          const featKey = nextKey('ti');
           terrasIndigenas.push({
             nome,
+            featKey,
             tipo: 'TI',
             categoria: p.fase_ti || p.situacao || 'Não informada',
             percentualSobreposicao: 0,
@@ -356,7 +391,7 @@ export async function consultarSobreposicoes(
             allOverlapFeatures.push({
               type: 'Feature',
               geometry: f.geometry,
-              properties: { nome, tipo: 'TI', layer: 'ti' },
+              properties: { nome, tipo: 'TI', layer: 'ti', featKey },
             });
           }
         }
@@ -382,11 +417,14 @@ export async function consultarSobreposicoes(
       });
       if (quilRes.ok) {
         const quilData = await quilRes.json() as any;
+        if (Array.isArray(quilData?.features)) camadas.quilombola = 'consultada';
         for (const f of (quilData?.features || [])) {
           const p = f.properties || {};
           const nome = p.nm_comunid || p.nome || 'Comunidade quilombola';
+          const featKey = nextKey('quil');
           quilombolas.push({
             nome,
+            featKey,
             tipo: 'Quilombola',
             categoria: p.fase || p.cd_fase || 'Não informada',
             percentualSobreposicao: 0,
@@ -397,7 +435,7 @@ export async function consultarSobreposicoes(
             allOverlapFeatures.push({
               type: 'Feature',
               geometry: f.geometry,
-              properties: { nome, tipo: 'Quilombola', layer: 'quilombola' },
+              properties: { nome, tipo: 'Quilombola', layer: 'quilombola', featKey },
             });
           }
         }
@@ -423,6 +461,7 @@ export async function consultarSobreposicoes(
       });
       if (ucRes.ok) {
         const ucData = await ucRes.json() as any;
+        if (Array.isArray(ucData?.features)) camadas.unidadeConservacao = 'consultada';
         for (const f of (ucData?.features || [])) {
           const p = f.properties || {};
           const categoriaUc = p.categori3 || p.categoria || p.grupo || '';
@@ -430,8 +469,10 @@ export async function consultarSobreposicoes(
           const isProtecaoIntegral = categoriaUc.toLowerCase().includes('integral') ||
             ['PARNA', 'ESEC', 'REBIO', 'REVIS', 'MONAT'].some(t => categoriaUc.toUpperCase().includes(t));
 
+          const featKey = nextKey('uc');
           unidadesConservacao.push({
             nome,
+            featKey,
             tipo: 'UC',
             categoria: categoriaUc,
             percentualSobreposicao: 0,
@@ -442,7 +483,7 @@ export async function consultarSobreposicoes(
             allOverlapFeatures.push({
               type: 'Feature',
               geometry: f.geometry,
-              properties: { nome, tipo: 'UC', categoria: categoriaUc, layer: 'uc' },
+              properties: { nome, tipo: 'UC', categoria: categoriaUc, layer: 'uc', featKey },
             });
           }
         }
@@ -451,16 +492,48 @@ export async function consultarSobreposicoes(
       console.warn('[UC ICMBio] Erro:', (err as Error).message);
     }
 
-    const totalSobreposicoes = terrasIndigenas.length + quilombolas.length + unidadesConservacao.length;
-    let riscoMaximo: 'alto' | 'medio' | 'baixo' | 'nenhum' = 'nenhum';
-    if (terrasIndigenas.length > 0 || quilombolas.length > 0) riscoMaximo = 'alto';
-    else if (unidadesConservacao.some(uc => uc.nivelRisco === 'alto')) riscoMaximo = 'alto';
-    else if (unidadesConservacao.length > 0) riscoMaximo = 'medio';
+    // Assentamentos INCRA: o nome da camada WFS varia/muda, então só é consultada se configurada
+    // (INCRA_ASSENTAMENTOS_WFS_LAYER, ex.: "assentamentos:assentamentos"). Sem isso: 'nao_configurada'.
+    const layerAssent = process.env.INCRA_ASSENTAMENTOS_WFS_LAYER;
+    if (layerAssent) {
+      camadas.assentamento = 'falhou';
+      try {
+        const asParams = new URLSearchParams({
+          service: 'WFS', version: '1.0.0', request: 'GetFeature', typeName: layerAssent,
+          outputFormat: 'application/json', maxFeatures: '50', srsName: 'EPSG:4326',
+          CQL_FILTER: `BBOX(geom,${bbox})`,
+        });
+        const asRes = await fetch(`https://geoservicos.incra.gov.br/geoserver/ows?${asParams}`, { signal: AbortSignal.timeout(15000) });
+        if (asRes.ok) {
+          const asData = await asRes.json() as any;
+          if (Array.isArray(asData?.features)) camadas.assentamento = 'consultada';
+          for (const f of (asData?.features || [])) {
+            const p = f.properties || {};
+            const nome = p.nome_proje || p.nm_projeto || p.nome || 'Projeto de assentamento';
+            const featKey = nextKey('as');
+            assentamentos.push({
+              nome, featKey, tipo: 'Assentamento', categoria: p.fase || p.situacao || 'Não informada',
+              percentualSobreposicao: 0, areaIntersecaoHa: 0, nivelRisco: 'alto',
+            });
+            if (f.geometry) {
+              allOverlapFeatures.push({ type: 'Feature', geometry: f.geometry, properties: { nome, tipo: 'Assentamento', layer: 'assentamento', featKey } });
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Assentamento INCRA] Erro:', (err as Error).message);
+      }
+    }
+
+    const totalSobreposicoes = terrasIndigenas.length + quilombolas.length + unidadesConservacao.length + assentamentos.length;
+    const riscoMaximo = calcularRiscoSobreposicao({ terrasIndigenas, quilombolas, unidadesConservacao, assentamentos, camadas });
 
     const result: SobreposicaoResult = {
       terrasIndigenas,
       quilombolas,
       unidadesConservacao,
+      assentamentos,
+      camadas,
       totalSobreposicoes,
       riscoMaximo,
       fonte: 'FUNAI + INCRA + ICMBio (WFS) — detecção por proximidade (BBOX), não por interseção geométrica',
@@ -468,7 +541,9 @@ export async function consultarSobreposicoes(
       geoJsonFeatures: allOverlapFeatures,
     };
 
-    await setCached('due_diligence', cacheKey, result);
+    // Não guarda em cache quando alguma camada falhou: senão a falha temporária ficaria "congelada".
+    const algumaFalhou = Object.values(camadas).includes('falhou');
+    if (!algumaFalhou) await setCached('due_diligence', cacheKey, result);
     return result;
   } catch (err) {
     console.error('[Sobreposição] Erro:', (err as Error).message);
@@ -745,6 +820,7 @@ export function calcularScoreRiscoFundiario(
   if (sobreposicoes) {
     if (sobreposicoes.terrasIndigenas.length > 0) juridico -= 50;
     if (sobreposicoes.quilombolas.length > 0) juridico -= 40;
+    if ((sobreposicoes.assentamentos || []).length > 0) juridico -= 40;
     for (const uc of sobreposicoes.unidadesConservacao) {
       juridico -= uc.nivelRisco === 'alto' ? 30 : 15;
     }
@@ -854,7 +930,7 @@ async function fetchAssetSpatialData(assetId: number): Promise<AssetSpatialData 
   return null;
 }
 
-async function computePostGISIntersection(
+export async function computePostGISIntersection(
   assetId: number,
   featureGeoJson: any,
   referenceGeoJson?: any
@@ -929,7 +1005,10 @@ async function computePostGISIntersection(
       if (row) return checarRow(row);
     }
   } catch (err) {
+    // Antes o erro virava "0 ha de interseção" (= sem sobreposição). Agora propaga: os chamadores
+    // marcam "a verificar" em vez de tratar falha de cálculo como ausência.
     console.warn('[DD PostGIS] Intersection error:', (err as Error).message);
+    throw err;
   }
   return { intersectionAreaHa: 0, overlapPercent: 0 };
 }
@@ -1035,73 +1114,48 @@ export async function executarDueDiligenceFundiaria(params: {
   if ((assetId || refGeom) && sobreposicoes) {
     const geoFeatures = sobreposicoes.geoJsonFeatures || [];
 
-    const tiWithIntersection: { area: SobreposicaoArea; feat: any }[] = [];
-    const quilWithIntersection: { area: SobreposicaoArea; feat: any }[] = [];
-    const ucWithIntersection: { area: SobreposicaoArea; feat: any }[] = [];
-
-    let geoIdx = 0;
-    for (const ti of sobreposicoes.terrasIndigenas) {
-      const feat = geoFeatures[geoIdx++];
-      if (feat?.geometry) {
+    // Para cada lista, calcula a interseção real (PostGIS). Áreas sem geometria, ou cujo cálculo
+    // falhou, NÃO são descartadas: ficam marcadas "a verificar" (descartar escondia possível sobreposição).
+    const processarLista = async (lista: SobreposicaoArea[]): Promise<{ area: SobreposicaoArea; feat: any }[]> => {
+      const out: { area: SobreposicaoArea; feat: any }[] = [];
+      for (const area of lista) {
+        const feat = geoFeatures.find((f: any) => f?.properties?.featKey === area.featKey);
+        if (!feat?.geometry) {
+          area.aVerificar = 'geometria indisponível — interseção não calculada (proximidade apenas)';
+          out.push({ area, feat: null });
+          continue;
+        }
         try {
           const r = await computePostGISIntersection(assetId || 0, feat.geometry, refGeom || undefined);
           if (r.intersectionAreaHa > 0 || r.overlapPercent > 0 || r.aVerificar) {
-            ti.areaIntersecaoHa = r.intersectionAreaHa;
-            ti.percentualSobreposicao = r.overlapPercent;
-            if (r.aVerificar) ti.aVerificar = r.aVerificar;
-            tiWithIntersection.push({ area: ti, feat });
+            area.areaIntersecaoHa = r.intersectionAreaHa;
+            area.percentualSobreposicao = r.overlapPercent;
+            if (r.aVerificar) area.aVerificar = r.aVerificar;
+            out.push({ area, feat });
           }
-        } catch {}
+        } catch {
+          area.aVerificar = 'cálculo de interseção falhou — verificar manualmente';
+          out.push({ area, feat });
+        }
       }
-    }
-    for (const q of sobreposicoes.quilombolas) {
-      const feat = geoFeatures[geoIdx++];
-      if (feat?.geometry) {
-        try {
-          const r = await computePostGISIntersection(assetId || 0, feat.geometry, refGeom || undefined);
-          if (r.intersectionAreaHa > 0 || r.overlapPercent > 0 || r.aVerificar) {
-            q.areaIntersecaoHa = r.intersectionAreaHa;
-            q.percentualSobreposicao = r.overlapPercent;
-            if (r.aVerificar) q.aVerificar = r.aVerificar;
-            quilWithIntersection.push({ area: q, feat });
-          }
-        } catch {}
-      }
-    }
-    for (const uc of sobreposicoes.unidadesConservacao) {
-      const feat = geoFeatures[geoIdx++];
-      if (feat?.geometry) {
-        try {
-          const r = await computePostGISIntersection(assetId || 0, feat.geometry, refGeom || undefined);
-          if (r.intersectionAreaHa > 0 || r.overlapPercent > 0 || r.aVerificar) {
-            uc.areaIntersecaoHa = r.intersectionAreaHa;
-            uc.percentualSobreposicao = r.overlapPercent;
-            if (r.aVerificar) uc.aVerificar = r.aVerificar;
-            ucWithIntersection.push({ area: uc, feat });
-          }
-        } catch {}
-      }
-    }
+      return out;
+    };
+    const tiWithIntersection = await processarLista(sobreposicoes.terrasIndigenas);
+    const quilWithIntersection = await processarLista(sobreposicoes.quilombolas);
+    const ucWithIntersection = await processarLista(sobreposicoes.unidadesConservacao);
+    const asWithIntersection = await processarLista(sobreposicoes.assentamentos || []);
 
     sobreposicoes.terrasIndigenas = tiWithIntersection.map(x => x.area);
     sobreposicoes.quilombolas = quilWithIntersection.map(x => x.area);
     sobreposicoes.unidadesConservacao = ucWithIntersection.map(x => x.area);
+    sobreposicoes.assentamentos = asWithIntersection.map(x => x.area);
     sobreposicoes.geoJsonFeatures = [
-      ...tiWithIntersection.map(x => x.feat),
-      ...quilWithIntersection.map(x => x.feat),
-      ...ucWithIntersection.map(x => x.feat),
-    ];
-    sobreposicoes.totalSobreposicoes = sobreposicoes.terrasIndigenas.length + sobreposicoes.quilombolas.length + sobreposicoes.unidadesConservacao.length;
-
-    if (sobreposicoes.terrasIndigenas.length > 0 || sobreposicoes.quilombolas.length > 0) {
-      sobreposicoes.riscoMaximo = 'alto';
-    } else if (sobreposicoes.unidadesConservacao.some(uc => uc.nivelRisco === 'alto')) {
-      sobreposicoes.riscoMaximo = 'alto';
-    } else if (sobreposicoes.unidadesConservacao.length > 0) {
-      sobreposicoes.riscoMaximo = 'medio';
-    } else {
-      sobreposicoes.riscoMaximo = 'nenhum';
-    }
+      ...tiWithIntersection, ...quilWithIntersection, ...ucWithIntersection, ...asWithIntersection,
+    ].map(x => x.feat).filter(Boolean);
+    sobreposicoes.totalSobreposicoes =
+      sobreposicoes.terrasIndigenas.length + sobreposicoes.quilombolas.length +
+      sobreposicoes.unidadesConservacao.length + sobreposicoes.assentamentos.length;
+    sobreposicoes.riscoMaximo = calcularRiscoSobreposicao(sobreposicoes);
     sobreposicoes.fonte = 'FUNAI + INCRA + ICMBio (WFS) — interseção calculada via PostGIS';
   }
 

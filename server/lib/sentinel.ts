@@ -6,13 +6,20 @@
 
 export interface SentinelNDVIResult {
   ndvi: number;
-  ndviMin: number;
-  ndviMax: number;
-  ndviStdDev: number;
+  /** null quando a fonte não devolveu a estatística (nunca preenchido com valor "padrão") */
+  ndviMin: number | null;
+  ndviMax: number | null;
+  ndviStdDev: number | null;
   classificacao: string;
   variabilidade: string;
   resolucao: string;
+  /** Mantido por compatibilidade: agora descreve o PERÍODO do composto, não uma "data da imagem". */
   dataImagem: string;
+  /** Período (ISO) dos últimos 30 dias usado no composto de imagens com <=20% de nuvem. */
+  periodoInicio: string;
+  periodoFim: string;
+  /** "poligono" = estatística só dentro da fazenda; "retangulo" = caixa ao redor (inclui vizinhos). */
+  areaAmostrada: "poligono" | "retangulo";
   fonte: string;
   consultadoEm: string;
 }
@@ -53,6 +60,7 @@ export async function getNDVISentinel(
   if (!token) return null;
 
   let bbox: [number, number, number, number];
+  const usaPoligono = !!(polygon && polygon[0]?.length > 3);
   if (polygon && polygon[0]?.length > 0) {
     const lngs = polygon[0].map((c: number[]) => c[0]);
     const lats = polygon[0].map((c: number[]) => c[1]);
@@ -68,7 +76,7 @@ export async function getNDVISentinel(
 
   const evalscript = `//VERSION=3
 function setup() {
-  return { input: [{ bands: ["B04","B08","dataMask"] }], output: { bands: 1 }, mosaicking: "ORBIT" };
+  return { input: [{ bands: ["B04","B08","dataMask"] }], output: [{ id: "default", bands: 1 }, { id: "dataMask", bands: 1 }], mosaicking: "ORBIT" };
 }
 function evaluatePixel(samples) {
   let sum=0,min=1,max=-1,count=0,sumSq=0;
@@ -77,9 +85,11 @@ function evaluatePixel(samples) {
     const n=(s.B08-s.B04)/(s.B08+s.B04+0.0001);
     sum+=n; sumSq+=n*n; if(n<min)min=n; if(n>max)max=n; count++;
   }
-  if(count===0)return[0];
+  // Sem observação válida: devolve máscara 0 para o pixel sair da estatística
+  // (antes devolvia NDVI 0, que virava "solo exposto" falso).
+  if(count===0)return{default:[0],dataMask:[0]};
   const mean=sum/count;
-  return[mean];
+  return{default:[mean],dataMask:[1]};
 }`;
 
   try {
@@ -88,7 +98,10 @@ function evaluatePixel(samples) {
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         input: {
-          bounds: { bbox, properties: { crs: "http://www.opengis.net/def/crs/OGC/1.3/CRS84" } },
+          // Com polígono, a estatística é só do interior da fazenda (antes: caixa envolvente, que incluía vizinhos).
+          bounds: usaPoligono
+            ? { geometry: { type: "Polygon", coordinates: polygon }, properties: { crs: "http://www.opengis.net/def/crs/OGC/1.3/CRS84" } }
+            : { bbox, properties: { crs: "http://www.opengis.net/def/crs/OGC/1.3/CRS84" } },
           data: [{
             type: "sentinel-2-l2a",
             dataFilter: {
@@ -113,10 +126,15 @@ function evaluatePixel(samples) {
     const stats = data?.data?.[0]?.outputs?.default?.bands?.B0?.stats;
     if (!stats) return null;
 
-    const ndvi    = Math.round((stats.mean    || 0.5) * 1000) / 1000;
-    const ndviMin = Math.round((stats.min     || 0.0) * 1000) / 1000;
-    const ndviMax = Math.round((stats.max     || 1.0) * 1000) / 1000;
-    const ndviStd = Math.round((stats.stDev   || 0.1) * 1000) / 1000;
+    // Sem valores "padrão": se a média não veio, não há NDVI (antes virava 0,5 — dado inventado;
+    // e um NDVI real igual a 0 também era trocado por 0,5 por causa do "||").
+    const num = (v: unknown): number | null =>
+      typeof v === "number" && Number.isFinite(v) ? Math.round(v * 1000) / 1000 : null;
+    const ndvi = num(stats.mean);
+    if (ndvi === null) return null;
+    const ndviMin = num(stats.min);
+    const ndviMax = num(stats.max);
+    const ndviStd = num(stats.stDev);
 
     const classificacao =
       ndvi >= 0.6 ? "Vegetação densa e saudável" :
@@ -124,7 +142,9 @@ function evaluatePixel(samples) {
       ndvi >= 0.2 ? "Vegetação esparsa" :
                     "Solo exposto ou vegetação muito baixa";
 
-    const variabilidade = ndviStd > 0.2
+    const variabilidade = ndviStd === null
+      ? "Variação interna não disponível"
+      : ndviStd > 0.2
       ? "Alta variação interna — possível área degradada ou uso misto"
       : ndviStd > 0.1
       ? "Variação moderada"
@@ -134,8 +154,13 @@ function evaluatePixel(samples) {
       ndvi, ndviMin, ndviMax, ndviStdDev: ndviStd,
       classificacao, variabilidade,
       resolucao: "10m (Sentinel-2)",
-      dataImagem: toISO(hoje),
-      fonte: "Sentinel Hub / Copernicus",
+      dataImagem: `${toISO(trintaDias)} a ${toISO(hoje)} (composto de 30 dias)`,
+      periodoInicio: toISO(trintaDias),
+      periodoFim: toISO(hoje),
+      areaAmostrada: usaPoligono ? "poligono" : "retangulo",
+      fonte: usaPoligono
+        ? "Sentinel-2 L2A / Copernicus — média no polígono, imagens com ≤20% de nuvem"
+        : "Sentinel-2 L2A / Copernicus — média numa caixa de ~4 km ao redor do ponto (inclui vizinhos)",
       consultadoEm: new Date().toISOString(),
     };
   } catch {

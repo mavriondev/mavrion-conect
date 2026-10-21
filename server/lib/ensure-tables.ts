@@ -151,6 +151,28 @@ export async function ensureLocalDataTables() {
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_asset_doc_texts_asset ON asset_document_texts (asset_id)`);
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_asset_doc_texts_file ON asset_document_texts (file_id)`);
+
+    // Verificações de terra (sobreposição, uso do solo, NDVI, logística, APP...) — histórico APPEND-ONLY
+    // com estado de confiança (confirmado / indicado / sem_dado). Ver server/lib/confianca-dados.ts.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS asset_verificacoes (
+        id SERIAL PRIMARY KEY,
+        asset_id INTEGER NOT NULL,
+        org_id INTEGER,
+        chave TEXT NOT NULL,
+        estado TEXT NOT NULL,
+        achado TEXT NOT NULL,
+        rotulo TEXT,
+        valor_json JSONB,
+        unidade TEXT,
+        fonte TEXT,
+        observacao TEXT,
+        confirmado_por TEXT,
+        consultado_em TIMESTAMP NOT NULL DEFAULT now(),
+        criado_em TIMESTAMP DEFAULT now()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_asset_verif_asset_chave ON asset_verificacoes (asset_id, chave, consultado_em DESC)`);
   } catch (e: any) {
     console.error("[EnsureTables] Falha ao provisionar tabelas locais:", e.message);
   }
