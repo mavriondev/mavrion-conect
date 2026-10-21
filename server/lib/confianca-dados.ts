@@ -44,7 +44,6 @@ export const CHAVES_VERIFICACAO: Record<string, { rotulo: string; validadeDias: 
   logistica_rodovia: { rotulo: "Rodovia mais próxima", validadeDias: 365 },
   logistica_ferrovia: { rotulo: "Ferrovia mais próxima", validadeDias: 365 },
   app_estimada: { rotulo: "APP mínima estimada", validadeDias: 365 },
-  reserva_legal_referencia: { rotulo: "Reserva Legal (referência legal)", validadeDias: 365 },
 };
 
 export function idadeEmDias(consultadoEm: string, agora: Date = new Date()): number {

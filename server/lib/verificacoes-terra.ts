@@ -128,9 +128,7 @@ async function verificarSobreposicoes(a: AtivoGeo): Promise<Verificacao[]> {
   return out;
 }
 
-// ---------- MapBiomas (uso do solo, alertas, referência de RL) ----------
-const RL_20_POR_CENTO = new Set(["mata atlântica", "caatinga", "pampa", "pantanal"]);
-
+// ---------- MapBiomas (uso do solo e alertas) ----------
 async function verificarMapBiomas(a: AtivoGeo): Promise<Verificacao[]> {
   const FONTE = "MapBiomas (cobertura e alertas)";
   let mb: Awaited<ReturnType<typeof getUsoTerraMapBiomas>> = null;
@@ -139,7 +137,6 @@ async function verificarMapBiomas(a: AtivoGeo): Promise<Verificacao[]> {
     return [
       indeterminada("uso_solo", FONTE, "Sem resposta do MapBiomas (credenciais ausentes ou serviço indisponível)."),
       indeterminada("alertas_desmatamento", FONTE, "Sem resposta do MapBiomas."),
-      indeterminada("reserva_legal_referencia", FONTE),
     ];
   }
   const out: Verificacao[] = [];
@@ -181,17 +178,6 @@ async function verificarMapBiomas(a: AtivoGeo): Promise<Verificacao[]> {
     }));
   }
 
-  const bioma = (mb.bioma || "").toLowerCase();
-  out.push(
-    RL_20_POR_CENTO.has(bioma)
-      ? verificacaoAutomatica({
-          chave: "reserva_legal_referencia", achado: "detectado",
-          valor: "Mínimo legal de 20% da área do imóvel", fonte: "Lei 12.651/2012, art. 12 + bioma (MapBiomas)",
-          observacao: `Bioma ${mb.bioma}. É a exigência legal de referência, não a RL averbada; conferir no CAR/matrícula.`,
-        })
-      : indeterminada("reserva_legal_referencia", "Lei 12.651/2012, art. 12",
-          "Percentual depende de fitofisionomia/Amazônia Legal — conferir no CAR."),
-  );
   return out;
 }
 

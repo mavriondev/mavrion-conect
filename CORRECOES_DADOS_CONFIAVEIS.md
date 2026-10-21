@@ -39,7 +39,7 @@ Ausência em base pública **não** é ausência na realidade. O sistema só mos
 - Hub: dois métodos de argila ainda coexistem (`argila_pct` SoilGrids e `argila_media` OpenGeoHub); o filtro prefere o OpenGeoHub.
 - Viés de chuva do ERA5 (validar com valores reais).
 - Silos/armazéns, cobertura de celular e outorgas de água: sem fonte pública confiável verificada para integrar; não incluídos (preferível não ter o dado a ter um dado duvidoso).
-- APP e Reserva Legal são estimativas de referência por natureza (a APP real vem do CAR/levantamento).
+- APP é estimativa mínima por natureza (a real vem do CAR/levantamento). A referência de Reserva Legal foi removida (podia ser lida como fato da fazenda).
 
 ## Ativos já cadastrados
 Mantêm valores antigos até reanálise. O lote `/api/geo/batch-analyze` agora também seleciona ativos cujo `attributes_json.geoMetodo` ≠ `v2-interior` (máx. 50 por chamada — repetir até zerar). Flags antigas `false` continuam ambíguas e devem ser lidas como "não detectado".
@@ -67,7 +67,7 @@ Aprovado: sobreposições, uso do solo, NDVI, logística, APP/RL, histórico e e
 
 **Novo:**
 - `server/lib/confianca-dados.ts`: estado (`confirmado` humano / `indicado` por fonte / `sem_dado`) × achado (`detectado` / `nao_detectado` / `indeterminado`), validade por tipo, projeção pública (só faixas, nunca sobreposição/CAR/local) — base do site de fazendas.
-- `server/lib/verificacoes-terra.ts` + `server/routes/verificacoes.ts`: executa sobreposições, alertas, uso do solo, referência de RL (só biomas com 20% inequívocos), NDVI, rodovia/ferrovia mais próximas e APP mínima (faixa de 30 m dos cursos d'água do IBGE).
+- `server/lib/verificacoes-terra.ts` + `server/routes/verificacoes.ts`: executa sobreposições, alertas, uso do solo, NDVI, rodovia/ferrovia mais próximas e APP mínima (faixa de 30 m dos cursos d'água do IBGE).
 - Tabela `asset_verificacoes` (criada sozinha no startup; histórico append-only). Rotas: `GET /api/assets/:id/verificacoes`, `GET .../historico`, `POST .../executar`, `POST .../:chave/confirmar`.
 - Cartão "Verificações da terra" na aba Due Diligence do ativo, com confirmação manual (vendedor/documento/visita) e aviso de divergência quando uma fonte nova contradiz uma confirmação.
 - Testes novos: `confianca-dados.test.ts`, `risco-sobreposicao.test.ts` (rodar com `DATABASE_URL` definida).
@@ -79,3 +79,6 @@ Aprovado: sobreposições, uso do solo, NDVI, logística, APP/RL, histórico e e
 - **Nomes de camadas WFS:** `wfs-descoberta.ts` procura a camada certa no GetCapabilities quando o nome padrão falha (rodovia/ferrovia IBGE) e para assentamentos INCRA (a variável `INCRA_ASSENTAMENTOS_WFS_LAYER` continua valendo e tem prioridade).
 - **NDVI em MultiPolygon:** usa a geometria inteira (antes só o primeiro polígono).
 - Testes: `uso-solo-e-wfs.test.ts`.
+
+## Quinta rodada
+- Removida a verificação `reserva_legal_referencia` (mantida só a APP mínima estimada, uso interno).
