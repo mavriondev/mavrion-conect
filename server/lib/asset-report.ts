@@ -120,7 +120,7 @@ function aplicarVigenciaCanonicaAosCampos(campos: any[], vigencia: ResultadoVige
 
 const TIPO_LABEL: Record<string, string> = {
   MINA: "Ativo Minerário", TERRA: "Terra / Fazenda", AGRO: "Agronegócio",
-  NEGOCIO: "Negócio / Empresa", FII_CRI: "FII / CRI", DESENVOLVIMENTO: "Desenvolvimento",
+  NEGOCIO: "Negócio / Empresa", FII_CRI: "Ativo legado", DESENVOLVIMENTO: "Desenvolvimento",
 };
 
 // ── seções ──

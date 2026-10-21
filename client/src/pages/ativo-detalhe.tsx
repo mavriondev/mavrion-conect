@@ -6,7 +6,7 @@ import { Link, useLocation, useSearch } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsList, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -926,7 +926,7 @@ const TIPO_CONFIG: Record<string, { label: string; icon: any; color: string; bad
   TERRA:           { label: "Terra / Fazenda",       icon: TreePine,  color: "text-green-600",  badge: "bg-green-100 text-green-800" },
   MINA:            { label: "Mineração",              icon: Pickaxe,   color: "text-orange-600", badge: "bg-orange-100 text-orange-800" },
   NEGOCIO:         { label: "Negócio / M&A",          icon: Briefcase, color: "text-blue-600",   badge: "bg-blue-100 text-blue-800" },
-  FII_CRI:         { label: "FII / CRI / Imóvel",    icon: Home,      color: "text-purple-600", badge: "bg-purple-100 text-purple-800" },
+  FII_CRI:         { label: "Ativo legado", icon: Home, color: "text-muted-foreground", badge: "bg-muted" },
   DESENVOLVIMENTO: { label: "Desenvolvimento Imob.", icon: Factory,   color: "text-pink-600",   badge: "bg-pink-100 text-pink-800" },
   AGRO:            { label: "Agronegócio",            icon: Wheat,     color: "text-yellow-600", badge: "bg-yellow-100 text-yellow-800" },
 };
@@ -966,20 +966,13 @@ const ABAS_POR_TIPO: Record<string, Array<{id: string, label: string}>> = {
     { id: "titular-financas", label: "Titular & Finanças" },
     { id: "territorio", label: "Território" },
     { id: "geo",        label: "Geo" },
+    { id: "documentos", label: "Documentos" },
     { id: "ia",         label: "IA" },
   ],
   NEGOCIO: [
     { id: "info",       label: "Informações" },
     // { id: "enriquecimento", label: "Onboarding" },
     // { id: "matches",    label: "Matches" },
-    { id: "empresa",    label: "Empresa" },
-    { id: "ia",         label: "IA" },
-  ],
-  FII_CRI: [
-    { id: "info",       label: "Informações" },
-    // { id: "enriquecimento", label: "Onboarding" },
-    // { id: "matches",    label: "Matches" },
-    { id: "cvm",        label: "CVM / ANBIMA" },
     { id: "empresa",    label: "Empresa" },
     { id: "ia",         label: "IA" },
   ],
@@ -1937,16 +1930,6 @@ const ENRICHMENT_FIELDS_CONFIG: Record<string, Array<{
     { key: "situacaoDocumental", label: "Situação documental", type: "select", options: ["Regularizado", "Pendente", "Irregular", "Em regularização"] },
     { key: "observacoesQualitativas", label: "Observações qualitativas", type: "textarea" },
   ],
-  FII_CRI: [
-    { key: "tipoFundo", label: "Tipo de fundo", type: "select", options: ["Tijolo", "Papel", "Híbrido", "FOF"] },
-    { key: "rentabilidadeAnual", label: "Rentabilidade anual (%)", type: "number" },
-    { key: "vacanciaMedia", label: "Vacância média (%)", type: "number" },
-    { key: "qtdImoveis", label: "Número de imóveis na carteira", type: "number" },
-    { key: "segmentoImoveis", label: "Segmento dos imóveis", type: "select", options: ["Lajes corporativas", "Logístico", "Shopping", "Residencial", "Misto"] },
-    { key: "dividendYield", label: "Dividend yield (%)", type: "number" },
-    { key: "situacaoDocumental", label: "Situação documental", type: "select", options: ["Regularizado", "Pendente", "Irregular", "Em regularização"] },
-    { key: "observacoesQualitativas", label: "Observações qualitativas", type: "textarea" },
-  ],
 };
 ENRICHMENT_FIELDS_CONFIG["JAZIDA"] = ENRICHMENT_FIELDS_CONFIG["MINA"];
 
@@ -1986,13 +1969,6 @@ const ONBOARDING_CHECKLIST: Record<string, Array<{ item: string; obrigatorio: bo
     { item: "Contrato de arrendamento (se houver)", obrigatorio: false },
     { item: "Laudos de solo e produtividade", obrigatorio: false },
     { item: "Certificações (Orgânico, Rainforest etc.)", obrigatorio: false },
-  ],
-  FII_CRI: [
-    { item: "Regulamento do fundo atualizado", obrigatorio: true },
-    { item: "Registro CVM", obrigatorio: true },
-    { item: "Último relatório gerencial", obrigatorio: true },
-    { item: "Demonstrações financeiras auditadas", obrigatorio: true },
-    { item: "Escritura de emissão (CRI)", obrigatorio: false },
   ],
   DESENVOLVIMENTO: [
     { item: "Matrícula do terreno", obrigatorio: true },
@@ -2471,7 +2447,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
   // Método antigo (fallback): captura de tela aba por aba com html2canvas
   const exportarPdfCapturaTela = async () => {
     if (!ativo || exportingPdf) return;
-    const abas = (ABAS_POR_TIPO[ativo.type] || []).filter(a => a.id !== "matches");
+    const abas = (ABAS_POR_TIPO[ativo.type] || [{ id: "info", label: "Informações" }]).filter(a => a.id !== "matches");
     if (abas.length === 0) return;
     const abaOriginal = abaAtiva;
     const anmSubOriginal = anmSubTab;
@@ -2750,10 +2726,6 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
   const [certidoesData, setCertidoesData] = useState<any>(null);
   const [cnpjaData, setCnpjaData] = useState<any>(null);
   const [cnpjaLoading, setCnpjaLoading] = useState(false);
-  const [cvmCnpjInput, setCvmCnpjInput] = useState("");
-  const [cvmData, setCvmData] = useState<any>(null);
-  const [cvmLoading, setCvmLoading] = useState(false);
-  const [cvmError, setCvmError] = useState(false);
   const [sicorData, setSicorData] = useState<any>(null);
   const [sicorLoading, setSicorLoading] = useState(false);
   const [sicorFetched, setSicorFetched] = useState(false);
@@ -2775,7 +2747,6 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
     const campos = (ativo.camposEspecificos ?? {});
     if (campos.cnpjaData && !cnpjaData) setCnpjaData(campos.cnpjaData);
     if (campos.certidoesData && !certidoesData) setCertidoesData(campos.certidoesData);
-    if (campos.cvmData && !cvmData) setCvmData(campos.cvmData);
     if (campos.sicorData && !sicorData && !sicorFetched) {
       setSicorData(campos.sicorData);
       setSicorFetched(true);
@@ -2788,7 +2759,6 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
     setSicorLoading(false);
     setCnpjaData(null);
     setCertidoesData(null);
-    setCvmData(null);
   }, [id]);
 
   useEffect(() => {
@@ -2798,7 +2768,7 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
     if (!codigoIbge || sicorData || sicorFetched) return;
     setSicorFetched(true);
     setSicorLoading(true);
-    apiRequest("GET", `/api/norion/sicor/${codigoIbge}`)
+    apiRequest("GET", `/api/mavrion/sicor/${codigoIbge}`)
       .then(async (res) => {
         if (res.ok) {
           const data = await res.json();
@@ -3048,7 +3018,11 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
       <Tabs value={abaAtiva} onValueChange={setAbaAtiva}>
         <div className="overflow-x-auto pb-0.5">
           <TabsList className="w-max min-w-full">
-
+            {(ABAS_POR_TIPO[ativo.type] || [{ id: "info", label: "Informações" }]).map(aba => (
+              <TabsTrigger key={aba.id} value={aba.id} data-testid={`tab-${aba.id}`}>
+                {aba.label}
+              </TabsTrigger>
+            ))}
           </TabsList>
         </div>
 
@@ -3873,6 +3847,17 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
           <AnmEnrichmentTabs ativo={ativo} assetId={id!} salvarEnrichment={salvarEnrichment} group="territorio" subTab={anmSubTab} onSubTabChange={setAnmSubTab} />
         </TabsContent>
 
+        {isTipoMinerario(ativo.type) && (
+          <TabsContent value="documentos" className="mt-4">
+            <DocumentsPanel
+              tipo="ativo"
+              entityId={ativo.id}
+              ativoTipo={ativo.type}
+              ativoTitulo={ativo.title}
+            />
+          </TabsContent>
+        )}
+
         <TabsContent value="empresa" className="mt-4 space-y-4">
             {(() => {
               const campos = (ativo.camposEspecificos ?? {});
@@ -4198,168 +4183,6 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                     <Building2 className="w-3.5 h-3.5" /> Ver cadastro da empresa
                   </Button>
                 )}
-                </>
-              );
-            })()}
-          </TabsContent>
-
-        <TabsContent value="cvm" className="mt-4 space-y-4">
-            {(() => {
-              const campos = (ativo.camposEspecificos ?? {});
-              const hasIndicadores = campos.registroCvm || campos.gestora || campos.dy12m != null || campos.pvp != null;
-
-              const consultarCvm = async () => {
-                const raw = (cvmCnpjInput || campos.cnpj || "").replace(/\D/g, "");
-                if (!raw) return;
-                setCvmLoading(true);
-                setCvmError(false);
-                setCvmData(null);
-                try {
-                  const res = await apiRequest("GET", `/api/norion/fundo/${raw}`);
-                  if (!res.ok) throw new Error();
-                  const data = await res.json();
-                  setCvmData(data);
-                  salvarEnrichment("cvmData", data);
-                } catch {
-                  setCvmError(true);
-                }
-                setCvmLoading(false);
-              };
-
-              return (
-                <>
-                {hasIndicadores && (
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-sm">Indicadores</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="grid grid-cols-2 gap-3">
-                        {campos.registroCvm && (
-                          <div className="p-2 rounded bg-muted/50">
-                            <p className="text-xs text-muted-foreground">Registro CVM</p>
-                            <p className="text-sm font-bold" data-testid="text-registro-cvm">{campos.registroCvm}</p>
-                          </div>
-                        )}
-                        {campos.gestora && (
-                          <div className="p-2 rounded bg-muted/50">
-                            <p className="text-xs text-muted-foreground">Gestora</p>
-                            <p className="text-sm font-bold" data-testid="text-gestora">{campos.gestora}</p>
-                          </div>
-                        )}
-                        {campos.dy12m != null && (
-                          <div className="p-2 rounded bg-muted/50">
-                            <p className="text-xs text-muted-foreground">DY 12 meses</p>
-                            <div className="flex items-center gap-2">
-                              <p className="text-sm font-bold" data-testid="text-dy12m">{campos.dy12m}%</p>
-                              <Badge className={
-                                campos.dy12m > 9 ? "bg-green-100 text-green-700 border-green-200 text-xs" :
-                                campos.dy12m >= 6 ? "bg-amber-100 text-amber-700 border-amber-200 text-xs" :
-                                "bg-gray-100 text-gray-500 border-gray-200 text-xs"
-                              }>
-                                {campos.dy12m > 9 ? "Alto" : campos.dy12m >= 6 ? "Médio" : "Baixo"}
-                              </Badge>
-                            </div>
-                          </div>
-                        )}
-                        {campos.pvp != null && (
-                          <div className="p-2 rounded bg-muted/50">
-                            <p className="text-xs text-muted-foreground">P/VP</p>
-                            <div className="flex items-center gap-2">
-                              <p className="text-sm font-bold" data-testid="text-pvp">{campos.pvp}</p>
-                              <Badge className={
-                                campos.pvp < 0.9 ? "bg-green-100 text-green-700 border-green-200 text-xs" :
-                                campos.pvp <= 1.1 ? "bg-gray-100 text-gray-500 border-gray-200 text-xs" :
-                                "bg-red-100 text-red-700 border-red-200 text-xs"
-                              }>
-                                {campos.pvp < 0.9 ? "Desconto" : campos.pvp <= 1.1 ? "Par" : "Prêmio"}
-                              </Badge>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm">Consulta CVM</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder="CNPJ do fundo"
-                        value={cvmCnpjInput || campos.cnpj || ""}
-                        onChange={(e) => setCvmCnpjInput(e.target.value)}
-                        className="max-w-xs font-mono text-sm"
-                        data-testid="input-cvm-cnpj"
-                      />
-                      <Button size="sm" variant="outline" className="gap-1.5 shrink-0"
-                        disabled={cvmLoading}
-                        onClick={consultarCvm}
-                        data-testid="button-consultar-cvm"
-                      >
-                        {cvmLoading
-                          ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Consultando...</>
-                          : <><Search className="w-3.5 h-3.5" /> Consultar CVM</>}
-                      </Button>
-                    </div>
-
-                    {cvmError && (
-                      <p className="text-sm text-red-600" data-testid="text-cvm-erro">Fundo não encontrado na CVM</p>
-                    )}
-
-                    {cvmData && (
-                      <Card className="mt-3">
-                        <CardContent className="p-4 space-y-3">
-                          <div className="grid grid-cols-2 gap-3">
-                            {cvmData.nome && (
-                              <div className="p-2 rounded bg-muted/50 col-span-2">
-                                <p className="text-xs text-muted-foreground">Nome</p>
-                                <p className="text-sm font-bold" data-testid="text-cvm-nome">{cvmData.nome}</p>
-                              </div>
-                            )}
-                            {cvmData.tipo && (
-                              <div className="p-2 rounded bg-muted/50">
-                                <p className="text-xs text-muted-foreground">Tipo</p>
-                                <p className="text-sm font-medium" data-testid="text-cvm-tipo">{cvmData.tipo}</p>
-                              </div>
-                            )}
-                            {(cvmData.situacao || cvmData.situação) && (
-                              <div className="p-2 rounded bg-muted/50">
-                                <p className="text-xs text-muted-foreground">Situação</p>
-                                <p className="text-sm font-medium" data-testid="text-cvm-situacao">{cvmData.situacao || cvmData.situação}</p>
-                              </div>
-                            )}
-                            {cvmData.administrador && (
-                              <div className="p-2 rounded bg-muted/50 col-span-2">
-                                <p className="text-xs text-muted-foreground">Administrador</p>
-                                <p className="text-sm font-medium" data-testid="text-cvm-admin">{cvmData.administrador}</p>
-                              </div>
-                            )}
-                          </div>
-                          {(cvmData.patrimonioLiquido != null || cvmData.cotistas != null) && (
-                            <div className="grid grid-cols-2 gap-3 mt-2">
-                              {cvmData.patrimonioLiquido != null && (
-                                <div className="p-2 rounded bg-muted/50 text-center">
-                                  <p className="text-xs text-muted-foreground">Patrimônio Líquido</p>
-                                  <p className="text-sm font-bold" data-testid="text-cvm-pl">{formatBRL(cvmData.patrimonioLiquido)}</p>
-                                </div>
-                              )}
-                              {cvmData.cotistas != null && (
-                                <div className="p-2 rounded bg-muted/50 text-center">
-                                  <p className="text-xs text-muted-foreground">Cotistas</p>
-                                  <p className="text-sm font-bold" data-testid="text-cvm-cotistas">{Number(cvmData.cotistas).toLocaleString("pt-BR")}</p>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </CardContent>
-                      </Card>
-                    )}
-                  </CardContent>
-                </Card>
                 </>
               );
             })()}

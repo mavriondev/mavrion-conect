@@ -41,6 +41,16 @@ test("ANM, fazendas, empresas e relatórios não consultam mais APIs aposentadas
   }
 });
 
+test("detalhe do ativo mantém os seletores das abas ativas", () => {
+  const source = readFileSync("client/src/pages/ativo-detalhe.tsx", "utf8");
+  const tabList = source.match(/<TabsList\b[^>]*>([\s\S]*?)<\/TabsList>/)?.[1];
+  assert.ok(tabList, "A barra de abas não pode ficar vazia");
+  assert.match(tabList, /ABAS_POR_TIPO\[ativo\.type\]/);
+  assert.match(tabList, /<TabsTrigger\b[^>]*value=\{aba\.id\}/);
+  assert.match(tabList, /\{aba\.label\}/);
+  assert.doesNotMatch(tabList, /value=["']matches["']/);
+});
+
 test("cadastro de empresas continua sendo renderizado", () => {
   const source = readFileSync("client/src/pages/empresas.tsx", "utf8");
   assert.match(source, /company\.legalName/);
@@ -50,6 +60,27 @@ test("cadastro de empresas continua sendo renderizado", () => {
 test("Norion não registra página nem navegação de SDR", () => {
   assert.doesNotMatch(readFileSync("norion-standalone/client/src/App.tsx", "utf8"), /\/sdr|SdrPage/);
   assert.doesNotMatch(readFileSync("norion-standalone/client/src/components/norion-layout.tsx", "utf8"), /\/sdr/);
+});
+
+test("detalhe do ativo preserva gatilhos navegáveis das abas após a limpeza", () => {
+  const source = readFileSync("client/src/pages/ativo-detalhe.tsx", "utf8");
+  const tree = ts.createSourceFile("ativo-detalhe.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let navigableLists = 0;
+  function visit(node: ts.Node) {
+    if (ts.isJsxElement(node) && node.openingElement.tagName.getText(tree) === "TabsList") {
+      const text = node.getText(tree);
+      assert.match(text, /ABAS_POR_TIPO\[ativo\.type\]/);
+      assert.match(text, /<TabsTrigger\b[^>]*value=\{aba\.id\}/);
+      assert.match(text, /\{aba\.label\}/);
+      navigableLists++;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(tree);
+  assert.equal(navigableLists, 1);
+  assert.match(source, /ABAS_POR_TIPO\["JAZIDA"\] = ABAS_POR_TIPO\["MINA"\]/);
+  assert.match(source, /\{ id: "documentos", label: "Documentos" \}/);
+  assert.match(source, /isTipoMinerario\(ativo\.type\) && \(\s*<TabsContent value="documentos"[^>]*>\s*<DocumentsPanel\s+tipo="ativo"\s+entityId=\{ativo\.id\}\s+ativoTipo=\{ativo\.type\}\s+ativoTitulo=\{ativo\.title\}/);
 });
 
 test("rotas de qualificação e criação de leads não são mais registradas", () => {

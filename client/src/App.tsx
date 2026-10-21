@@ -1,5 +1,4 @@
 import { Switch, Route, useLocation } from "wouter";
-import { useEffect, useState } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -9,30 +8,11 @@ import { useErrorCapture } from "@/hooks/use-error-capture";
 import { ThemeProvider } from "@/components/theme-provider";
 import { I18nContext, type Lang, getTranslation } from "@/lib/i18n";
 
-import NotFound from "@/pages/not-found";
-import Dashboard from "@/pages/dashboard";
 import LoginPage from "@/pages/login";
-import ConnectorsPage from "@/pages/connectors";
-import ProspeccaoPage from "@/pages/prospeccao";
-import EmpresasPage from "@/pages/empresas";
-import EmpresaDetailPage from "@/pages/empresa-detail";
-import UsersPage from "@/pages/users";
-import ConfiguracoesPage from "@/pages/configuracoes";
-import AtivosPage from "@/pages/ativos";
-import AtivoDetalhePage from "@/pages/ativo-detalhe";
-import RelatoriosPage from "@/pages/relatorios";
-import AnmPage from "@/pages/anm";
-import GeoRuralPage from "@/pages/geo-rural";
-import AnaliseAgroPage from "@/pages/analise-agro";
-import InteligenciaAgroPage from "@/pages/inteligencia-agro";
-import ManualPage from "@/pages/manual";
-import ErrorReportsPage from "@/pages/error-reports";
-import ArquiteturaPage from "@/pages/arquitetura";
-import IaGuiaPdf from "@/pages/ia-guia-pdf";
-import NegociosInvestidoresPage from "@/pages/negocios-investidores";
-import SicarWorkerPage from "@/pages/sicar-worker";
 import Sidebar, { SidebarProvider, MobileTopBar, useSidebar } from "@/components/layout-sidebar";
 import TopBar from "@/components/top-bar";
+import { lazy, useEffect, useState } from "react";
+import { PageLoader } from "@/components/page-loader";
 
 
 function MainContent({ children }: { children: React.ReactNode }) {
@@ -46,7 +26,7 @@ function MainContent({ children }: { children: React.ReactNode }) {
 
 function PrivateRoute({ component: Component, ...rest }: any) {
   const { user, isLoading } = useAuth();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -73,7 +53,9 @@ function PrivateRoute({ component: Component, ...rest }: any) {
           <MobileTopBar />
           <div className="pt-12 md:pt-0">
             <TopBar />
-            <Component {...rest} />
+            <PageLoader key={location}>
+              <Component {...rest} />
+            </PageLoader>
           </div>
         </MainContent>
       </div>
@@ -103,16 +85,6 @@ function Router() {
       </Route>
 
 
-
-
-
-
-
-
-
-
-
-
       <Route path="/connectors">
         {() => <PrivateRoute component={ConnectorsPage} />}
       </Route>
@@ -120,9 +92,6 @@ function Router() {
       <Route path="/prospeccao">
         {() => <PrivateRoute component={ProspeccaoPage} />}
       </Route>
-
-
-
 
 
       <Route path="/empresas">
@@ -136,7 +105,6 @@ function Router() {
       <Route path="/users">
         {() => <PrivateRoute component={UsersPage} />}
       </Route>
-
 
 
       <Route path="/configuracoes">
@@ -171,10 +139,6 @@ function Router() {
         {() => <PrivateRoute component={GeoRuralPage} />}
       </Route>
 
-      {/* <Route path="/fii-fundos">
-        {() => <PrivateRoute component={FiiFundosPage} />}
-      </Route> — desativado temporariamente */}
-
       <Route path="/analise-agro">
         {() => <PrivateRoute component={AnaliseAgroPage} />}
       </Route>
@@ -182,9 +146,6 @@ function Router() {
       <Route path="/inteligencia-agro">
         {() => <PrivateRoute component={InteligenciaAgroPage} />}
       </Route>
-
-
-
 
 
       <Route path="/error-reports">
@@ -197,17 +158,6 @@ function Router() {
           return null;
         }}
       </Route>
-
-
-
-
-
-
-
-
-
-
-
 
 
       <Route path="/sicar-worker">
@@ -259,7 +209,9 @@ function App() {
       <ThemeProvider>
         <I18nProvider>
           <TooltipProvider>
-            <Router />
+            <PageLoader>
+              <Router />
+            </PageLoader>
             <Toaster />
           </TooltipProvider>
         </I18nProvider>
@@ -269,3 +221,45 @@ function App() {
 }
 
 export default App;
+
+const NotFound = lazy(() => import("@/pages/not-found"));
+
+const EmpresasPage = lazy(() => import("@/pages/empresas"));
+
+const UsersPage = lazy(() => import("@/pages/users"));
+
+const ConfiguracoesPage = lazy(() => import("@/pages/configuracoes"));
+
+const AnaliseAgroPage = lazy(() => import("@/pages/analise-agro"));
+
+const InteligenciaAgroPage = lazy(() => import("@/pages/inteligencia-agro"));
+
+const NegociosInvestidoresPage = lazy(() => import("@/pages/negocios-investidores"));
+
+const AtivosPage = lazy(() => import("@/pages/ativos"));
+
+const IaGuiaPdf = lazy(() => import("@/pages/ia-guia-pdf"));
+
+const AtivoDetalhePage = lazy(() => import("@/pages/ativo-detalhe"));
+
+const ConnectorsPage = lazy(() => import("@/pages/connectors"));
+
+const EmpresaDetailPage = lazy(() => import("@/pages/empresa-detail"));
+
+const ErrorReportsPage = lazy(() => import("@/pages/error-reports"));
+
+const ManualPage = lazy(() => import("@/pages/manual"));
+
+const ArquiteturaPage = lazy(() => import("@/pages/arquitetura"));
+
+const Dashboard = lazy(() => import("@/pages/dashboard"));
+
+const ProspeccaoPage = lazy(() => import("@/pages/prospeccao"));
+
+const GeoRuralPage = lazy(() => import("@/pages/geo-rural"));
+
+const RelatoriosPage = lazy(() => import("@/pages/relatorios"));
+
+const SicarWorkerPage = lazy(() => import("@/pages/sicar-worker"));
+
+const AnmPage = lazy(() => import("@/pages/anm"));

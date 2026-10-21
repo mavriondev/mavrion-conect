@@ -13,7 +13,7 @@ export default function RelatoriosPage() {
   const rows = assets.data || [];
   const mines = rows.filter(a => a.type === "MINA");
   const types = Array.from(new Set(rows.map(a => a.type))).sort();
-  const labels: Record<string, string> = { MINA: "Jazidas", TERRA: "Fazendas", AGRO: "Agronegócio", NEGOCIO: "Negócios", FII_CRI: "FII / CRI", DESENVOLVIMENTO: "Desenvolvimento" };
+  const labels: Record<string, string> = { MINA: "Jazidas", TERRA: "Fazendas", AGRO: "Agronegócio", NEGOCIO: "Negócios", FII_CRI: "Ativos legados", DESENVOLVIMENTO: "Desenvolvimento" };
   return <div className="p-4 md:p-6 space-y-6">
     <div><h1 className="text-2xl font-semibold">Relatórios</h1><p className="text-sm text-muted-foreground">Resumo dos cadastros de ativos e empresas.</p></div>
     <div className="grid gap-4 sm:grid-cols-3">

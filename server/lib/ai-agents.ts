@@ -1,8 +1,8 @@
 import { buildDossieDigest } from "./dossie-digest";
 import OpenAI from "openai";
 import { db } from "../db";
-import { assets, companies, errorReports } from "@shared/schema";
-import { eq, and, gte, lte, ilike, sql, desc } from "drizzle-orm";
+import { assets, companies, errorReports, mavrionCafRegistros } from "@shared/schema";
+import { eq, and, gte, lte, ilike, sql, desc, getTableName } from "drizzle-orm";
 import {
   anexarVigenciaCalculada,
   contextoVigenciaMinerariaParaPrompt,
@@ -97,7 +97,7 @@ export async function analyzeAsset(assetId: number, orgId: number): Promise<stri
   const attr = (ativo.attributesJson || {}) as any;
 
   const cafRows = await db.execute(sql.raw(
-    `SELECT situacao, valor_credito, nome_programa, safra FROM norion_caf_registros WHERE asset_id = ${Number(assetId)} ORDER BY safra DESC LIMIT 10`
+    `SELECT situacao, valor_credito, nome_programa, safra FROM ${getTableName(mavrionCafRegistros)} WHERE asset_id = ${Number(assetId)} ORDER BY safra DESC LIMIT 10`
   )).then(r => r.rows).catch(() => []);
 
   const { secao: secaoDocumentosAnexados } = await buildDocsAnexadosSection(
@@ -303,7 +303,7 @@ EMPRESA:
 - CNAE Principal: ${empresa.cnaePrincipal || "N/D"}
 - Receita estimada: ${formatBRL((empresa as any).revenueEstimate)}
 - Endereço completo: ${address.street || ""} ${address.number || ""}, ${address.district || ""}, ${address.city || ""}-${address.state || ""}, CEP ${address.zip || "N/D"}
-- Perfil Norion: ${(empresa as any).norionProfile || "N/D"}
+- Perfil Mavrion: ${(empresa as any).mavrionProfile || "N/D"}
 
 CONTATOS E PRESENÇA DIGITAL:
 ${contactInfo || "Nenhum contato disponível"}
@@ -369,7 +369,7 @@ Busca: "${query}"
 
 Retorne APENAS um JSON válido:
 {
-  "type": "TERRA" | "AGRO" | "MINA" | "FII_CRI" | "DESENVOLVIMENTO" | "NEGOCIO" | null,
+  "type": "TERRA" | "AGRO" | "MINA" | "DESENVOLVIMENTO" | "NEGOCIO" | null,
   "areaMin": number | null,
   "areaMax": number | null,
   "estado": "MT" | "MS" | "GO" | "SP" | "MG" | "BA" | "PR" | "RS" | "SC" | "TO" | "PA" | "MA" | "PI" | "RO" | null,
@@ -531,7 +531,7 @@ export async function pricingAdvisor(assetId: number, orgId: number): Promise<st
   const attr = (ativo.attributesJson || {}) as any;
 
   const cafRows = await db.execute(sql.raw(
-    `SELECT situacao, valor_credito, nome_programa, safra FROM norion_caf_registros WHERE asset_id = ${Number(assetId)} ORDER BY safra DESC LIMIT 5`
+    `SELECT situacao, valor_credito, nome_programa, safra FROM ${getTableName(mavrionCafRegistros)} WHERE asset_id = ${Number(assetId)} ORDER BY safra DESC LIMIT 5`
   )).then(r => r.rows).catch(() => []);
 
   const similares = await db.select({
@@ -573,7 +573,7 @@ export async function pricingAdvisor(assetId: number, orgId: number): Promise<st
     ? contextoVigenciaMinerariaParaPrompt(obterVigenciaCalculada(ativoComVigencia))
     : "";
 
-  const prompt = `Você é um avaliador sênior de ativos rurais, minerários e M&A no Brasil, com experiência em precificação para fundos de investimento.
+  const prompt = `Você é um avaliador sênior de ativos rurais, minerários e M&A no Brasil.
 Analise o preço deste ativo usando TODOS os dados disponíveis. Seja objetivo e transparente.
 
 ═══════════════════════════════════════
@@ -788,7 +788,7 @@ export async function deepIntelligenceAnalysis(assetId: number, orgId: number): 
   }
 
   const cafRows = await db.execute(sql.raw(
-    `SELECT situacao, valor_credito, nome_programa, safra, nome_beneficiario FROM norion_caf_registros WHERE asset_id = ${Number(assetId)} ORDER BY safra DESC LIMIT 15`
+    `SELECT situacao, valor_credito, nome_programa, safra, nome_beneficiario FROM ${getTableName(mavrionCafRegistros)} WHERE asset_id = ${Number(assetId)} ORDER BY safra DESC LIMIT 15`
   )).then(r => r.rows).catch(() => []);
 
   const sections: string[] = [];
@@ -959,12 +959,6 @@ ${attr.carSobreposicaoUC ? "- SOBREPOSIÇÃO COM UNIDADE DE CONSERVAÇÃO" : ""}
     qtdFuncionarios: "Qtd funcionários",
     motivoVenda: "Motivo da venda",
     possuiPassivos: "Possui passivos",
-    tipoFundo: "Tipo de fundo",
-    rentabilidadeAnual: "Rentabilidade anual",
-    vacanciaMedia: "Vacância média",
-    qtdImoveis: "Qtd imóveis",
-    segmentoImoveis: "Segmento de imóveis",
-    dividendYield: "Dividend yield",
   };
   for (const [k, v] of Object.entries(onboarding)) {
     if (v === null || v === undefined || v === "" || k === "enrichmentProgress") continue;
@@ -1039,17 +1033,6 @@ ${attr.carSobreposicaoUC ? "- SOBREPOSIÇÃO COM UNIDADE DE CONSERVAÇÃO" : ""}
       }
     }
     sections.push(`DADOS EMPRESARIAIS (CNPJA):\n${cnpjaLines.join("\n")}`);
-  }
-
-  if (campos.cvmData) {
-    const cvm = campos.cvmData as any;
-    sections.push(`DADOS CVM/FUNDO:
-- Fundo: ${cvm.denominacaoSocial || cvm.nome || "N/D"}
-- Código CVM: ${cvm.codigoCvm || "N/D"}
-- Patrimônio líquido: ${cvm.patrimonioLiquido ? formatBRL(cvm.patrimonioLiquido) : "N/D"}
-- Cotistas: ${safeNum(cvm.numeroCotistas)}
-- Administrador: ${cvm.administrador || "N/D"}
-- Gestor: ${cvm.gestor || "N/D"}`);
   }
 
   if (campos.dueDiligenceFundiaria) {

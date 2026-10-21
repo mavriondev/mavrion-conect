@@ -25,7 +25,6 @@ const CNAE_POR_TIPO: Record<string, { prefixes: string[]; label: string; icon: a
   MINA:    { prefixes: ["0710", "0890", "0810", "0600"], label: "Mineração", icon: Pickaxe },
   TERRA:   { prefixes: ["0111", "0112", "0113", "0114", "0115", "0116", "0119", "0121", "0131", "0141", "0151", "0161", "0163", "0210", "6810", "4623", "6470"], label: "Terras", icon: TreePine },
   AGRO:    { prefixes: ["0111", "0112", "0113", "0114", "0115", "0116", "0119", "0121", "0131", "0132", "0133", "0141", "0142", "0151", "0152", "0153", "0154", "0155", "0161", "0162", "0163", "0210", "1011", "1012", "1013", "1051", "1052", "1053", "4622", "4623", "4683", "6470", "6612"], label: "Agro", icon: Wheat },
-  FII_CRI: { prefixes: ["6422", "6423", "6431", "6432", "6450", "6630"], label: "FII/Fundos", icon: Home },
   DESENVOLVIMENTO: { prefixes: ["4110", "4120", "4211", "6810", "6821"], label: "Desenv.", icon: Factory },
   NEGOCIO: { prefixes: ["6420", "6430", "6470", "6499", "7490"], label: "M&A", icon: Briefcase },
 };

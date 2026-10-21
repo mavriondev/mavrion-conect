@@ -283,7 +283,7 @@ export function registerExportRoutes(app: Express, storage: IStorage) {
 
       const typeLabels: Record<string, string> = {
         TERRA: "Terras/Fazendas", MINA: "Mineração", NEGOCIO: "Negócio/M&A",
-        FII_CRI: "FII/CRI", DESENVOLVIMENTO: "Desenvolvimento", AGRO: "Agronegócio",
+        FII_CRI: "Ativo legado", DESENVOLVIMENTO: "Desenvolvimento", AGRO: "Agronegócio",
       };
 
       const columns: ExportColumn[] = [

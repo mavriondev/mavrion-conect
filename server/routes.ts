@@ -17,7 +17,6 @@ import { registerProspeccaoRoutes } from "./routes/prospeccao";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerExportRoutes } from "./routes/export";
 import { registerDocumentRoutes } from "./routes/documents";
-import { registerCvmRoutes } from "./routes/cvm";
 import { registerAiRoutes } from "./routes/ai";
 import { registerCafExtratorRoutes } from "./routes/caf-extrator";
 import { registerAnmEnrichmentRoutes } from "./routes/anm-enrichment";
@@ -48,7 +47,6 @@ export async function registerRoutes(
   registerAuthRoutes(app, db as any);
   registerExportRoutes(app, storage);
   registerDocumentRoutes(app);
-  registerCvmRoutes(app);
   registerAiRoutes(app);
   registerCafExtratorRoutes(app);
   registerAnmEnrichmentRoutes(app);
@@ -136,13 +134,11 @@ async function seedDatabase() {
       });
 
 
-
       const comp1 = await storage.createCompany({ orgId: org.id, legalName: "Tech Agro SA", cnpj: "12345678901234" });
       const comp2 = await storage.createCompany({ orgId: org.id, legalName: "Mineração Vale Verde", cnpj: "98765432109876" });
 
       await storage.createAsset({ orgId: org.id, type: "TERRA", title: "Fazenda 1000ha - MT", location: "Mato Grosso", priceAsking: 5000000, linkedCompanyId: comp1.id });
       await storage.createAsset({ orgId: org.id, type: "MINA", title: "Mina de Calcário - MG", location: "Minas Gerais", priceAsking: 12000000, linkedCompanyId: comp2.id });
-
 
 
       // Nota: não criar connectors de exemplo com tipos que o scheduler não

@@ -1,3 +1,4 @@
+import { mavrionCafRegistros } from "@shared/schema";
 import type { Express } from "express";
 import type { IStorage } from "../storage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -15,7 +16,7 @@ import { getUsoTerraMapBiomas } from "../lib/mapbiomas";
 import { consultarDeterINPE } from "../lib/deter-inpe";
 import { getNDVISentinel } from "../lib/sentinel";
 import { getProducaoMunicipio } from "../lib/contexto-regional";
-import { consultarApiPaginadaPublica, calcularPerfilNorion } from "../services/caf-crawler";
+import { consultarApiPaginadaPublica, calcularPerfilMavrion } from "../services/caf-crawler";
 import { getCached, setCached } from "../cache";
 import { payloadFalhaConsulta } from "../lib/consulta-contrato";
 
@@ -95,7 +96,10 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
   app.post(api.assets.create.path, async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
-      const input = api.assets.create.input.parse(req.body);
+      const input = api.assets.create.input.parse({ ...req.body, orgId: getOrgId(req) });
+      if (input.type === "FII_CRI") {
+        return res.status(400).json({ message: "Fundos não fazem parte do Mavrion." });
+      }
       if (input.priceAsking !== undefined && input.priceAsking !== null && input.priceAsking < 0) {
         return res.status(400).json({ message: "Preço não pode ser negativo" });
       }
@@ -150,7 +154,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
     try {
       const asset = await storage.getAsset(Number(req.params.id));
-      if (!asset) return res.status(404).json({ message: "Asset not found" });
+      if (!asset || asset.orgId !== getOrgId(req)) return res.status(404).json({ message: "Asset not found" });
 
       res.json(asset);
     } catch (err) { res.status(500).json({ message: "Erro interno" }); }
@@ -816,6 +820,9 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
       if (!asset || asset.orgId !== orgId) return res.status(404).json({ message: "Ativo não encontrado" });
 
       const novoLog: any[] = [];
+      if (req.body.type === "FII_CRI" && asset.type !== "FII_CRI") {
+        return res.status(400).json({ message: "Fundos não fazem parte do Mavrion." });
+      }
       const by = (req.user as any)?.username || "sistema";
       const now = new Date().toISOString();
 
@@ -868,7 +875,6 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
     AGRO: ["aptidaoUso", "topografia", "acessoPrincipal", "aguaDisponivel", "energiaEletrica", "benfeitorias", "aceitaPermuta", "situacaoDocumental", "possuiReservaLegal", "observacoesQualitativas"],
     MINA: ["substanciaMineral", "faseExploracao", "reservaEstimada", "possuiLicencaAmbiental", "tipoLavra", "infraestruturaLocal", "aceitaPermuta", "situacaoDocumental", "observacoesQualitativas"],
     NEGOCIO: ["setorAtuacao", "faturamentoAnual", "ebitda", "margemOperacional", "qtdFuncionarios", "motivoVenda", "possuiPassivos", "aceitaPermuta", "situacaoDocumental", "observacoesQualitativas"],
-    FII_CRI: ["tipoFundo", "rentabilidadeAnual", "vacanciaMedia", "qtdImoveis", "segmentoImoveis", "dividendYield", "situacaoDocumental", "observacoesQualitativas"],
   };
 
   app.patch("/api/assets/:id/enrichment", async (req, res) => {
@@ -1515,7 +1521,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
       if (!result.sucesso) {
         try {
           const localRows = await db.execute(sql`
-            SELECT * FROM norion_caf_registros
+            SELECT * FROM ${mavrionCafRegistros}
             WHERE (municipio ILIKE ${`%${municipio}%`} OR uf = ${estado})
             ORDER BY created_at DESC
             LIMIT 50
@@ -1542,7 +1548,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
               membros: r.composicao_familiar || [],
               classificacao: "pendente" as const,
               extraidoEm: r.created_at || new Date().toISOString(),
-              perfil: r.norion_profile || "baixo",
+              perfil: r[mavrionCafRegistros.mavrionProfile.name] || "baixo",
               fonteLocal: true,
             }));
             const familias = new Set(produtoresLocal.map((p: any) => p.idUfpa || p.nufpa));
@@ -1594,7 +1600,7 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
           classificacao: "pendente" as const,
           extraidoEm: new Date().toISOString(),
         };
-        return { ...lead, perfil: calcularPerfilNorion(lead) };
+        return { ...lead, perfil: calcularPerfilMavrion(lead) };
       });
 
       const familias = new Set(produtores.map((p: any) => p.idUfpa || p.nufpa));

@@ -77,7 +77,7 @@ export const companies = pgTable("companies", {
   enrichedAt: timestamp("enriched_at"),
   researchNotes: jsonb("research_notes").default([]),
   verifiedContacts: jsonb("verified_contacts").default({}),
-  norionProfile: text("norion_profile").default("baixo"),
+  mavrionProfile: text("norion_profile").default("baixo"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -554,7 +554,9 @@ export type InsertErrorReport = z.infer<typeof insertErrorReportSchema>;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 
-export const norionOperations = pgTable("norion_operations", {
+// Os nomes físicos legados são mantidos para preservar os dados do banco do Mavrion.
+// Os símbolos TypeScript e contratos da aplicação usam exclusivamente Mavrion.
+export const mavrionOperations = pgTable("norion_operations", {
   id: serial("id").primaryKey(),
   orgId: integer("org_id").references(() => organizations.id),
   companyId: integer("company_id").references(() => companies.id),
@@ -570,14 +572,14 @@ export const norionOperations = pgTable("norion_operations", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
-export type NorionOperation = typeof norionOperations.$inferSelect;
-export type InsertNorionOperation = typeof norionOperations.$inferInsert;
+export type MavrionOperation = typeof mavrionOperations.$inferSelect;
+export type InsertMavrionOperation = typeof mavrionOperations.$inferInsert;
 
-export const norionDocuments = pgTable("norion_documents", {
+export const mavrionDocuments = pgTable("norion_documents", {
   id: serial("id").primaryKey(),
   orgId: integer("org_id").references(() => organizations.id),
-  operationId: integer("operation_id").references(() => norionOperations.id),
-  clientUserId: integer("client_user_id").references(() => norionClientUsers.id),
+  operationId: integer("operation_id").references(() => mavrionOperations.id),
+  clientUserId: integer("client_user_id").references(() => mavrionClientUsers.id),
   categoria: text("categoria").notNull(),
   tipoDocumento: text("tipo_documento").notNull(),
   nome: text("nome").notNull(),
@@ -590,11 +592,11 @@ export const norionDocuments = pgTable("norion_documents", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
-export const insertNorionDocumentSchema = createInsertSchema(norionDocuments).omit({ id: true, createdAt: true, updatedAt: true });
-export type InsertNorionDocument = z.infer<typeof insertNorionDocumentSchema>;
-export type NorionDocument = typeof norionDocuments.$inferSelect;
+export const insertMavrionDocumentSchema = createInsertSchema(mavrionDocuments).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertMavrionDocument = z.infer<typeof insertMavrionDocumentSchema>;
+export type MavrionDocument = typeof mavrionDocuments.$inferSelect;
 
-export const norionFundosParceiros = pgTable("norion_fundos_parceiros", {
+export const mavrionFundosParceiros = pgTable("norion_fundos_parceiros", {
   id: serial("id").primaryKey(),
   orgId: integer("org_id").references(() => organizations.id),
   nome: text("nome").notNull(),
@@ -614,15 +616,15 @@ export const norionFundosParceiros = pgTable("norion_fundos_parceiros", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
-export const insertNorionFundoParceiroSchema = createInsertSchema(norionFundosParceiros).omit({ id: true, createdAt: true, updatedAt: true });
-export type InsertNorionFundoParceiro = z.infer<typeof insertNorionFundoParceiroSchema>;
-export type NorionFundoParceiro = typeof norionFundosParceiros.$inferSelect;
+export const insertMavrionFundoParceiroSchema = createInsertSchema(mavrionFundosParceiros).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertMavrionFundoParceiro = z.infer<typeof insertMavrionFundoParceiroSchema>;
+export type MavrionFundoParceiro = typeof mavrionFundosParceiros.$inferSelect;
 
-export const norionEnviosFundos = pgTable("norion_envios_fundos", {
+export const mavrionEnviosFundos = pgTable("norion_envios_fundos", {
   id: serial("id").primaryKey(),
   orgId: integer("org_id").references(() => organizations.id),
-  operationId: integer("operation_id").references(() => norionOperations.id),
-  fundoParceiroId: integer("fundo_parceiro_id").references(() => norionFundosParceiros.id),
+  operationId: integer("operation_id").references(() => mavrionOperations.id),
+  fundoParceiroId: integer("fundo_parceiro_id").references(() => mavrionFundosParceiros.id),
   status: text("status").notNull().default("enviado"),
   valorAprovado: doublePrecision("valor_aprovado"),
   taxaJuros: doublePrecision("taxa_juros"),
@@ -634,11 +636,11 @@ export const norionEnviosFundos = pgTable("norion_envios_fundos", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
-export const insertNorionEnvioFundoSchema = createInsertSchema(norionEnviosFundos).omit({ id: true, createdAt: true, updatedAt: true });
-export type InsertNorionEnvioFundo = z.infer<typeof insertNorionEnvioFundoSchema>;
-export type NorionEnvioFundo = typeof norionEnviosFundos.$inferSelect;
+export const insertMavrionEnvioFundoSchema = createInsertSchema(mavrionEnviosFundos).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertMavrionEnvioFundo = z.infer<typeof insertMavrionEnvioFundoSchema>;
+export type MavrionEnvioFundo = typeof mavrionEnviosFundos.$inferSelect;
 
-export const norionCafRegistros = pgTable("norion_caf_registros", {
+export const mavrionCafRegistros = pgTable("norion_caf_registros", {
   id: serial("id").primaryKey(),
   orgId: integer("org_id").references(() => organizations.id),
   companyId: integer("company_id").references(() => companies.id),
@@ -669,38 +671,38 @@ export const norionCafRegistros = pgTable("norion_caf_registros", {
   entidadeCnpj: text("entidade_cnpj"),
   cadastrador: text("cadastrador"),
   status: text("status").notNull().default("ativo"),
-  norionProfile: text("norion_profile").default("baixo"),
+  mavrionProfile: text("norion_profile").default("baixo"),
   classificacao: text("classificacao").default("pendente"),
   observacoes: text("observacoes"),
   dadosExtras: jsonb("dados_extras").default({}),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
-export const insertNorionCafRegistroSchema = createInsertSchema(norionCafRegistros).omit({ id: true, createdAt: true, updatedAt: true });
-export type InsertNorionCafRegistro = z.infer<typeof insertNorionCafRegistroSchema>;
-export type NorionCafRegistro = typeof norionCafRegistros.$inferSelect;
+export const insertMavrionCafRegistroSchema = createInsertSchema(mavrionCafRegistros).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertMavrionCafRegistro = z.infer<typeof insertMavrionCafRegistroSchema>;
+export type MavrionCafRegistro = typeof mavrionCafRegistros.$inferSelect;
 
-export const norionClientUsers = pgTable("norion_client_users", {
+export const mavrionClientUsers = pgTable("norion_client_users", {
   id: serial("id").primaryKey(),
   orgId: integer("org_id").notNull(),
   taxId: text("tax_id").notNull(),
   name: text("name"),
   email: text("email"),
   phone: text("phone"),
-  operationId: integer("operation_id").references(() => norionOperations.id),
+  operationId: integer("operation_id").references(() => mavrionOperations.id),
   accessToken: text("access_token").notNull(),
   tokenExpiresAt: timestamp("token_expires_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
-export const insertNorionClientUserSchema = createInsertSchema(norionClientUsers).omit({ id: true, createdAt: true });
-export type InsertNorionClientUser = z.infer<typeof insertNorionClientUserSchema>;
-export type NorionClientUser = typeof norionClientUsers.$inferSelect;
+export const insertMavrionClientUserSchema = createInsertSchema(mavrionClientUsers).omit({ id: true, createdAt: true });
+export type InsertMavrionClientUser = z.infer<typeof insertMavrionClientUserSchema>;
+export type MavrionClientUser = typeof mavrionClientUsers.$inferSelect;
 
-export const norionFormularioCliente = pgTable("norion_formulario_cliente", {
+export const mavrionFormularioCliente = pgTable("norion_formulario_cliente", {
   id: serial("id").primaryKey(),
   orgId: integer("org_id").references(() => organizations.id),
-  operationId: integer("operation_id").references(() => norionOperations.id),
-  clientUserId: integer("client_user_id").references(() => norionClientUsers.id),
+  operationId: integer("operation_id").references(() => mavrionOperations.id),
+  clientUserId: integer("client_user_id").references(() => mavrionClientUsers.id),
   nomeCompleto: text("nome_completo"),
   cpf: text("cpf"),
   rg: text("rg"),
@@ -743,9 +745,9 @@ export const norionFormularioCliente = pgTable("norion_formulario_cliente", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
-export const insertNorionFormularioSchema = createInsertSchema(norionFormularioCliente).omit({ id: true, createdAt: true, updatedAt: true });
-export type InsertNorionFormulario = z.infer<typeof insertNorionFormularioSchema>;
-export type NorionFormulario = typeof norionFormularioCliente.$inferSelect;
+export const insertMavrionFormularioSchema = createInsertSchema(mavrionFormularioCliente).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertMavrionFormulario = z.infer<typeof insertMavrionFormularioSchema>;
+export type MavrionFormulario = typeof mavrionFormularioCliente.$inferSelect;
 
 // === MATCHING INTELIGENTE ===
 

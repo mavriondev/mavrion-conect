@@ -23,7 +23,7 @@ export interface CafLead {
   membros: Array<{ nome: string; cpf: string; parentesco: string }>;
   classificacao: 'pendente' | 'qualificado' | 'descartado' | 'convertido';
   notasClassificacao?: string;
-  norionProfile?: 'alto' | 'medio' | 'baixo';
+  mavrionProfile?: 'alto' | 'medio' | 'baixo';
   extraidoEm: string;
 }
 
@@ -94,7 +94,7 @@ export function montarNufpa(uf: string, ano: number, mes: number, seq: number): 
   return `${uf.toUpperCase()}03${ano}.${mes.toString().padStart(2, '0')}.${seq.toString().padStart(9, '0')}CAF`;
 }
 
-export function calcularPerfilNorion(lead: CafLead): 'alto' | 'medio' | 'baixo' {
+export function calcularPerfilMavrion(lead: CafLead): 'alto' | 'medio' | 'baixo' {
   let score = 0;
 
   if (lead.areaHa && lead.areaHa >= 100) score += 5;
@@ -326,7 +326,7 @@ async function consultarHtmlScraping(nufpa: string): Promise<CafLead | null> {
       extraidoEm: new Date().toISOString(),
     };
 
-    lead.norionProfile = calcularPerfilNorion(lead);
+    lead.mavrionProfile = calcularPerfilMavrion(lead);
     return lead;
   } catch (err: any) {
     console.error(`[CAF] Erro no scraping HTML de ${nufpa}: ${err.message}`);
@@ -352,7 +352,7 @@ export async function consultarNufpa(nufpa: string): Promise<CafLead | null> {
       .map(d => ({ nome: d.nome, cpf: d.cpf, parentesco: d.grauParentesco }));
 
     const lead = apiResultToLead(declarante, membros, nufpa.substring(0, 2));
-    lead.norionProfile = calcularPerfilNorion(lead);
+    lead.mavrionProfile = calcularPerfilMavrion(lead);
     return lead;
   }
 
@@ -382,7 +382,7 @@ function apiResultToLead(item: CafApiResult, membros: CafLead['membros'], uf: st
     classificacao: 'pendente',
     extraidoEm: new Date().toISOString(),
   };
-  lead.norionProfile = calcularPerfilNorion(lead);
+  lead.mavrionProfile = calcularPerfilMavrion(lead);
   return lead;
 }
 
@@ -403,7 +403,7 @@ async function enriquecerLeadViaHtml(lead: CafLead): Promise<CafLead> {
     if (detalhes.numImoveis > lead.numImoveis) lead.numImoveis = detalhes.numImoveis;
     if (detalhes.membros && detalhes.membros.length > lead.membros.length) lead.membros = detalhes.membros;
 
-    lead.norionProfile = calcularPerfilNorion(lead);
+    lead.mavrionProfile = calcularPerfilMavrion(lead);
     return lead;
   } catch (err: any) {
     console.log(`[CAF] Enriquecimento HTML falhou para ${lead.nufpa}: ${err.message}`);

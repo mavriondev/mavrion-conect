@@ -206,17 +206,6 @@ export default function ConfiguracoesPage() {
                 ]
               },
               {
-                group: "Investidor (fundo ou perfil)",
-                badge: "bg-purple-100 text-purple-700",
-                vars: [
-                  ["{{investidor.nome}}", "Nome do fundo ou investidor"],
-                  ["{{investidor.ticket_min}}", "Ticket mínimo formatado"],
-                  ["{{investidor.ticket_max}}", "Ticket máximo formatado"],
-                  ["{{investidor.regioes}}", "Regiões de interesse"],
-                  ["{{investidor.tipos_ativos}}", "Tipos de ativos de interesse"],
-                ]
-              },
-              {
                 group: "Sua empresa",
                 badge: "bg-amber-100 text-amber-700",
                 vars: [

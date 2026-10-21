@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import type { IStorage } from "../storage";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { assets, norionCafRegistros } from "@shared/schema";
+import { assets, mavrionCafRegistros } from "@shared/schema";
 import { sql, eq, and } from "drizzle-orm";
 import { getCached, setCached } from "../cache";
 import { getOrgId } from "../lib/tenant";
@@ -2420,12 +2420,12 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
               async (lead) => {
                 try {
                   const [existente] = await db
-                    .select({ id: norionCafRegistros.id })
-                    .from(norionCafRegistros)
-                    .where(and(eq(norionCafRegistros.orgId, orgIdVal), eq(norionCafRegistros.numeroUFPA, lead.nufpa)))
+                    .select({ id: mavrionCafRegistros.id })
+                    .from(mavrionCafRegistros)
+                    .where(and(eq(mavrionCafRegistros.orgId, orgIdVal), eq(mavrionCafRegistros.numeroUFPA, lead.nufpa)))
                     .limit(1);
                   if (!existente) {
-                    await db.insert(norionCafRegistros).values({
+                    await db.insert(mavrionCafRegistros).values({
                       orgId: orgIdVal, nomeTitular: lead.nome,
                       cpfTitular: lead.cpfMascarado || null, numeroUFPA: lead.nufpa,
                       municipio: lead.municipio || null, uf: lead.uf || null,
@@ -2438,7 +2438,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
                       dataInscricao: lead.dataInscricao || null,
                       numImoveis: lead.numImoveis || 1,
                       status: lead.situacao === "ATIVA" ? "ativo" : lead.situacao === "INATIVA" ? "vencido" : "pendente",
-                      norionProfile: lead.norionProfile || "baixo",
+                      mavrionProfile: lead.mavrionProfile || "baixo",
                       classificacao: "pendente" as const,
                       dadosExtras: { idUfpa: lead.idUfpa, grauParentesco: lead.grauParentesco, situacaoOriginal: lead.situacao, extraidoEm: lead.extraidoEm },
                       companyId: null,
@@ -3004,7 +3004,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
   const sicorCache = new Map<string, { data: any; expiry: number }>();
   const SICOR_CACHE_TTL = 24 * 60 * 60 * 1000;
 
-  app.get("/api/norion/sicor/:codigoMunicipio", async (req, res) => {
+  app.get("/api/mavrion/sicor/:codigoMunicipio", async (req, res) => {
     try {
       const codigo = req.params.codigoMunicipio;
       const cached = sicorCache.get(codigo);

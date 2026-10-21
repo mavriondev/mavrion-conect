@@ -694,7 +694,6 @@ export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) 
 
   function getPorteIds(tipo: string, preco: number | null): number[] {
     if (tipo === "MINA" || tipo === "DESENVOLVIMENTO") return [4, 5];
-    if (tipo === "FII_CRI") return [3, 4, 5];
     if (tipo === "NEGOCIO") {
       if (!preco || preco < 2_000_000)  return [3, 4, 5];
       if (preco < 10_000_000)           return [4, 5];
@@ -706,7 +705,6 @@ export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) 
 
   function getEquityMin(tipo: string, preco: number | null): number | null {
     if (!preco) return null;
-    if (tipo === "FII_CRI") return null;
     if (preco < 1_000_000)         return null;
     if (preco < 5_000_000)         return 500_000;
     if (preco < 20_000_000)        return 2_000_000;
@@ -716,7 +714,7 @@ export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) 
 
   function getFoundedBefore(tipo: string): string | null {
     const now = new Date();
-    if (["MINA", "NEGOCIO", "FII_CRI"].includes(tipo)) {
+    if (["MINA", "NEGOCIO"].includes(tipo)) {
       now.setFullYear(now.getFullYear() - 2);
       return now.toISOString().split("T")[0];
     }
@@ -732,12 +730,11 @@ export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) 
   }
 
   function getNaturezas(tipo: string): number[] {
-    if (tipo === "FII_CRI") return [206, 216, 305, 306];
     return [];
   }
 
   function shouldExcludeSimples(tipo: string, preco: number | null): boolean {
-    if (["MINA", "FII_CRI"].includes(tipo)) return true;
+    if (tipo === "MINA") return true;
     if (tipo === "NEGOCIO" && preco && preco > 5_000_000) return true;
     return false;
   }
@@ -784,7 +781,6 @@ export function registerProspeccaoRoutes(app: Express, db: NodePgDatabase<any>) 
       keywords: ["agropecuária", "fazenda", "pecuária", "cooperativa agrícola", "fundo agro", "rural"],
     },
     "NEGOCIO":           { primary: [6420000, 6430200, 6470101], secondary: [6499301, 7490199, 6612601], keywords: ["holding", "investimento", "private equity", "M&A"] },
-    "FII_CRI":           { primary: [6630400, 6499301, 6810201], secondary: [6420000, 6470101, 4110700], keywords: ["fundo imobiliário", "FII", "CRI", "securitizadora"] },
     "DESENVOLVIMENTO":   { primary: [4110700, 4120400], secondary: [4130300, 6630400, 6810201], keywords: ["incorporadora", "construtora", "loteamento"] },
   };
 

@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { db } from "../db";
 import {
-  norionCafRegistros,
+  mavrionCafRegistros,
 } from "@shared/schema";
 import { logApiError } from "../lib/api-error-logger";
 import {
@@ -52,7 +52,7 @@ function mapLeadToRegistro(lead: CafLead, orgId: number) {
       : lead.situacao === "INATIVA"
       ? "vencido"
       : "pendente",
-    norionProfile: lead.norionProfile || "baixo",
+    mavrionProfile: lead.mavrionProfile || "baixo",
     classificacao: "pendente" as const,
     dadosExtras: {
       idUfpa: lead.idUfpa,
@@ -118,18 +118,18 @@ export function registerCafExtratorRoutes(app: Express) {
         async (lead) => {
           try {
             const [existente] = await db
-              .select({ id: norionCafRegistros.id })
-              .from(norionCafRegistros)
+              .select({ id: mavrionCafRegistros.id })
+              .from(mavrionCafRegistros)
               .where(
                 and(
-                  eq(norionCafRegistros.orgId, orgId),
-                  eq(norionCafRegistros.numeroUFPA, lead.nufpa)
+                  eq(mavrionCafRegistros.orgId, orgId),
+                  eq(mavrionCafRegistros.numeroUFPA, lead.nufpa)
                 )
               )
               .limit(1);
 
             if (!existente) {
-              await db.insert(norionCafRegistros).values(mapLeadToRegistro(lead, orgId));
+              await db.insert(mavrionCafRegistros).values(mapLeadToRegistro(lead, orgId));
             }
           } catch (e: any) {
             console.error(`[CAF] Erro ao salvar ${lead.nufpa}:`, e.message);
@@ -195,49 +195,49 @@ export function registerCafExtratorRoutes(app: Express) {
       const orderDir = req.query.order === "asc" ? "asc" : "desc";
       const orderBy  = (req.query.orderBy as string) || "createdAt";
 
-      const conditions = [eq(norionCafRegistros.orgId, orgId)];
+      const conditions = [eq(mavrionCafRegistros.orgId, orgId)];
 
       if (req.query.status)
-        conditions.push(eq(norionCafRegistros.status, req.query.status as string));
+        conditions.push(eq(mavrionCafRegistros.status, req.query.status as string));
 
       if (req.query.classificacao)
-        conditions.push(eq(norionCafRegistros.classificacao, req.query.classificacao as string));
+        conditions.push(eq(mavrionCafRegistros.classificacao, req.query.classificacao as string));
 
-      if (req.query.norionProfile)
-        conditions.push(eq(norionCafRegistros.norionProfile, req.query.norionProfile as string));
+      if (req.query.mavrionProfile)
+        conditions.push(eq(mavrionCafRegistros.mavrionProfile, req.query.mavrionProfile as string));
 
       if (req.query.uf)
-        conditions.push(eq(norionCafRegistros.uf, (req.query.uf as string).toUpperCase()));
+        conditions.push(eq(mavrionCafRegistros.uf, (req.query.uf as string).toUpperCase()));
 
       if (req.query.enviado === "true")
-        conditions.push(isNotNull(norionCafRegistros.companyId));
+        conditions.push(isNotNull(mavrionCafRegistros.companyId));
       else if (req.query.enviado === "false")
-        conditions.push(isNull(norionCafRegistros.companyId));
+        conditions.push(isNull(mavrionCafRegistros.companyId));
 
       if (req.query.busca) {
         const termo = `%${req.query.busca}%`;
         conditions.push(
-          sql`(${ilike(norionCafRegistros.nomeTitular, termo)} OR ${ilike(norionCafRegistros.municipio, termo)} OR ${ilike(norionCafRegistros.numeroUFPA, termo)})`
+          sql`(${ilike(mavrionCafRegistros.nomeTitular, termo)} OR ${ilike(mavrionCafRegistros.municipio, termo)} OR ${ilike(mavrionCafRegistros.numeroUFPA, termo)})`
         );
       }
 
       const where = and(...conditions);
 
       const colMap: Record<string, any> = {
-        createdAt:     norionCafRegistros.createdAt,
-        nomeTitular:   norionCafRegistros.nomeTitular,
-        areaHa:        norionCafRegistros.areaHa,
-        norionProfile: norionCafRegistros.norionProfile,
-        municipio:     norionCafRegistros.municipio,
-        classificacao: norionCafRegistros.classificacao,
+        createdAt:     mavrionCafRegistros.createdAt,
+        nomeTitular:   mavrionCafRegistros.nomeTitular,
+        areaHa:        mavrionCafRegistros.areaHa,
+        mavrionProfile: mavrionCafRegistros.mavrionProfile,
+        municipio:     mavrionCafRegistros.municipio,
+        classificacao: mavrionCafRegistros.classificacao,
       };
-      const col = colMap[orderBy] || norionCafRegistros.createdAt;
+      const col = colMap[orderBy] || mavrionCafRegistros.createdAt;
       const orderExpr = orderDir === "asc" ? asc(col) : desc(col);
 
       const [data, countResult, sumarioResult] = await Promise.all([
         db
           .select()
-          .from(norionCafRegistros)
+          .from(mavrionCafRegistros)
           .where(where)
           .orderBy(orderExpr)
           .limit(pageSize)
@@ -245,7 +245,7 @@ export function registerCafExtratorRoutes(app: Express) {
 
         db
           .select({ count: sql<number>`cast(count(*) as int)` })
-          .from(norionCafRegistros)
+          .from(mavrionCafRegistros)
           .where(where),
 
         db
@@ -256,12 +256,12 @@ export function registerCafExtratorRoutes(app: Express) {
             qualificados: sql<number>`cast(sum(case when classificacao = 'qualificado' then 1 else 0 end) as int)`,
             descartados:  sql<number>`cast(sum(case when classificacao = 'descartado' then 1 else 0 end) as int)`,
             convertidos:  sql<number>`cast(sum(case when classificacao = 'convertido' or classificacao = 'enviado_sdr' then 1 else 0 end) as int)`,
-            perfilAlto:   sql<number>`cast(sum(case when norion_profile = 'alto' then 1 else 0 end) as int)`,
-            perfilMedio:  sql<number>`cast(sum(case when norion_profile = 'medio' then 1 else 0 end) as int)`,
-            perfilBaixo:  sql<number>`cast(sum(case when norion_profile = 'baixo' then 1 else 0 end) as int)`,
+            perfilAlto:   sql<number>`cast(sum(case when mavrion_profile = 'alto' then 1 else 0 end) as int)`,
+            perfilMedio:  sql<number>`cast(sum(case when mavrion_profile = 'medio' then 1 else 0 end) as int)`,
+            perfilBaixo:  sql<number>`cast(sum(case when mavrion_profile = 'baixo' then 1 else 0 end) as int)`,
           })
-          .from(norionCafRegistros)
-          .where(eq(norionCafRegistros.orgId, orgId)),
+          .from(mavrionCafRegistros)
+          .where(eq(mavrionCafRegistros.orgId, orgId)),
       ]);
 
       res.json({
@@ -283,10 +283,10 @@ export function registerCafExtratorRoutes(app: Express) {
       const orgId = getOrgId(req);
       const [registro] = await db
         .select()
-        .from(norionCafRegistros)
+        .from(mavrionCafRegistros)
         .where(and(
-          eq(norionCafRegistros.id, parseInt(String(req.params.id))),
-          eq(norionCafRegistros.orgId, orgId)
+          eq(mavrionCafRegistros.id, parseInt(String(req.params.id))),
+          eq(mavrionCafRegistros.orgId, orgId)
         ))
         .limit(1);
 
@@ -308,18 +308,18 @@ export function registerCafExtratorRoutes(app: Express) {
       }
 
       const [atual] = await db
-        .select({ dadosExtras: norionCafRegistros.dadosExtras })
-        .from(norionCafRegistros)
+        .select({ dadosExtras: mavrionCafRegistros.dadosExtras })
+        .from(mavrionCafRegistros)
         .where(and(
-          eq(norionCafRegistros.id, parseInt(String(req.params.id))),
-          eq(norionCafRegistros.orgId, orgId)
+          eq(mavrionCafRegistros.id, parseInt(String(req.params.id))),
+          eq(mavrionCafRegistros.orgId, orgId)
         ))
         .limit(1);
 
       if (!atual) return res.status(404).json({ error: "Não encontrado" });
 
       const [atualizado] = await db
-        .update(norionCafRegistros)
+        .update(mavrionCafRegistros)
         .set({
           classificacao,
           updatedAt: new Date(),
@@ -329,7 +329,7 @@ export function registerCafExtratorRoutes(app: Express) {
             classificadoEm: new Date().toISOString(),
           },
         })
-        .where(eq(norionCafRegistros.id, parseInt(String(req.params.id))))
+        .where(eq(mavrionCafRegistros.id, parseInt(String(req.params.id))))
         .returning();
 
       res.json({ success: true, data: atualizado });
@@ -342,10 +342,10 @@ export function registerCafExtratorRoutes(app: Express) {
     try {
       const orgId = getOrgId(req);
       await db
-        .delete(norionCafRegistros)
+        .delete(mavrionCafRegistros)
         .where(and(
-          eq(norionCafRegistros.id, parseInt(String(req.params.id))),
-          eq(norionCafRegistros.orgId, orgId)
+          eq(mavrionCafRegistros.id, parseInt(String(req.params.id))),
+          eq(mavrionCafRegistros.orgId, orgId)
         ));
       res.json({ success: true });
     } catch (err: any) {
@@ -363,11 +363,11 @@ export function registerCafExtratorRoutes(app: Express) {
       }
 
       await db
-        .delete(norionCafRegistros)
+        .delete(mavrionCafRegistros)
         .where(
           and(
-            eq(norionCafRegistros.orgId, orgId),
-            inArray(norionCafRegistros.id, ids)
+            eq(mavrionCafRegistros.orgId, orgId),
+            inArray(mavrionCafRegistros.id, ids)
           )
         );
 

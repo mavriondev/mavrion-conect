@@ -102,7 +102,7 @@ const MANUAL_SECTIONS: Section[] = [
     subsections: [
       {
         title: "Tipos de ativo",
-        content: "O sistema suporta 7 categorias: Terras & Fazendas (TERRA), Mineracao (MINA), Negocios M&A (NEGOCIO), FII/CRI/Imoveis (FII_CRI), Desenvolvimento Imobiliario (DESENVOLVIMENTO), Agronegocio (AGRO) e Energia Renovavel (ENERGIA). Cada tipo tem seu icone e cor no sidebar."
+        content: "As categorias incluem Terras & Fazendas (TERRA), Mineracao (MINA), Negocios M&A (NEGOCIO), Desenvolvimento Imobiliario (DESENVOLVIMENTO), Agronegocio (AGRO) e Energia Renovavel (ENERGIA). Fundos não fazem parte do Mavrion."
       },
       {
         title: "Filtros por tipo",

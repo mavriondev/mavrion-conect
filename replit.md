@@ -8,10 +8,14 @@ I prefer detailed explanations. I want iterative development. Ask before making 
 
 **Foco do produto (decisão do usuário, ago/2026):** trabalhar SOMENTE em ativos de JAZIDAS/MINA — descobrir e identificar o máximo de informações relevantes sobre esse tipo de ativo (ANM, SCM, SIGEF/SNCR, geologia, restrições, titularidade etc.). NÃO implementar nada de CRM (leads, deals, pipeline, matching/importação de compradores) nem nada envolvendo Datastone.
 
-**Módulos aposentados (decisão confirmada do usuário):** remover do código CRM completo (funil, propostas, contratos e onboarding), SDR inclusive no Norion separado, Vitrine e Matching. Não reintroduzir suas páginas, menus, APIs ou automações. A limpeza não autoriza excluir dados existentes: as definições de tabelas legadas e a integridade referencial são preservadas, sem migrações destrutivas.
+**Módulos aposentados no Mavrion Connect (decisão confirmada do usuário):** remover do código CRM completo (funil, propostas, contratos e onboarding), SDR, Vitrine e Matching. Não reintroduzir suas páginas, menus, APIs ou automações. A limpeza não autoriza excluir dados existentes: as definições de tabelas legadas e a integridade referencial são preservadas, sem migrações destrutivas.
 **Por quê:** o usuário informou que esses módulos não são mais usados e pediu a remoção do código, não apenas ocultação da navegação.
 
 **Limite entre pesquisa de empresas e CRM:** cadastro, importação CNPJ, contatos e descarte de resultados de pesquisa continuam disponíveis. Descartar um resultado é uma marca cadastral da empresa, sem criar lead. Não existem mais ações de criar/qualificar/pontuar leads, importação automática de investidores ou contexto de compradores nas análises de ativos. Tabelas antigas só permanecem para histórico e integridade referencial.
+
+**Fundos fora do escopo:** “o mavrion nao tem que mexer com nada de fundos”. Não implementar ou manter telas, consultas, APIs, prospecção ou análises de fundos no Mavrion. Dados históricos permanecem preservados, sem migrações destrutivas.
+
+**Identidade dos recursos legados:** as funções mantidas no Mavrion usam nomes Mavrion no código e nos contratos (por exemplo, `mavrionProfile` e `/api/mavrion/sicor`). O ORM mantém os nomes físicos históricos das tabelas e colunas apenas para compatibilidade com os dados existentes: não representam uma integração com outro aplicativo e não devem ser renomeados via `db:push` por mera mudança de marca.
 
 **Navegação (decisão do usuário, ago/2026):** evitar sub-abas aninhadas em 2 níveis; preferir promover grupos de seções a abas principais (ex.: o enriquecimento ANM do detalhe do ativo virou 3 abas principais em vez de 10 sub-abas dentro de uma só).
 

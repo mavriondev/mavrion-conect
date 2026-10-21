@@ -843,7 +843,7 @@ export default function EmpresaDetailPage() {
                       }
                       setSicorLoading(true);
                       try {
-                        const res = await apiRequest("GET", `/api/norion/sicor/${codigoIbge}`);
+                        const res = await apiRequest("GET", `/api/mavrion/sicor/${codigoIbge}`);
                         if (res.ok) setSicorData(await res.json());
                         else toast({ title: "Erro ao consultar SICOR", variant: "destructive" });
                       } catch {
@@ -944,7 +944,7 @@ export default function EmpresaDetailPage() {
               };
               const TIPO_LABEL: Record<string, string> = {
                 TERRA: "Terra / Fazenda", MINA: "Mineração", NEGOCIO: "Negócio M&A",
-                FII_CRI: "FII / CRI", DESENVOLVIMENTO: "Desenvolvimento", AGRO: "Agronegócio",
+                FII_CRI: "Ativo legado", DESENVOLVIMENTO: "Desenvolvimento", AGRO: "Agronegócio",
               };
               return (
                 <Card key={ativo.id} className="hover:border-primary/30 transition-colors cursor-pointer"

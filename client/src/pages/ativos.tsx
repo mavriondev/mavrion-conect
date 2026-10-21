@@ -28,7 +28,6 @@ const TIPO_CONFIG: Record<string, { label: string; icon: any; color: string; bad
   TERRA:        { label: "Terra / Fazenda",       icon: TreePine,  color: "text-green-600",  badge: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300" },
   MINA:         { label: "Mineração",              icon: Pickaxe,   color: "text-orange-600", badge: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300" },
   NEGOCIO:      { label: "Negócio / M&A",          icon: Briefcase, color: "text-blue-600",   badge: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300" },
-  FII_CRI:      { label: "FII / CRI / Imóvel",    icon: Home,      color: "text-purple-600", badge: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300" },
   DESENVOLVIMENTO: { label: "Desenvolvimento Imob.", icon: Factory, color: "text-pink-600",   badge: "bg-pink-100 text-pink-800 dark:bg-pink-900/30 dark:text-pink-300" },
   AGRO:         { label: "Agronegócio",            icon: Wheat,     color: "text-yellow-600", badge: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300" },
 };
@@ -99,12 +98,6 @@ const CAMPOS_ESPECIFICOS: Record<string, Array<{ key: string; label: string; pla
     { key: "culturas",              label: "Culturas produzidas",  placeholder: "ex: Soja, Milho, Algodão" },
     { key: "capacidadeArmazenagem", label: "Armazenagem (ton)",    placeholder: "ex: 5000" },
     { key: "possuiSilos",           label: "Possui silos?",        placeholder: "Sim / Não" },
-  ],
-  FII_CRI: [
-    { key: "registroCvm", label: "Registro CVM",    placeholder: "ex: FII 123.456/2020" },
-    { key: "gestora",     label: "Gestora",          placeholder: "ex: XP Gestão" },
-    { key: "dy12m",       label: "DY 12 meses (%)", placeholder: "ex: 8.5", type: "number" },
-    { key: "pvp",         label: "P/VP",             placeholder: "ex: 0.95", type: "number" },
   ],
   DESENVOLVIMENTO: [
     { key: "alvara",         label: "Nº Alvará",           placeholder: "ex: 2024/1234" },
@@ -586,7 +579,7 @@ export function AtivoFormDialog({
                 <Input
                   value={form.exclusividadeEmpresa || ""}
                   onChange={e => set("exclusividadeEmpresa", e.target.value)}
-                  placeholder="ex: Fundo XP Agro"
+                  placeholder="ex: Empresa de Mineração"
                   data-testid="input-exclusividade-empresa"
                 />
               </div>
@@ -656,7 +649,7 @@ export function AtivoFormDialog({
 // ── Asset Card ──────────────────────────────────────────────────────────────
 function AtivoCard({ ativo, onEdit, onDelete }: { ativo: any; onEdit: () => void; onDelete: () => void }) {
   const [, navigate] = useLocation();
-  const tipo = TIPO_CONFIG[ativo.type] || TIPO_CONFIG.TERRA;
+  const tipo = TIPO_CONFIG[ativo.type] || { label: "Ativo legado", icon: FileText, color: "text-muted-foreground", badge: "bg-muted" };
   const Icon = tipo.icon;
 
   return (
