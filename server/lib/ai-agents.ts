@@ -158,8 +158,8 @@ GEOESPACIAL:
 - Geo Score: ${safeNum(ativo.geoScore)}/100
 - Altitude: ${safeNum(ativo.geoAltMed)}m (min: ${safeNum(ativo.geoAltMin)}m, max: ${safeNum(ativo.geoAltMax)}m)
 - Declividade média: ${safeNum(ativo.geoDeclivityMed)}%
-- Água: ${ativo.geoTemRio ? "Rio próximo" : "Sem rio"}${ativo.geoTemLago ? ", Lago próximo" : ""} (dist: ${safeNum(ativo.geoDistAguaM)}m)
-- Energia: ${ativo.geoTemEnergia ? "Rede elétrica próxima" : "Sem rede"} (dist: ${safeNum(ativo.geoDistEnergiaM)}m)
+- Água: ${ativo.geoTemRio ? "Rio próximo" : "rio não detectado nas bases públicas (não confirma ausência)"}${ativo.geoTemLago ? ", Lago próximo" : ""} (dist: ${safeNum(ativo.geoDistAguaM)}m)
+- Energia: ${ativo.geoTemEnergia ? "Rede elétrica próxima" : "rede não detectada nas bases públicas (não confirma ausência)"} (dist: ${safeNum(ativo.geoDistEnergiaM)}m)
 - Rodovia: dist. ${safeNum((ativo as any).geoDistRodoviaM)}m
 - Sede municipal: dist. ${safeNum((ativo as any).geoDistSedeM)}m
 
@@ -586,7 +586,7 @@ ATIVO ANALISADO
 - Preço pedido: ${formatBRL(ativo.priceAsking)} (R$ ${precoHaAtual}/ha)
 - GeoScore: ${safeNum(ativo.geoScore)}/100
 - Altitude: ${safeNum(ativo.geoAltMed)}m | Declividade: ${safeNum(ativo.geoDeclivityMed)}%
-- Água: ${ativo.geoTemRio ? "Rio" : "Sem rio"} (${safeNum(ativo.geoDistAguaM)}m) | Energia: ${ativo.geoTemEnergia ? "Sim" : "Não"} (${safeNum(ativo.geoDistEnergiaM)}m)
+- Água: ${ativo.geoTemRio ? "Rio" : "rio não detectado (não confirma ausência)"} (${safeNum(ativo.geoDistAguaM)}m) | Energia: ${ativo.geoTemEnergia ? "Sim" : "não detectada (não confirma ausência)"} (${safeNum(ativo.geoDistEnergiaM)}m)
 - Rodovia: ${safeNum((ativo as any).geoDistRodoviaM)}m | Sede: ${safeNum((ativo as any).geoDistSedeM)}m
 - CAR: ${ativo.carCodImovel || "N/D"}${attr.carSobreposicaoTI ? " ⚠️ TI" : ""}${attr.carSobreposicaoUC ? " ⚠️ UC" : ""}
 ${ativo.anmProcesso ? `- ANM: ${ativo.anmProcesso} | ${attr.anmSubstancia || "N/D"} | ${attr.anmFase || "N/D"}` : ""}
@@ -894,8 +894,8 @@ ${agro.clima ? `- Clima: temp. ${safeNum(agro.clima.temperaturaMinMedia)}-${safe
 - Geo Score: ${safeNum(ativo.geoScore)}/100
 - Altitude: ${safeNum(ativo.geoAltMed)}m (min: ${safeNum(ativo.geoAltMin)}m, max: ${safeNum(ativo.geoAltMax)}m)
 - Declividade: ${safeNum(ativo.geoDeclivityMed || attr.geoDeclivMed)}%
-- Água: ${ativo.geoTemRio ? "Rio próximo" : "Sem rio"}${ativo.geoTemLago ? ", Lago" : ""} (dist: ${safeNum(ativo.geoDistAguaM || attr.geoDistAguaM)}m)
-- Energia: ${ativo.geoTemEnergia ? "Rede próxima" : "Sem rede"} (dist: ${safeNum(ativo.geoDistEnergiaM || attr.geoDistEnergiaM)}m)
+- Água: ${ativo.geoTemRio ? "Rio próximo" : "rio não detectado nas bases públicas (não confirma ausência)"}${ativo.geoTemLago ? ", Lago" : ""} (dist: ${safeNum(ativo.geoDistAguaM || attr.geoDistAguaM)}m)
+- Energia: ${ativo.geoTemEnergia ? "Rede próxima" : "rede não detectada nas bases públicas (não confirma ausência)"} (dist: ${safeNum(ativo.geoDistEnergiaM || attr.geoDistEnergiaM)}m)
 - Score Energia: ${attr.geoScoreEnergia || "N/D"}`);
 
   if (attr.carSobreposicaoTI || attr.carSobreposicaoUC) {

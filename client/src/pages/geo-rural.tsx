@@ -982,7 +982,7 @@ function AnalysisPanel({
               >OSM</span>
             )}
             <Droplets className={cn("w-5 h-5 mx-auto mb-1", analysis.temRio || analysis.temLago ? "text-blue-600" : "text-muted-foreground")} />
-            <p className="text-xs font-medium" data-testid="text-hidro-status">{analysis.temRio ? "Tem Rio" : analysis.temLago ? "Tem Lago" : "Sem Água"}</p>
+            <p className="text-xs font-medium" data-testid="text-hidro-status">{analysis.temRio ? "Tem Rio" : analysis.temLago ? "Tem Lago" : "Água não detectada"}</p>
             <p className="text-[10px] text-muted-foreground">
               {analysis.distAguaM != null ? `a ${formatDist(analysis.distAguaM)}` : `${analysis.qtdRios} rios, ${analysis.qtdLagos} lagos`}
             </p>
@@ -1000,7 +1000,7 @@ function AnalysisPanel({
             )}
             <ZapIcon className={cn("w-5 h-5 mx-auto mb-1", analysis.temEnergia ? "text-amber-600" : "text-muted-foreground")} />
             <span className="text-xs font-medium flex items-center justify-center gap-1">
-              {analysis.temEnergia ? "Energia" : "Sem Energia"}
+              {analysis.temEnergia ? "Energia" : "Energia não detectada"}
               <EnergiaScoreBadge score={analysis.scoreEnergia} />
             </span>
             <p className="text-[10px] text-muted-foreground">

@@ -358,12 +358,21 @@ function ModalDetalhes({ tipo, embrapa, titulo, onClose, ativoId, ndviGridData, 
 
           {tipo === "clima" && embrapa.clima && (
             <>
-              {embrapa.clima.precipitacaoMedia > 0 && (
+              {embrapa.clima.precipitacaoAnual > 0 ? (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200">
                   <span className="text-sm flex items-center gap-2">
-                    <Droplets className="w-4 h-4 text-blue-500" /> Precipitação
+                    <Droplets className="w-4 h-4 text-blue-500" /> Precipitação anual
                   </span>
-                  <span className="font-bold text-blue-700">{embrapa.clima.precipitacaoMedia} mm</span>
+                  <span className="font-bold text-blue-700">
+                    {Number(embrapa.clima.precipitacaoAnual).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} mm/ano
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/40 border">
+                  <span className="text-sm flex items-center gap-2">
+                    <Droplets className="w-4 h-4 text-muted-foreground" /> Precipitação anual
+                  </span>
+                  <span className="text-xs text-muted-foreground">sem série histórica disponível</span>
                 </div>
               )}
               {embrapa.clima.temperaturaMedia > 0 && (

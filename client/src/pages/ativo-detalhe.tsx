@@ -3437,16 +3437,16 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                               {Number(embrapa.clima.precipitacaoAnual).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} mm/ano
                             </span>
                           </div>
-                        ) : embrapa.clima.precipitacaoMedia > 0 ? (
-                          <div className="flex items-center justify-between p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+                        ) : (
+                          <div className="flex items-center justify-between p-2 rounded-lg bg-muted/40" data-testid="row-precip-indisponivel">
                             <span className="text-xs text-muted-foreground flex items-center gap-1">
-                              <Droplets className="w-3.5 h-3.5" /> Precipitação
+                              <Droplets className="w-3.5 h-3.5" /> Precipitação anual
                             </span>
-                            <span className="text-sm font-bold text-blue-700">
-                              {embrapa.clima.precipitacaoMedia} mm
+                            <span className="text-xs text-muted-foreground">
+                              sem série histórica disponível
                             </span>
                           </div>
-                        ) : null}
+                        )}
                         {embrapa.clima.temperaturaMedia > 0 && (
                           <div className="flex items-center justify-between p-2 rounded-lg bg-orange-50 dark:bg-orange-900/20" data-testid="row-temp-media">
                             <span className="text-xs text-muted-foreground flex items-center gap-1">
@@ -3791,17 +3791,17 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                       <div className="flex flex-wrap gap-2 mt-2">
                         {ativo.geoTemRio != null && (
                           <Badge className={ativo.geoTemRio ? "bg-green-100 text-green-700 border-green-200" : "bg-gray-100 text-gray-500 border-gray-200"} data-testid="badge-geo-rio">
-                            {ativo.geoTemRio ? "Tem rio" : "Sem rio"}
+                            {ativo.geoTemRio ? "Tem rio" : "Rio não detectado"}
                           </Badge>
                         )}
                         {ativo.geoTemLago != null && (
                           <Badge className={ativo.geoTemLago ? "bg-green-100 text-green-700 border-green-200" : "bg-gray-100 text-gray-500 border-gray-200"} data-testid="badge-geo-lago">
-                            {ativo.geoTemLago ? "Tem lago" : "Sem lago"}
+                            {ativo.geoTemLago ? "Tem lago" : "Lago não detectado"}
                           </Badge>
                         )}
                         {ativo.geoTemEnergia != null && (
                           <Badge className={ativo.geoTemEnergia ? "bg-green-100 text-green-700 border-green-200" : "bg-gray-100 text-gray-500 border-gray-200"} data-testid="badge-geo-energia">
-                            {ativo.geoTemEnergia ? "Energia disponível" : "Sem energia"}
+                            {ativo.geoTemEnergia ? "Energia disponível" : "Energia não detectada"}
                           </Badge>
                         )}
                       </div>
