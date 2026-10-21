@@ -28,9 +28,15 @@ Ausência em base pública **não** é ausência na realidade. O sistema só mos
 - Filtros de altitude/argila deixam de aceitar os valores-sentinela `-9999` / `-1` como dado real.
 - **Rebuild necessário:** `cd hub-api && node build.mjs` (o `dist/` não foi regerado).
 
+### Hub: altitude, declividade e argila (segunda rodada)
+- Altitude: antes 5 pontos (centroide + cantos do bbox, podiam cair fora da fazenda). Agora até 17 pontos **dentro** do polígono (grade 4x4 filtrada por `ST_Intersects` + `ST_PointOnSurface`). Mín/máx são das amostras (podem subestimar extremos).
+- Declividade: antes a maior inclinação entre qualquer par. Agora média da inclinação até o vizinho mais próximo a ≥ 90 m (resolução SRTM); `null` se a fazenda for pequena demais.
+- Argila: leitura em ponto garantido dentro da fazenda (antes centroide) e média ponderada pela espessura das camadas (30/30/40; antes média simples).
+- **SQL novo não testado aqui (sem PostGIS no sandbox).** Testar um lote pequeno no VPS antes de liberar tudo.
+- Registros já processados **não** são recalculados automaticamente. Para reprocessar (opcional, os valores são derivados e recalculáveis): `UPDATE sicar_imoveis_cache SET alt_media = NULL WHERE alt_media IS NOT NULL;` e `UPDATE sicar_imoveis_cache SET argila_media = NULL;` (faça por UF/lotes e com backup).
+
 ## Ainda NÃO corrigido (decisões/validação)
-- Hub: altitude vem de 5 pontos (centroide + cantos do bbox, que podem cair fora da fazenda) e "declividade" = maior inclinação entre pares.
-- Hub: argila no pixel do centroide, média simples de 3 camadas, e dois métodos coexistindo.
+- Hub: dois métodos de argila ainda coexistem (`argila_pct` SoilGrids e `argila_media` OpenGeoHub); o filtro prefere o OpenGeoHub.
 - Viés de chuva do ERA5 (validar com valores reais).
 - `lib/embrapa.ts` `getDadosClimaticos` é código morto com `|| 0`.
 

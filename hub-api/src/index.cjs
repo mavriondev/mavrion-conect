@@ -94506,17 +94506,25 @@ function OLe(a, e, t, r) {
         Math.sin(l / 2) ** 2;
   return 6371 * 2 * Math.atan2(Math.sqrt(A), Math.sqrt(1 - A));
 }
+// Declividade média (%) entre pontos DENTRO da fazenda: para cada ponto, inclinação até o vizinho
+// mais próximo que esteja a >= 90 m (resolução do SRTM; mais perto disso é o mesmo pixel e daria 0).
+// Antes: maior inclinação entre qualquer par de pontos (superestimava o relevo).
 function MLe(a, e) {
   if (a.length < 2 || e.length < 2) return null;
-  let t = 0;
-  for (let r = 0; r < a.length; r++)
-    for (let i = r + 1; i < a.length; i++) {
+  let t = [];
+  for (let r = 0; r < a.length; r++) {
+    let best = null;
+    for (let i = 0; i < a.length; i++) {
+      if (i === r) continue;
       let s = OLe(a[r].lat, a[r].lon, a[i].lat, a[i].lon) * 1e3;
-      if (s < 1) continue;
-      let A = (Math.abs(e[r] - e[i]) / s) * 100;
-      A > t && (t = A);
+      if (s < 90) continue;
+      if (best === null || s < best.d) best = { d: s, h: Math.abs(e[r] - e[i]) };
     }
-  return Math.round(t * 100) / 100;
+    best && t.push((best.h / best.d) * 100);
+  }
+  return t.length === 0
+    ? null
+    : Math.round((t.reduce((x, y) => x + y, 0) / t.length) * 100) / 100;
 }
 async function ULe(a) {
   a.length !== 0 &&
@@ -94561,16 +94569,17 @@ async function PLe() {
        ST_Y(ST_Centroid(geom)) AS centroid_lat,
        ST_X(ST_Centroid(geom)) AS centroid_lon,
        ST_Perimeter(geom::geography) / 1000 AS perimetro_km,
-       ST_Y(ST_Centroid(geom))                                   AS s1_lat,
-       ST_X(ST_Centroid(geom))                                   AS s1_lon,
-       ST_Y(ST_PointN(ST_ExteriorRing(ST_Envelope(geom)), 1))    AS s2_lat,
-       ST_X(ST_PointN(ST_ExteriorRing(ST_Envelope(geom)), 1))    AS s2_lon,
-       ST_Y(ST_PointN(ST_ExteriorRing(ST_Envelope(geom)), 2))    AS s3_lat,
-       ST_X(ST_PointN(ST_ExteriorRing(ST_Envelope(geom)), 2))    AS s3_lon,
-       ST_Y(ST_PointN(ST_ExteriorRing(ST_Envelope(geom)), 3))    AS s4_lat,
-       ST_X(ST_PointN(ST_ExteriorRing(ST_Envelope(geom)), 3))    AS s4_lon,
-       ST_Y(ST_PointN(ST_ExteriorRing(ST_Envelope(geom)), 4))    AS s5_lat,
-       ST_X(ST_PointN(ST_ExteriorRing(ST_Envelope(geom)), 4))    AS s5_lon
+       CASE WHEN ST_IsValid(geom) THEN ST_Y(ST_PointOnSurface(geom)) END AS pos_lat,
+       CASE WHEN ST_IsValid(geom) THEN ST_X(ST_PointOnSurface(geom)) END AS pos_lon,
+       (SELECT COALESCE(json_agg(json_build_array(ST_Y(g.pt), ST_X(g.pt))), '[]'::json)
+          FROM (
+            SELECT ST_SetSRID(ST_MakePoint(
+                     ST_XMin(sicar_imoveis_cache.geom) + (gx + 0.5) / 4.0 * (ST_XMax(sicar_imoveis_cache.geom) - ST_XMin(sicar_imoveis_cache.geom)),
+                     ST_YMin(sicar_imoveis_cache.geom) + (gy + 0.5) / 4.0 * (ST_YMax(sicar_imoveis_cache.geom) - ST_YMin(sicar_imoveis_cache.geom))
+                   ), ST_SRID(sicar_imoveis_cache.geom)) AS pt
+              FROM generate_series(0, 3) gx, generate_series(0, 3) gy
+          ) g
+         WHERE ST_Intersects(sicar_imoveis_cache.geom, g.pt)) AS grade_pts
      FROM sicar_imoveis_cache
      WHERE alt_media IS NULL AND geom IS NOT NULL
      ORDER BY centroid_lat, centroid_lon
@@ -94595,10 +94604,17 @@ async function PLe() {
       t++;
       continue;
     }
+    // Amostra DENTRO do polígono (grade 4x4 filtrada por ST_Intersects + ponto garantido
+    // dentro). Antes: centroide + 4 cantos do bbox, que podiam cair fora da fazenda.
     let A = [];
-    for (let g = 1; g <= 5; g++) {
-      let p = parseFloat(i[`s${g}_lat`]),
-        d = parseFloat(i[`s${g}_lon`]);
+    for (let g of Array.isArray(i.grade_pts) ? i.grade_pts : []) {
+      let p = parseFloat(g[0]),
+        d = parseFloat(g[1]);
+      !isNaN(p) && !isNaN(d) && A.push({ lat: p, lon: d });
+    }
+    {
+      let p = parseFloat(i.pos_lat),
+        d = parseFloat(i.pos_lon);
       !isNaN(p) && !isNaN(d) && A.push({ lat: p, lon: d });
     }
     A.length === 0 && A.push({ lat: s, lon: l });
@@ -95641,7 +95657,9 @@ function yOe() {
 async function _Oe() {
   return (
     await D.query(
-      `SELECT id, centroid_lat AS lat, centroid_lon AS lon
+      `SELECT id,
+            CASE WHEN geom IS NOT NULL AND ST_IsValid(geom) THEN ST_Y(ST_PointOnSurface(geom)) ELSE centroid_lat END AS lat,
+            CASE WHEN geom IS NOT NULL AND ST_IsValid(geom) THEN ST_X(ST_PointOnSurface(geom)) ELSE centroid_lon END AS lon
      FROM sicar_imoveis_cache
      WHERE centroid_lat IS NOT NULL
        AND argila_media IS NULL
@@ -95679,6 +95697,19 @@ async function bOe(a, e, t = 0.002) {
     A.set(g, { data: v[0], x1: d, y1: h, winW: E - d });
   }
   return A;
+}
+// Média de argila ponderada pela espessura das camadas (0-30, 30-60, 60-100 cm = 30/30/40).
+// Antes: média simples das 3 camadas. Camadas sem dado saem do cálculo (pesos renormalizados).
+function mediaArgilaPonderada(a, e, t) {
+  let r = [
+      [a, 30],
+      [e, 30],
+      [t, 40],
+    ].filter((x) => x[0] !== null && x[0] !== void 0),
+    i = r.reduce((x, y) => x + y[1], 0);
+  return i === 0
+    ? null
+    : Math.round((r.reduce((x, y) => x + y[0] * y[1], 0) / i) * 10) / 10;
 }
 async function gD(a, e, t) {
   try {
@@ -95721,10 +95752,7 @@ async function BOe(a, e, t) {
           gD(s, S, k),
         ]),
         P = [M, N, L].filter((W) => W !== null),
-        q =
-          P.length > 0
-            ? Math.round((P.reduce((W, oe) => W + oe, 0) / P.length) * 10) / 10
-            : null;
+        q = mediaArgilaPonderada(M, N, L);
       (l.push(B.id),
         A.push(k),
         g.push(S),
@@ -95826,11 +95854,7 @@ async function SOe() {
         L = mD(r, "d30_60", s, k, M),
         P = mD(r, "d60_100", l, k, M),
         q = [N, L, P].filter((oe) => oe !== null),
-        W =
-          q.length > 0
-            ? Math.round((q.reduce((oe, Ae) => oe + Ae, 0) / q.length) * 10) /
-              10
-            : null;
+        W = mediaArgilaPonderada(N, L, P);
       (A.push(S.id),
         g.push(M),
         p.push(k),
