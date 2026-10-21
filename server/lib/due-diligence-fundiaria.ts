@@ -4,6 +4,7 @@ import { db } from '../db';
 import { sql } from 'drizzle-orm';
 import { utmSridSqlExpr } from './utm';
 import { sanearSobreposicao, checarPercentual } from './sanidade-numerica';
+import { descobrirCamadaWfs } from './wfs-descoberta';
 
 const TERRABRASILIS_WFS = 'https://terrabrasilis.dpi.inpe.br/geoserver/ows';
 const ICMBIO_WFS = 'https://geoservicos.icmbio.gov.br/geoserver/ows';
@@ -494,7 +495,8 @@ export async function consultarSobreposicoes(
 
     // Assentamentos INCRA: o nome da camada WFS varia/muda, então só é consultada se configurada
     // (INCRA_ASSENTAMENTOS_WFS_LAYER, ex.: "assentamentos:assentamentos"). Sem isso: 'nao_configurada'.
-    const layerAssent = process.env.INCRA_ASSENTAMENTOS_WFS_LAYER;
+    const layerAssent = process.env.INCRA_ASSENTAMENTOS_WFS_LAYER
+      || await descobrirCamadaWfs('https://geoservicos.incra.gov.br/geoserver/ows', /assentamento/i, { preferir: /projeto|pa_|assentamentos?$/i, evitar: /ponto|quilomb/i });
     if (layerAssent) {
       camadas.assentamento = 'falhou';
       try {

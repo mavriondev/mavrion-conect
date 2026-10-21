@@ -149,6 +149,8 @@ export function projecaoPublica(vs: Verificacao[]): Array<{ chave: string; rotul
       const n = typeof v.valor === "number" ? v.valor : null;
       if (n === null) continue;
       texto = n >= 0.6 ? "vegetação vigorosa" : n >= 0.4 ? "vegetação moderada" : n >= 0.2 ? "vegetação esparsa" : "pouca cobertura vegetal";
+    } else if (v.chave === "uso_solo" && v.valor && typeof v.valor === "object" && typeof (v.valor as any).descricao === "string") {
+      texto = (v.valor as any).descricao; // já em faixas de 5%
     } else if (typeof v.valor === "string") {
       texto = v.valor;
     } else continue;

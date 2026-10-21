@@ -26,7 +26,8 @@ function formatarValor(v: Verif): string {
   }
   if (typeof v.valor === "object") {
     if ("appHa" in v.valor) return `${v.valor.appHa} ha (${String(v.valor.pctDaArea).replace(".", ",")}% da área)`;
-    if ("alertas" in v.valor) return `${v.valor.alertas} alerta(s), ${v.valor.areaHa} ha`;
+    if ("grupos" in v.valor && typeof v.valor.descricao === "string") return v.valor.descricao;
+        if ("alertas" in v.valor) return `${v.valor.alertas} alerta(s), ${v.valor.areaHa} ha`;
   }
   return JSON.stringify(v.valor);
 }

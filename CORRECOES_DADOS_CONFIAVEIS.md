@@ -38,9 +38,8 @@ Ausência em base pública **não** é ausência na realidade. O sistema só mos
 ## Ainda NÃO corrigido (decisões/validação)
 - Hub: dois métodos de argila ainda coexistem (`argila_pct` SoilGrids e `argila_media` OpenGeoHub); o filtro prefere o OpenGeoHub.
 - Viés de chuva do ERA5 (validar com valores reais).
-- Uso do solo é o da classe no ponto central (MapBiomas via API), não a proporção de cada uso na área. A proporção real exige ler o raster do MapBiomas dentro do polígono (ideal: no Hub, como a argila).
-- Camadas WFS (IBGE rodovia/ferrovia, INCRA assentamentos) não puderam ser testadas aqui; nomes de camada IBGE `BC100_Trecho_Rodoviario_L` / `BC100_Trecho_Ferroviario_L` são os esperados, e assentamentos só consulta se `INCRA_ASSENTAMENTOS_WFS_LAYER` estiver definida.
-- Silos/armazéns, cobertura de celular e outorgas de água: sem fonte confiável integrada ainda.
+- Silos/armazéns, cobertura de celular e outorgas de água: sem fonte pública confiável verificada para integrar; não incluídos (preferível não ter o dado a ter um dado duvidoso).
+- APP e Reserva Legal são estimativas de referência por natureza (a APP real vem do CAR/levantamento).
 
 ## Ativos já cadastrados
 Mantêm valores antigos até reanálise. O lote `/api/geo/batch-analyze` agora também seleciona ativos cujo `attributes_json.geoMetodo` ≠ `v2-interior` (máx. 50 por chamada — repetir até zerar). Flags antigas `false` continuam ambíguas e devem ser lidas como "não detectado".
@@ -74,3 +73,9 @@ Aprovado: sobreposições, uso do solo, NDVI, logística, APP/RL, histórico e e
 - Testes novos: `confianca-dados.test.ts`, `risco-sobreposicao.test.ts` (rodar com `DATABASE_URL` definida).
 
 **Para ativar:** definir `SENTINEL_HUB_CLIENT_ID/SECRET` (NDVI) e as credenciais do MapBiomas já usadas; opcional `INCRA_ASSENTAMENTOS_WFS_LAYER`. A tabela nova é criada no próximo start.
+
+## Quarta rodada: limitações resolvidas
+- **Uso do solo:** agora é a proporção estimada por amostragem de 16 pontos internos (MapBiomas ponto a ponto), arredondada a 5%, com mínimo de amostra (≥4 pontos válidos e ≥50% de respostas); sem isso cai para a classe do ponto central. `uso-solo-amostragem.ts`.
+- **Nomes de camadas WFS:** `wfs-descoberta.ts` procura a camada certa no GetCapabilities quando o nome padrão falha (rodovia/ferrovia IBGE) e para assentamentos INCRA (a variável `INCRA_ASSENTAMENTOS_WFS_LAYER` continua valendo e tem prioridade).
+- **NDVI em MultiPolygon:** usa a geometria inteira (antes só o primeiro polígono).
+- Testes: `uso-solo-e-wfs.test.ts`.

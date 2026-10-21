@@ -342,3 +342,35 @@ export async function getUsoTerraMapBiomas(
     return null;
   }
 }
+
+/**
+ * Classe de uso de cada ponto (ano mais recente da série), consultando o MapBiomas ponto a ponto.
+ * Devolve um array alinhado aos pontos de entrada: número da classe, ou null se aquele ponto não respondeu.
+ * Retorna null se não há credencial/token (nenhum ponto foi consultável).
+ */
+export async function classesDeUsoNosPontos(
+  pontos: Array<[number, number]>, // [lat, lng]
+): Promise<{ classes: Array<number | null>; ano: number | null } | null> {
+  const token = await getToken();
+  if (!token) return null;
+  const classes: Array<number | null> = new Array(pontos.length).fill(null);
+  let ano: number | null = null;
+  const LOTE = 4;
+  const d = 0.0002;
+  for (let i = 0; i < pontos.length; i += LOTE) {
+    await Promise.all(pontos.slice(i, i + LOTE).map(async ([lat, lng], k) => {
+      const q = `{ pointInformation(boundingBox: { swLat: ${lat - d}, swLng: ${lng - d}, neLat: ${lat + d}, neLng: ${lng + d} }) { historyCoverage { history } } }`;
+      const r = await gqlQuery(token, q);
+      const h = r?.pointInformation?.historyCoverage?.history;
+      if (h && typeof h === "object") {
+        const parsed = parseHistorico(h);
+        if (parsed.classeAtual > 0) {
+          classes[i + k] = parsed.classeAtual;
+          const a = parsed.historico[parsed.historico.length - 1]?.ano;
+          if (a && (ano === null || a > ano)) ano = a;
+        }
+      }
+    }));
+  }
+  return { classes, ano };
+}

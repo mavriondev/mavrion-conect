@@ -54,13 +54,15 @@ async function getSentinelToken(): Promise<string | null> {
 export async function getNDVISentinel(
   lat: number,
   lon: number,
-  polygon?: number[][][] | null
+  polygon?: number[][][] | null,
+  /** Geometria completa (ex.: MultiPolygon). Se informada, a estatística usa ela inteira. */
+  geometriaCompleta?: { type: string; coordinates: any } | null
 ): Promise<SentinelNDVIResult | null> {
   const token = await getSentinelToken();
   if (!token) return null;
 
   let bbox: [number, number, number, number];
-  const usaPoligono = !!(polygon && polygon[0]?.length > 3);
+  const usaPoligono = !!(geometriaCompleta || (polygon && polygon[0]?.length > 3));
   if (polygon && polygon[0]?.length > 0) {
     const lngs = polygon[0].map((c: number[]) => c[0]);
     const lats = polygon[0].map((c: number[]) => c[1]);
@@ -100,7 +102,7 @@ function evaluatePixel(samples) {
         input: {
           // Com polígono, a estatística é só do interior da fazenda (antes: caixa envolvente, que incluía vizinhos).
           bounds: usaPoligono
-            ? { geometry: { type: "Polygon", coordinates: polygon }, properties: { crs: "http://www.opengis.net/def/crs/OGC/1.3/CRS84" } }
+            ? { geometry: geometriaCompleta ?? { type: "Polygon", coordinates: polygon }, properties: { crs: "http://www.opengis.net/def/crs/OGC/1.3/CRS84" } }
             : { bbox, properties: { crs: "http://www.opengis.net/def/crs/OGC/1.3/CRS84" } },
           data: [{
             type: "sentinel-2-l2a",

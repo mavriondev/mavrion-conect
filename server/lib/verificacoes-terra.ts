@@ -9,7 +9,10 @@ import { sql } from "drizzle-orm";
 import { utmSridSqlExpr } from "./utm";
 import { consultarSobreposicoes, computePostGISIntersection } from "./due-diligence-fundiaria";
 import type { SobreposicaoArea } from "./due-diligence-fundiaria";
-import { getUsoTerraMapBiomas } from "./mapbiomas";
+import { getUsoTerraMapBiomas, classesDeUsoNosPontos } from "./mapbiomas";
+import { amostrarInterior } from "./geo-medicao";
+import { resumirUsoSolo, descreverUsoSolo } from "./uso-solo-amostragem";
+import { descobrirCamadaWfs } from "./wfs-descoberta";
 import { getNDVISentinel } from "./sentinel";
 import { distanciaAtePoligonoM } from "./geo-medicao";
 import { verificacaoAutomatica, type Verificacao } from "./confianca-dados";
@@ -142,7 +145,22 @@ async function verificarMapBiomas(a: AtivoGeo): Promise<Verificacao[]> {
   const out: Verificacao[] = [];
 
   const ultimo = mb.historico?.length ? mb.historico[mb.historico.length - 1] : null;
-  out.push(
+  // Proporção por amostragem de 16 pontos internos; se não houver amostra suficiente, cai para a classe do ponto central.
+  let usoAmostrado: ReturnType<typeof resumirUsoSolo> = null;
+  let anoAmostra: number | null = null;
+  try {
+    const pts = amostrarInterior(a.geojson, 16);
+    const amostra = pts.length >= 4 ? await classesDeUsoNosPontos(pts) : null;
+    if (amostra) { usoAmostrado = resumirUsoSolo(amostra.classes); anoAmostra = amostra.ano; }
+  } catch { usoAmostrado = null; }
+  if (usoAmostrado) {
+    out.push(verificacaoAutomatica({
+      chave: "uso_solo", achado: "detectado",
+      valor: { grupos: usoAmostrado.grupos, amostras: usoAmostrado.amostrasValidas, ano: anoAmostra, descricao: descreverUsoSolo(usoAmostrado) },
+      fonte: FONTE,
+      observacao: `Estimativa por amostragem de ${usoAmostrado.amostrasValidas} pontos dentro do polígono${anoAmostra ? ` (ano ${anoAmostra})` : ""}, arredondada a 5%. Não é medição por pixel; a margem é de alguns pontos percentuais.`,
+    }));
+  } else out.push(
     mb.usoAtual && mb.usoAtual !== "Não identificado"
       ? verificacaoAutomatica({
           chave: "uso_solo", achado: "detectado", valor: mb.usoAtual, fonte: FONTE,
@@ -183,15 +201,15 @@ async function verificarNdvi(a: AtivoGeo): Promise<Verificacao> {
   const g = a.geojson?.geometry || a.geojson;
   let anel: number[][][] | null = null;
   if (g?.type === "Polygon") anel = g.coordinates;
-  else if (g?.type === "MultiPolygon" && g.coordinates?.[0]) anel = g.coordinates[0]; // 1º polígono; limitação documentada
+  else if (g?.type === "MultiPolygon" && g.coordinates?.[0]) anel = g.coordinates[0]; // só para o bbox; a estatística usa a geometria inteira
   let r: Awaited<ReturnType<typeof getNDVISentinel>> = null;
-  try { r = await getNDVISentinel(a.lat, a.lon, anel); } catch { r = null; }
+  try { r = await getNDVISentinel(a.lat, a.lon, anel, g?.type === "MultiPolygon" ? g : undefined); } catch { r = null; }
   if (!r) return indeterminada("ndvi", FONTE, "Sem imagem válida (credenciais ausentes, nuvem ou serviço indisponível).");
   return verificacaoAutomatica({
     chave: "ndvi", achado: "detectado", valor: r.ndvi, fonte: r.fonte,
     consultadoEm: new Date().toISOString(),
     observacao: `Composto de ${r.periodoInicio} a ${r.periodoFim}. ${r.classificacao}. NDVI indica vigor da vegetação, não produtividade nem uso agrícola.` +
-      (g?.type === "MultiPolygon" ? " Considerado só o primeiro polígono." : ""),
+      "",
   });
 }
 
@@ -204,18 +222,24 @@ async function verificarLogistica(a: AtivoGeo): Promise<Verificacao[]> {
   ];
   const out: Verificacao[] = [];
   for (const d of defs) {
-    const w = await wfsIbge(d.layer, bbox);
-    if (!w.ok) { out.push(indeterminada(d.chave, `IBGE BC100 (${d.layer})`, "Camada não respondeu.")); continue; }
+    let layerUsada = d.layer;
+    let w = await wfsIbge(layerUsada, bbox);
+    if (!w.ok) {
+      // O nome da camada pode ter mudado: procura no GetCapabilities e tenta uma vez.
+      const achada = await descobrirCamadaWfs(IBGE_WFS, d.chave === "logistica_rodovia" ? /rodovi/i : /ferrovi/i, { preferir: /BC100.*_L$/i, evitar: /ponto|_P$|_A$/i });
+      if (achada && achada !== layerUsada) { layerUsada = achada; w = await wfsIbge(layerUsada, bbox); }
+    }
+    if (!w.ok) { out.push(indeterminada(d.chave, `IBGE BC100 (${layerUsada})`, "Camada não respondeu.")); continue; }
     const dist = distanciaAtePoligonoM(a.geojson, { type: "FeatureCollection", features: w.features });
     if (dist === null) {
       out.push(verificacaoAutomatica({
-        chave: d.chave, achado: "nao_detectado", fonte: `IBGE BC100 (${d.layer})`,
+        chave: d.chave, achado: "nao_detectado", fonte: `IBGE BC100 (${layerUsada})`,
         observacao: `Nenhuma ${d.nome.toLowerCase()} mapeada num raio de ~33 km.`,
       }));
       continue;
     }
     out.push(verificacaoAutomatica({
-      chave: d.chave, achado: "detectado", valor: Math.round(dist), unidade: "m", fonte: `IBGE BC100 (${d.layer})`,
+      chave: d.chave, achado: "detectado", valor: Math.round(dist), unidade: "m", fonte: `IBGE BC100 (${layerUsada})`,
       observacao: `Distância da divisa até a feição mais próxima. A camada inclui vias não pavimentadas e escala 1:100.000; não indica qualidade de acesso.` +
         (w.truncado ? " Limite de feições da consulta atingido — a distância pode estar superestimada." : ""),
     }));
