@@ -106504,6 +106504,9 @@ function J9e(a) {
           Ae !== void 0 && (s.push(`s.alt_media <= $${A++}`), l.push(Ae)),
           Te !== void 0 && (s.push(`s.alt_min >= $${A++}`), l.push(Te)),
           Ue !== void 0 && (s.push(`s.alt_max <= $${A++}`), l.push(Ue)),
+          // -9999 marca imóvel cuja altitude falhou: sem esta guarda, "altitude <= X" devolvia esses imóveis
+          (oe !== void 0 || Ae !== void 0 || Te !== void 0 || Ue !== void 0) &&
+            s.push("s.alt_media != -9999"),
           Je !== void 0 &&
             (s.push(
               `COALESCE(CASE WHEN s.argila_media <> -1 THEN s.argila_media END, s.argila_pct) >= $${A++}`,
@@ -106670,10 +106673,16 @@ function J9e(a) {
           d !== void 0 && (ye.push(`alt_media <= $${ke++}`), Ie.push(d)),
           h !== void 0 && (ye.push(`alt_min >= $${ke++}`), Ie.push(h)),
           E !== void 0 && (ye.push(`alt_max <= $${ke++}`), Ie.push(E)),
+          // -9999 marca imóvel cuja altitude falhou: sem esta guarda, "altitude <= X" devolvia esses imóveis
+          (p !== void 0 || d !== void 0 || h !== void 0 || E !== void 0) &&
+            ye.push("alt_media != -9999"),
           C !== void 0 &&
             (ye.push(`CAST(argila_media AS numeric) >= $${ke++}`), Ie.push(C)),
           _ !== void 0 &&
             (ye.push(`CAST(argila_media AS numeric) <= $${ke++}`), Ie.push(_)),
+          // -1 marca imóvel cuja argila falhou: "argila <= X" devolvia esses imóveis como se tivessem pouca argila
+          (C !== void 0 || _ !== void 0) &&
+            ye.push("argila_media IS NOT NULL AND argila_media <> -1"),
           v !== void 0 && (ye.push(`declividade >= $${ke++}`), Ie.push(v)),
           B !== void 0 && (ye.push(`declividade <= $${ke++}`), Ie.push(B)),
           S !== void 0 &&

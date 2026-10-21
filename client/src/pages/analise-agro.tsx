@@ -277,8 +277,9 @@ export default function AnaliseAgroPage() {
                 <Card>
                   <CardContent className="p-4">
                     <p className="font-medium text-sm mb-2 flex items-center gap-1.5">
-                      <BarChart2 className="w-4 h-4 text-blue-600" /> Produtividade
+                      <BarChart2 className="w-4 h-4 text-blue-600" /> Simulação de produtividade (Embrapa Agritec)
                     </p>
+                    <p className="text-[11px] text-muted-foreground mb-2">Simulação com premissas padrão (reserva de água 75 mm, plantio em 15/jan, meta de 60). Não é a produtividade medida da propriedade.</p>
                     <div className="space-y-1.5">
                       {result.produtividade.filter(p => p.estimativa).map((p, i) => (
                         <div key={i} className="flex items-center justify-between text-sm" data-testid={`agro-prod-${i}`}>

@@ -3791,17 +3791,17 @@ export default function AtivoDetalhePage({ id }: { id: string }) {
                       <div className="flex flex-wrap gap-2 mt-2">
                         {ativo.geoTemRio != null && (
                           <Badge className={ativo.geoTemRio ? "bg-green-100 text-green-700 border-green-200" : "bg-gray-100 text-gray-500 border-gray-200"} data-testid="badge-geo-rio">
-                            {ativo.geoTemRio ? "Tem rio" : "Rio não detectado"}
+                            {ativo.geoTemRio ? "Rio na propriedade" : "Rio não detectado"}
                           </Badge>
                         )}
                         {ativo.geoTemLago != null && (
                           <Badge className={ativo.geoTemLago ? "bg-green-100 text-green-700 border-green-200" : "bg-gray-100 text-gray-500 border-gray-200"} data-testid="badge-geo-lago">
-                            {ativo.geoTemLago ? "Tem lago" : "Lago não detectado"}
+                            {ativo.geoTemLago ? "Lago na propriedade" : "Lago não detectado"}
                           </Badge>
                         )}
                         {ativo.geoTemEnergia != null && (
                           <Badge className={ativo.geoTemEnergia ? "bg-green-100 text-green-700 border-green-200" : "bg-gray-100 text-gray-500 border-gray-200"} data-testid="badge-geo-energia">
-                            {ativo.geoTemEnergia ? "Energia disponível" : "Energia não detectada"}
+                            {ativo.geoTemEnergia ? "Energia até 1 km" : "Energia não detectada"}
                           </Badge>
                         )}
                       </div>

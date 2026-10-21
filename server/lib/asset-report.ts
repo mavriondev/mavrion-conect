@@ -554,7 +554,7 @@ function secGeo(a: any): string {
     ["Rio na propriedade", a.geoTemRio == null ? "—" : a.geoTemRio ? "Sim" : "Não detectado"],
     ["Lago/açude", a.geoTemLago == null ? "—" : a.geoTemLago ? "Sim" : "Não detectado"],
     ["Distância até água", a.geoDistAguaM != null ? `${fmtNum(a.geoDistAguaM)} m` : "—"],
-    ["Energia elétrica", a.geoTemEnergia == null ? "—" : a.geoTemEnergia ? "Sim" : "Não detectada"],
+    ["Energia elétrica", a.geoTemEnergia == null ? "—" : a.geoTemEnergia ? "Sim (rede mapeada até 1 km)" : "Não detectada"],
     ["Distância até energia", a.geoDistEnergiaM != null ? `${fmtNum(a.geoDistEnergiaM)} m` : "—"],
     ["Analisado em", fmtDate(a.geoAnalyzedAt)],
   ]));

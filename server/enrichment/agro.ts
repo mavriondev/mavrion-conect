@@ -10,47 +10,79 @@ export interface SoilGridsResult {
   wv0033: number | null;
   wv1500: number | null;
   soilClass: string | null;
+  /** Faixa de profundidade que originou os valores (ex.: 0-30 cm, média ponderada). */
+  profundidade?: string | null;
+}
+
+const PROPRIEDADES_SOLO = ['phh2o', 'clay', 'sand', 'soc', 'nitrogen', 'cec', 'wv0033', 'wv1500'];
+// Camadas do SoilGrids que formam a faixa 0-30 cm, com a espessura (cm) de cada uma para a média ponderada.
+// A camada de 0-5 cm sozinha é a mais superficial e NÃO representa o perfil: em latossolos do Cerrado a
+// argila costuma aumentar com a profundidade, então 0-5 cm subestima a textura que a cultura enxerga.
+const CAMADAS_0_30: Record<string, number> = { '0-5cm': 5, '5-15cm': 10, '15-30cm': 15 };
+const FATORES_SOLO: Record<string, number> = {
+  phh2o: 0.1, clay: 0.1, sand: 0.1, soc: 0.1, nitrogen: 0.01, cec: 0.1, wv0033: 0.1, wv1500: 0.1,
+};
+
+export function soloVazio(): SoilGridsResult {
+  return {
+    phh2o: null, clay: null, sand: null, soc: null,
+    nitrogen: null, cec: null, wv0033: null, wv1500: null, soilClass: null, profundidade: null,
+  };
+}
+
+/** Preenche `result` com a média ponderada pela espessura das camadas retornadas. true se achou algum valor. */
+export function aplicarMediaPonderadaSolo(layers: any[], result: SoilGridsResult): boolean {
+  let achou = false;
+  for (const layer of layers) {
+    const nome = layer?.name as string;
+    const fator = FATORES_SOLO[nome];
+    if (fator === undefined) continue;
+    let soma = 0;
+    let peso = 0;
+    for (const dep of layer.depths || []) {
+      const mean = dep?.values?.mean;
+      if (mean === undefined || mean === null) continue;
+      const w = CAMADAS_0_30[dep?.label] ?? 1;
+      soma += mean * w;
+      peso += w;
+    }
+    if (peso > 0) {
+      (result as any)[nome] = parseFloat(((soma / peso) * fator).toFixed(2));
+      achou = true;
+    }
+  }
+  return achou;
+}
+
+function consultarPropriedadesSolo(lat: number, lon: number, profundidades: string[]) {
+  const params = new URLSearchParams();
+  params.append('lon', lon.toString());
+  params.append('lat', lat.toString());
+  profundidades.forEach(d => params.append('depth', d));
+  params.append('value', 'mean');
+  PROPRIEDADES_SOLO.forEach(p => params.append('property', p));
+  return axios.get(`https://rest.isric.org/soilgrids/v2.0/properties/query?${params.toString()}`, { timeout: 15000 });
 }
 
 export async function consultarSoloSoilGrids(lat: number, lon: number): Promise<SoilGridsResult> {
   try {
-    const properties = ['phh2o', 'clay', 'sand', 'soc', 'nitrogen', 'cec', 'wv0033', 'wv1500'];
-    const params = new URLSearchParams();
-    params.append('lon', lon.toString());
-    params.append('lat', lat.toString());
-    params.append('depth', '0-5cm');
-    params.append('value', 'mean');
-    properties.forEach(p => params.append('property', p));
-
     const [propertiesRes, classRes] = await Promise.allSettled([
-      axios.get(`https://rest.isric.org/soilgrids/v2.0/properties/query?${params.toString()}`, { timeout: 15000 }),
+      consultarPropriedadesSolo(lat, lon, Object.keys(CAMADAS_0_30)),
       axios.get(`https://rest.isric.org/soilgrids/v2.0/classification/query?lon=${lon}&lat=${lat}&number_classes=1`, { timeout: 15000 })
     ]);
 
-    const result: SoilGridsResult = {
-      phh2o: null, clay: null, sand: null, soc: null,
-      nitrogen: null, cec: null, wv0033: null, wv1500: null, soilClass: null
-    };
+    const result = soloVazio();
 
+    let achou = false;
     if (propertiesRes.status === 'fulfilled') {
-      const layers = propertiesRes.value.data?.properties?.layers || [];
-      for (const layer of layers) {
-        const name = layer.name as keyof SoilGridsResult;
-        const mean = layer.depths?.[0]?.values?.mean;
-        if (mean !== undefined && mean !== null) {
-          const conversionFactors: Record<string, number> = {
-            phh2o: 0.1,
-            clay: 0.1,
-            sand: 0.1,
-            soc: 0.1,
-            nitrogen: 0.01,
-            cec: 0.1,
-            wv0033: 0.1,
-            wv1500: 0.1,
-          };
-          const factor = conversionFactors[layer.name] ?? 1;
-          (result as any)[name] = parseFloat((mean * factor).toFixed(2));
-        }
+      achou = aplicarMediaPonderadaSolo(propertiesRes.value.data?.properties?.layers || [], result);
+      if (achou) result.profundidade = '0-30 cm (média ponderada das camadas 0-5, 5-15 e 15-30 cm)';
+    }
+    if (!achou) {
+      // Plano B: camada superficial única (comportamento anterior), rotulada como tal.
+      const r2 = await Promise.allSettled([consultarPropriedadesSolo(lat, lon, ['0-5cm'])]);
+      if (r2[0].status === 'fulfilled' && aplicarMediaPonderadaSolo(r2[0].value.data?.properties?.layers || [], result)) {
+        result.profundidade = '0-5 cm (apenas camada superficial)';
       }
     }
 
@@ -61,10 +93,7 @@ export async function consultarSoloSoilGrids(lat: number, lon: number): Promise<
     return result;
   } catch (err) {
     console.error('[SoilGrids] Erro:', err);
-    return {
-      phh2o: null, clay: null, sand: null, soc: null,
-      nitrogen: null, cec: null, wv0033: null, wv1500: null, soilClass: null
-    };
+    return soloVazio();
   }
 }
 
@@ -183,12 +212,12 @@ export async function consultarZARC(codIBGE: string, cultura: string): Promise<Z
         const label = `${item.diaIni}/${meses[item.mesIni-1]} a ${item.diaFim}/${meses[item.mesFim-1]} (${item.ciclo || ''} ${item.solo || ''})`.trim();
         datasPlantio.push(label);
       }
-      if (item.safra) {
-        aptidao = 'Apto';
-      }
     }
 
-    if (data.length > 0) aptidao = aptidao || 'Apto';
+    // O ZARC lista janelas de plantio com risco climático <= 20% para o MUNICÍPIO (por tipo de solo e ciclo).
+    // Ter janela significa que a cultura tem zoneamento no município; NÃO significa que esta fazenda é "apta".
+    // Sem nenhuma janela, a aptidão fica indefinida (antes virava "Apto" só porque a API devolveu algum registro).
+    if (datasPlantio.length > 0) aptidao = 'Apto';
 
     return {
       cultura,
@@ -730,7 +759,7 @@ function diasNoMes(mes: number, ano: number): number {
 
 export async function consultarClimaNASAPower(lat: number, lon: number): Promise<ClimaResult | null> {
   const anoFim = new Date().getFullYear() - 1;
-  const anoInicio = anoFim - 4;
+  const anoInicio = anoFim - 9; // 10 anos: 5 era curto para uma média de chuva (variabilidade entre anos)
   const cacheKey = `openmeteo_${lat.toFixed(2)}_${lon.toFixed(2)}_${anoInicio}_${anoFim}`;
   const cached = climaCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CLIMA_CACHE_TTL) {
@@ -761,15 +790,21 @@ export async function consultarClimaNASAPower(lat: number, lon: number): Promise
     const tmaxAllVals: number[] = [];
     const tminAllVals: number[] = [];
 
+    let diasSemChuvaInfo = 0;
     for (let i = 0; i < dates.length; i++) {
       const m = parseInt(dates[i].split('-')[1], 10) - 1;
-      precipMensalAcum[m] += (precArr[i] ?? 0);
+      if (precArr[i] == null) diasSemChuvaInfo++; else precipMensalAcum[m] += precArr[i]!;
       if (tmeanArr[i] != null) {
         tempMensalAcum[m] += tmeanArr[i]!;
         tempMensalCount[m]++;
       }
       if (tmaxArr[i] != null) tmaxAllVals.push(tmaxArr[i]!);
       if (tminArr[i] != null) tminAllVals.push(tminArr[i]!);
+    }
+
+    // Dia sem dado NÃO é dia sem chuva: acima de 2% de falhas o resultado não é confiável (cai no plano B).
+    if (dates.length === 0 || diasSemChuvaInfo / dates.length > 0.02) {
+      throw new Error(`Open-Meteo com ${diasSemChuvaInfo} dias sem precipitação`);
     }
 
     const precipMensal = precipMensalAcum.map(v => parseFloat((v / nAnos).toFixed(1)));
@@ -826,7 +861,9 @@ export async function consultarClimaNASAPower(lat: number, lon: number): Promise
       for (let m = 0; m < 12; m++) {
         const key = `${anoFim}${String(m + 1).padStart(2, '0')}`;
         const dias = diasNoMes(m, anoFim);
-        const precMes = parseFloat(((prec[key] ?? 0) * dias).toFixed(1));
+        const vp = prec[key];
+        if (vp == null || vp < 0) throw new Error(`NASA POWER sem precipitação em ${key}`);
+        const precMes = parseFloat((vp * dias).toFixed(1));
         precipMensal.push(precMes);
         precipAnual += precMes;
         const t = temp[key];
@@ -848,7 +885,7 @@ export async function consultarClimaNASAPower(lat: number, lon: number): Promise
         mesesSecos,
         mesesChuvosos,
         anoReferencia: anoFim,
-        fonte: `NASA POWER (${anoFim})`,
+        fonte: `NASA POWER (${anoFim}, apenas 1 ano — pode divergir da média)`,
       };
       climaCache.set(cacheKey, { data: fallbackResult, ts: Date.now() });
       return fallbackResult;
@@ -1274,13 +1311,9 @@ function calcularScoreAgro(solo: SoilGridsResult | null, zarc: ZarcResult[], ndv
     else if (val < 0.2) score -= 5;
   }
 
-  const aptos = zarc.filter(z => z?.aptidao === 'Apto').length;
-  const total = zarc.length;
-  if (total > 0) {
-    const pctApto = aptos / total;
-    if (pctApto >= 0.8) score += 10;
-    else if (pctApto <= 0.2) score -= 10;
-  }
+  // ZARC não pontua: ele descreve o município, não a fazenda, e como só retorna culturas com janela de
+  // plantio, a fração "aptos" era sempre 100% (+10 para qualquer município com zoneamento).
+  void zarc;
 
   return Math.max(0, Math.min(100, score));
 }
@@ -1308,22 +1341,20 @@ function gerarResumoAgro(
     }
   }
 
-  const aptos = zarc.filter(z => z?.aptidao === 'Apto').map(z => z.cultura);
-  if (aptos.length > 0) partes.push(`Apto para: ${aptos.join(', ')}`);
+  const comJanela = zarc.filter(z => z?.aptidao === 'Apto').map(z => z.cultura);
+  if (comJanela.length > 0) partes.push(`Zoneamento agrícola do município com janela de plantio para: ${comJanela.join(', ')} (não é laudo de aptidão da propriedade)`);
 
-  const prodPrincipal = produtividade[0];
-  if (prodPrincipal?.estimativa) {
-    partes.push(`Produtividade estimada de ${prodPrincipal.cultura}: ${prodPrincipal.estimativa} ${prodPrincipal.unidade}`);
-  }
+  // A produtividade simulada (Agritec) usa premissas fixas (CAD 75 mm, plantio em 15/jan, meta de 60) e não
+  // mede a fazenda; por isso NÃO entra neste resumo, que vai para relatórios e textos de IA como se fosse fato.
+  void produtividade;
 
-  if (clima && (clima.precipitacaoMedia > 0 || clima.temperaturaMaxMedia > 0)) {
-    const tempMedia = clima.temperaturaMinMedia && clima.temperaturaMaxMedia
-      ? ((clima.temperaturaMinMedia + clima.temperaturaMaxMedia) / 2).toFixed(1)
-      : null;
-    const parts = [];
-    if (tempMedia) parts.push(`temp. média ${tempMedia}°C`);
-    if (clima.precipitacaoMedia > 0) parts.push(`precip. ${clima.precipitacaoMedia} mm`);
-    if (parts.length > 0) partes.push(`Clima: ${parts.join(', ')} (previsão NCEP-GFS)`);
+  // Só descreve o clima quando há série histórica. Sem precipitação anual o dado é previsão do dia (ou falha) e fica de fora.
+  if (clima && clima.precipitacaoAnual && clima.precipitacaoAnual > 0) {
+    const mensais = (clima.temperaturaMensal || []).filter(t => t > 0);
+    const tempMedia = mensais.length >= 6 ? (mensais.reduce((a, b) => a + b, 0) / mensais.length).toFixed(1) : null;
+    const parts = [`precipitação ${Math.round(clima.precipitacaoAnual)} mm/ano`];
+    if (tempMedia) parts.push(`temperatura média ${tempMedia}°C`);
+    partes.push(`Clima (${clima.fonte}): ${parts.join(', ')}`);
   }
 
   if (ndvi && (ndvi.ndviMedio > 0 || ndvi.eviMedio > 0)) {
@@ -1445,3 +1476,14 @@ export async function consultarCCIRViaSICAR(lat: number, lon: number, cafProduto
   }
 }
 
+
+/**
+ * Temperatura média anual a partir da média mensal (ERA5/NASA). Retorna 0 quando não há série
+ * (convenção dos consumidores: 0 = sem dado). NÃO usar (mín+máx)/2: temperaturaMaxMedia e
+ * temperaturaMinMedia são a média dos 5% de dias mais quentes/frios, não temperaturas médias.
+ */
+export function temperaturaMediaAnual(clima: ClimaResult | null | undefined): number {
+  const mensais = (clima?.temperaturaMensal || []).filter(t => typeof t === 'number' && t > 0);
+  if (mensais.length < 6) return 0;
+  return parseFloat((mensais.reduce((a, b) => a + b, 0) / mensais.length).toFixed(1));
+}
