@@ -118,7 +118,7 @@ Disco: 197 GB, **142 GB usados, 48 GB livres (75 %)**.
 | Grupo | Rotas | De onde vem o dado | Quando é consultado |
 |---|---:|---|---|
 | **SICAR** — consulta (`/api/sicar/imoveis`, `/:codigo`, `/:codigo/geojson`, `/search`, `/geojson*`, `/stats`, `/cache-stats`, `/filter-options`) | 12 | Banco local (27 partições) | Já gravado. `/stats` lê `sicar_stats_cache`, atualizado por timer interno (último refresh 04:57 UTC de hoje) |
-| SICAR — importação (`/import`, `/import-progress`, `/import-history`, `/schedule*`, `/schedules`, `/backfill-fields`, `/backfill-geometries`, `/partition/*`) | 12 | WFS `geoserver.car.gov.br` + lista de UFs do IBGE | Sob demanda ou por agendamento (27 agendamentos semanais — **não disparam desde 14/08**, ver B7) |
+| SICAR — importação (`/import`, `/import-progress`, `/import-history`, `/schedule*`, `/schedules`, `/backfill-fields`, `/backfill-geometries`, `/partition/*`) | 12 | WFS `geoserver.car.gov.br` + lista de UFs do IBGE | Sob demanda ou por agendamento (27 agendamentos semanais — **não carregados de 14/08 a 21/10**, ver B7) |
 | SICAR — altitude (`/altitude/start|stop|status|data|dashboard|backfill`) | 6 | Tiles SRTM **locais** (`srtm_tiles/`); `backfill` chama Open-Meteo | Worker grava em massa; `status` lê contadores em memória + banco |
 | SICAR — argila OpenGeoHub (`/opengeohub/start|stop|status|data`) | 4 | COGs **locais** (`cog_argila/`) | Worker grava em massa; parado |
 | SICAR — OpenLandMap (`/openlandmap/start|stop|status|data`) | 4 | COGs **remotos** em `s3.openlandmap.org` (leitura por faixa de bytes, a cada imóvel) | Worker grava; parado |
@@ -173,7 +173,7 @@ Serviços que o **Connect** chama diretamente (MapBiomas, Sentinel Hub, IBGE WFS
 | Solo ISRIC | `argila_pct` via SoilGrids | Sob demanda | **Parado** (ISRIC em 504) | Sim |
 | Backfill geo | Para imóveis sem centroide: centroide, perímetro, declividade pela fórmula antiga (`(alt_max−alt_min)/distância`) e Open-Meteo 2024 → `temp_media`, `precip_anual` | Sob demanda (`POST /altitude/backfill`) | Parado | Sim |
 | Enriquecimento ANM | Cruza partições SICAR × `anm_processos` (índice gist funcional) → `sicar_anm_enrichment` | Religado pelo guardião sidecar (10 em 10 min, por load, janela noturna) | **Rodando** (iniciado 04:31 UTC; ≈300 imóveis/min; 2,95 mi pendentes) | Sim (INSERT contínuo) |
-| Scheduler SICAR | 27 agendamentos semanais (sex 03:00 UTC: AC–GO; dom 04:00: MA–PR; qua 04:15: RJ–TO) → importação sequencial por UF | Carregado em todo boot ("27 rotina(s) ativa(s)") | **Não dispara desde 14/08/2026** (último "enfileirando: BA, AL"); causa não investigada (somente leitura) | Sim, quando roda (upsert de centenas de milhares de linhas por UF) |
+| Scheduler SICAR | 27 agendamentos semanais (sex 03:00 UTC: AC–GO; dom 04:00: MA–PR; qua 04:15: RJ–TO) → importação sequencial por UF | Carregado em todo boot ("27 rotina(s) ativa(s)") | **Não disparou de 14/08 a 21/10/2026** (último "enfileirando: BA, AL"): as tarefas nunca foram carregadas nos processos longos desse período — ver `docs/investigacao-scheduler-hub-2026-10-22.md`. Carregadas de novo desde o boot de 21/10 04:59 | Sim, quando roda (upsert de centenas de milhares de linhas por UF) |
 | Scheduler de módulos (`module_schedules`, node-cron 4.2.1, TZ São Paulo) | 7 módulos | ibama_autuacoes diário 03:30 UTC — **funciona** (hoje); ibama_embargos semanal — último 09/08; icmbio mensal — último 14/08; pgfn trimestral — último 05/07 (**05/10 não ocorreu**); sgb mensal — registro de 11/09; funai e cprm **desativados** (substituídos por sidecars) | Carregado; só o diário tem disparado | ibama_autuacoes: upsert das 698 mil linhas por dia |
 | Syncs por intervalo (setInterval) FUNAI / CPRM / SGB | Download + swap da tabela | Dias (`*_SYNC_INTERVAL_DAYS`) | FUNAI e CPRM **desligados** por `.env`; SGB: `SGB_SYNC_ENABLED` não está no `.env` (usa default do código) | Sim quando roda |
 | StatsCache | Recalcula `sicar_stats_cache` | Timer interno | Ligado (04:57 UTC) | Não (1 linha) |
@@ -239,7 +239,7 @@ Timers do sistema: `certbot.timer` (renovação OK; certificados expiram 02–11
 | `argila_pct` | `rest.isric.org` (SoilGrids v2) | **504 hoje**; historicamente instável (o worker tem contador próprio de indisponibilidade). Coluna já foi substituída na prática pela cópia de `argila_media` |
 | `anm_barragens` | `app.anm.gov.br/dadosabertos/BARRAGEM/Barragens.csv` | **Conexão resetada hoje**; 910 linhas de 13/03/2026, sem reimportação agendada |
 | `funai_terras_indigenas` (sync interno) | `geoserver.funai.gov.br` | **Fora do ar**; sem efeito porque o sidecar usa CMR/FUNAI |
-| Partições SICAR | `geoserver.car.gov.br` responde, mas o **agendador interno não dispara desde 14/08** | Base congelada em 07–14/08/2026 sem nenhum alerta |
+| Partições SICAR | `geoserver.car.gov.br` responde, mas o **agendador interno não foi carregado nos processos de 14/08 a 21/10** (banco indisponível no boot; ver `docs/investigacao-scheduler-hub-2026-10-22.md`) | Base congelada em 07–14/08/2026 sem nenhum alerta |
 | `pgfn_devedores` | dados abertos PGFN (responde) | Importação trimestral de 05/10 **não ocorreu** (último 05/07) |
 | `ibama_embargos` | dados abertos (responde) | Semanal parado desde 09/08 |
 | `icmbio_ucs` | INDE (responde) | Mensal parado desde 14/08 |
