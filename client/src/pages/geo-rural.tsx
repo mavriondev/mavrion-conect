@@ -899,7 +899,19 @@ function AssetExplorerMap({ onSelectAsset, onAnalyzeSicar }: { onSelectAsset: (i
   );
 }
 
-function ScoreGauge({ score }: { score: number }) {
+function ScoreGauge({ score }: { score: number | null | undefined }) {
+  if (score == null) {
+    return (
+      <div
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium text-sm bg-muted text-muted-foreground"
+        title="Dados insuficientes para calcular a nota: faltam informações de água, energia, relevo ou área."
+        data-testid="text-score-indisponivel"
+      >
+        <Gauge className="w-4 h-4" />
+        Nota indisponível (dados insuficientes)
+      </div>
+    );
+  }
   const color = score >= 70 ? "text-green-600" : score >= 40 ? "text-amber-600" : "text-red-500";
   const bg = score >= 70 ? "bg-green-100" : score >= 40 ? "bg-amber-100" : "bg-red-100";
   return (
@@ -910,7 +922,15 @@ function ScoreGauge({ score }: { score: number }) {
   );
 }
 
-function ScoreBreakdownBar({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
+function ScoreBreakdownBar({ label, value, max, color, semDado }: { label: string; value: number; max: number; color: string; semDado?: boolean }) {
+  if (semDado) {
+    return (
+      <div className="flex justify-between text-[11px]">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="text-muted-foreground italic">sem dado (não entra na nota)</span>
+      </div>
+    );
+  }
   const pct = Math.round((value / max) * 100);
   return (
     <div className="space-y-0.5">
@@ -982,7 +1002,7 @@ function AnalysisPanel({
               >OSM</span>
             )}
             <Droplets className={cn("w-5 h-5 mx-auto mb-1", analysis.temRio || analysis.temLago ? "text-blue-600" : "text-muted-foreground")} />
-            <p className="text-xs font-medium" data-testid="text-hidro-status">{analysis.temRio ? "Tem Rio" : analysis.temLago ? "Tem Lago" : "Sem Água"}</p>
+            <p className="text-xs font-medium" data-testid="text-hidro-status">{analysis.temRio ? "Rio na propriedade" : analysis.temLago ? "Lago na propriedade" : "Água não detectada"}</p>
             <p className="text-[10px] text-muted-foreground">
               {analysis.distAguaM != null ? `a ${formatDist(analysis.distAguaM)}` : `${analysis.qtdRios} rios, ${analysis.qtdLagos} lagos`}
             </p>
@@ -1000,7 +1020,7 @@ function AnalysisPanel({
             )}
             <ZapIcon className={cn("w-5 h-5 mx-auto mb-1", analysis.temEnergia ? "text-amber-600" : "text-muted-foreground")} />
             <span className="text-xs font-medium flex items-center justify-center gap-1">
-              {analysis.temEnergia ? "Energia" : "Sem Energia"}
+              {analysis.temEnergia ? "Energia até 1 km" : "Energia não detectada"}
               <EnergiaScoreBadge score={analysis.scoreEnergia} />
             </span>
             <p className="text-[10px] text-muted-foreground">
@@ -1031,11 +1051,11 @@ function AnalysisPanel({
       {bd && Object.keys(bd).length > 0 && (
         <div className="bg-muted/20 rounded-lg p-3 space-y-2">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Breakdown do Score</p>
-          <ScoreBreakdownBar label="Hidrografia" value={bd.agua || 0} max={30} color="bg-blue-500" />
-          <ScoreBreakdownBar label="Energia" value={bd.energia || 0} max={25} color="bg-amber-500" />
-          <ScoreBreakdownBar label="Altitude" value={bd.altitude || 0} max={20} color="bg-emerald-500" />
-          <ScoreBreakdownBar label="Declividade" value={bd.decliv || 0} max={10} color="bg-purple-500" />
-          <ScoreBreakdownBar label="Área" value={bd.area || 0} max={15} color="bg-cyan-500" />
+          <ScoreBreakdownBar label="Hidrografia" value={bd.agua || 0} max={30} color="bg-blue-500" semDado={(analysis.semDado || []).includes("agua")} />
+          <ScoreBreakdownBar label="Energia" value={bd.energia || 0} max={25} color="bg-amber-500" semDado={(analysis.semDado || []).includes("energia")} />
+          <ScoreBreakdownBar label="Altitude" value={bd.altitude || 0} max={20} color="bg-emerald-500" semDado={(analysis.semDado || []).includes("altitude")} />
+          <ScoreBreakdownBar label="Declividade" value={bd.decliv || 0} max={10} color="bg-purple-500" semDado={(analysis.semDado || []).includes("decliv")} />
+          <ScoreBreakdownBar label="Área" value={bd.area || 0} max={15} color="bg-cyan-500" semDado={(analysis.semDado || []).includes("area")} />
         </div>
       )}
 
@@ -1123,7 +1143,8 @@ function AnalysisPanel({
 
               {(enriquecimentoAgro.produtividade ?? []).filter(p => p.estimativa).length > 0 && (
                 <div>
-                  <p className="font-medium text-gray-700 dark:text-gray-300 mb-1">Produtividade Estimada</p>
+                  <p className="font-medium text-gray-700 dark:text-gray-300 mb-1">Simulação de produtividade (Embrapa Agritec)</p>
+                  <p className="text-[10px] text-muted-foreground mb-1">Premissas padrão (reserva de água 75 mm, plantio em 15/jan, meta de 60). Não é a produtividade medida da propriedade.</p>
                   {(enriquecimentoAgro.produtividade ?? []).filter(p => p.estimativa).map((p, i) => (
                     <div key={i} className="flex justify-between bg-muted/50 px-2 py-1 rounded mb-1" data-testid={`prod-item-${i}`}>
                       <span className="capitalize">{p.cultura}</span>

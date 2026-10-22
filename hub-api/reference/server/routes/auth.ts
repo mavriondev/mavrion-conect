@@ -3,7 +3,11 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { pool } from "../db";
 
-const JWT_SECRET = process.env.SESSION_SECRET || "REDACTED_CREDENTIAL_CONFIGURE_ENV";
+const JWT_SECRET = process.env.SESSION_SECRET as string;
+if (!JWT_SECRET) {
+  // exigir o segredo no boot — nunca usar fallback hardcoded (segredo antigo foi exposto e rotacionado)
+  throw new Error("SESSION_SECRET é obrigatório para a Hub API");
+}
 const JWT_EXPIRATION = "7d";
 
 export function getJwtSecret() {
@@ -78,12 +82,55 @@ export function registerAuthRoutes(app: Express) {
     }
   });
 
+  app.post("/api/auth/refresh", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return res.status(401).json({ message: "Token não fornecido" });
+      }
+
+      const token = authHeader.slice(7);
+      let decoded: any;
+      try {
+        decoded = jwt.verify(token, JWT_SECRET);
+      } catch {
+        return res.status(401).json({ message: "Token inválido ou expirado" });
+      }
+
+      const result = await pool.query(
+        "SELECT id, username, name FROM api_users WHERE id = $1 AND active = true",
+        [decoded.userId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(401).json({ message: "Usuário não encontrado" });
+      }
+
+      const user = result.rows[0];
+      const newToken = jwt.sign(
+        { userId: user.id, username: user.username, name: user.name },
+        JWT_SECRET,
+        { expiresIn: JWT_EXPIRATION }
+      );
+
+      res.json({
+        token: newToken,
+        user: { id: user.id, username: user.username, name: user.name },
+      });
+    } catch (error: any) {
+      if (error.name === "JsonWebTokenError" || error.name === "TokenExpiredError") {
+        return res.status(401).json({ message: "Token inválido ou expirado" });
+      }
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.post("/api/auth/register", (req, res, next) => {
     const apiKey = req.headers["x-api-key"] as string | undefined;
     if (!apiKey) {
       return res.status(403).json({ message: "Registro requer API Key de administrador" });
     }
-    const validKeys = (process.env.API_KEYS || "REDACTED_CREDENTIAL_CONFIGURE_ENV").split(",").map(k => k.trim()).filter(Boolean);
+    const validKeys = (process.env.API_KEYS || "").split(",").map(k => k.trim()).filter(Boolean);
     if (!validKeys.includes(apiKey)) {
       return res.status(403).json({ message: "API Key inválida" });
     }

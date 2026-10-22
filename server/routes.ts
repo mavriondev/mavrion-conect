@@ -27,6 +27,7 @@ import { registerDossieRoutes } from "./routes/dossie";
 import { registerBasesAnmRoutes } from "./routes/bases-anm";
 import { registerSeiRoutes } from "./routes/sei";
 import { registerJazidaPesquisaRoutes } from "./routes/jazida-pesquisa";
+import { registerVerificacoesRoutes } from "./routes/verificacoes";
 
 const uploadsDir = path.join(process.cwd(), "server", "uploads");
 
@@ -57,6 +58,7 @@ export async function registerRoutes(
   registerAnmEventosRoutes(app);
   registerDossieRoutes(app);
   registerBasesAnmRoutes(app);
+  registerVerificacoesRoutes(app);
 
   const SICAR_API_URL = "https://api.mavrionconnect.com.br";
   const SICAR_API_KEY = process.env.MAVRION_API_KEY || "";

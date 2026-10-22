@@ -6,7 +6,10 @@ export function apiKeyAuth(req: Request, res: Response, next: NextFunction) {
   if (authHeader?.startsWith("Bearer ")) {
     try {
       const token = authHeader.slice(7);
-      const secret = process.env.SESSION_SECRET || "REDACTED_CREDENTIAL_CONFIGURE_ENV";
+      const secret = process.env.SESSION_SECRET;
+      if (!secret) {
+        return res.status(500).json({ message: "SESSION_SECRET não configurado" });
+      }
       const decoded = jwt.verify(token, secret) as any;
       (req as any).user = decoded;
       return next();
@@ -21,7 +24,7 @@ export function apiKeyAuth(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ message: "Autenticação necessária" });
   }
 
-  const validKeys = (process.env.API_KEYS || "REDACTED_CREDENTIAL_CONFIGURE_ENV")
+  const validKeys = (process.env.API_KEYS || "")
     .split(",")
     .map((k) => k.trim())
     .filter(Boolean);

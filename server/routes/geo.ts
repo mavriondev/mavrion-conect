@@ -6,11 +6,12 @@ import { sql, eq, and } from "drizzle-orm";
 import { getCached, setCached } from "../cache";
 import { getOrgId } from "../lib/tenant";
 import { logApiError } from "../lib/api-error-logger";
-import { enriquecerFazenda, consultarSoloSoilGrids } from '../enrichment/agro';
+import { enriquecerFazenda, consultarSoloSoilGrids, temperaturaMediaAnual } from '../enrichment/agro';
 import { consultarDeterINPE } from "../lib/deter-inpe";
 import { getUsoTerraMapBiomas } from "../lib/mapbiomas";
 import { utmSridSqlExpr } from "../lib/utm";
 import { executarDueDiligenceFundiaria } from "../lib/due-diligence-fundiaria";
+import { amostrarInterior, classificarEnergia, pontuarGeo, resumirGeo, separarAguaOsm } from "../lib/geo-medicao";
 
 const ANM_MAPSERVER_URL = "https://geo.anm.gov.br/arcgis/rest/services/SIGMINE/dados_anm/MapServer/0/query";
 const CAR_PUBLIC_URL = "https://consultapublica.car.gov.br/publico/imoveis/index";
@@ -149,7 +150,7 @@ async function fetchOSMWater(centLat: number, centLng: number, padDeg: number = 
   const south = centLat - padDeg, north = centLat + padDeg;
   const west = centLng - padDeg, east = centLng + padDeg;
   const bb = `${south},${west},${north},${east}`;
-  const query = `[out:json][timeout:15];(way["waterway"~"river|stream|canal"](${bb});relation["waterway"~"river|stream"](${bb});way["natural"~"water|lake|reservoir"](${bb});relation["natural"~"water|lake|reservoir"](${bb}););out geom 100;`;
+  const query = `[out:json][timeout:15];(way["waterway"~"river|stream|canal"](${bb});relation["waterway"~"river|stream"](${bb});way["natural"~"water|lake|reservoir"](${bb});relation["natural"~"water|lake|reservoir"](${bb}););out geom 400;`;
   try {
     const r = await fetch(OVERPASS_API, {
       method: "POST",
@@ -177,7 +178,7 @@ async function fetchOSMPower(centLat: number, centLng: number, padDeg: number = 
   const south = centLat - padDeg, north = centLat + padDeg;
   const west = centLng - padDeg, east = centLng + padDeg;
   const bb = `${south},${west},${north},${east}`;
-  const query = `[out:json][timeout:15];(way["power"~"line|minor_line|cable"](${bb});node["power"~"tower|pole|substation"](${bb}););out geom 100;`;
+  const query = `[out:json][timeout:15];(way["power"~"line|minor_line|cable"](${bb});node["power"~"tower|pole|substation"](${bb}););out geom 400;`;
   try {
     const r = await fetch(OVERPASS_API, {
       method: "POST",
@@ -591,113 +592,29 @@ function centroidFromGeometry(geojson: any): [number, number] {
   return [sumLat / count, sumLng / count];
 }
 
-function samplePointsFromGeometry(geojson: any, max = 30): Array<[number, number]> {
-  const points: Array<[number, number]> = [];
-  function traverse(coords: any) {
-    if (typeof coords[0] === "number") {
-      points.push([coords[1], coords[0]]);
-      return;
-    }
-    for (const c of coords) traverse(c);
-  }
-  const geom = geojson.geometry || geojson;
-  traverse(geom.coordinates);
-  if (points.length <= max) return points;
-  const step = Math.floor(points.length / max);
-  return points.filter((_, i) => i % step === 0).slice(0, max);
+// Medições geográficas (amostragem, distância borda->feição, declividade e score) vivem em
+// server/lib/geo-medicao.ts, com testes. Estes wrappers mantêm os nomes usados neste arquivo.
+function computeGeoScore(data: Parameters<typeof pontuarGeo>[0]) {
+  return pontuarGeo(data);
 }
 
-function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+function classifyEnergia(distM: number | null, hasEnergia: boolean): string | null {
+  return classificarEnergia(distM, hasEnergia);
 }
 
-function estimateDeclivity(samplePoints: Array<[number, number]>, elevations: number[]): number | null {
-  if (elevations.length < 2 || elevations.length !== samplePoints.length) return null;
-  let totalSlope = 0;
-  let count = 0;
-  for (let i = 0; i < elevations.length - 1; i++) {
-    const dist = haversineDistance(samplePoints[i][0], samplePoints[i][1], samplePoints[i + 1][0], samplePoints[i + 1][1]);
-    if (dist > 10) {
-      const dElev = Math.abs(elevations[i] - elevations[i + 1]);
-      totalSlope += (dElev / dist) * 100;
-      count++;
-    }
-  }
-  return count > 0 ? Math.round((totalSlope / count) * 10) / 10 : null;
-}
+// Marca de método: ativos sem "v2-interior" foram analisados pelo cálculo antigo (altitude só no contorno,
+// distância do centro até vértices, "tem rio/energia" por raio regional) e são reanalisados no lote.
+const GEO_METODO_ATUAL = "v2-interior";
 
-function nearestFeatureDistance(centLat: number, centLng: number, featureCollection: any): number | null {
-  if (!featureCollection?.features?.length) return null;
-  let minDist = Infinity;
-  for (const feat of featureCollection.features) {
-    if (!feat.geometry?.coordinates) continue;
-    const coords: Array<[number, number]> = [];
-    function extract(c: any) {
-      if (typeof c[0] === "number" && typeof c[1] === "number") {
-        coords.push([c[1], c[0]]);
-        return;
-      }
-      for (const sub of c) extract(sub);
-    }
-    extract(feat.geometry.coordinates);
-    for (const [lat, lng] of coords) {
-      const d = haversineDistance(centLat, centLng, lat, lng);
-      if (d < minDist) minDist = d;
-    }
-  }
-  return minDist === Infinity ? null : Math.round(minDist);
-}
-
-function computeGeoScore(data: {
-  temRio: boolean; temLago: boolean; distAguaM: number | null;
-  temEnergia: boolean; distEnergiaM: number | null;
-  altMedia: number | null; declivMed: number | null;
-  areaHa: number | null;
-}): { score: number; breakdown: Record<string, number> } {
-  let agua = 0;
-  if (data.temRio || data.temLago) agua = data.temRio && data.temLago ? 30 : 25;
-  else if (data.distAguaM !== null) {
-    if (data.distAguaM < 500) agua = 15;
-    else if (data.distAguaM < 2000) agua = 5;
-  }
-
-  let energia = 0;
-  if (data.distEnergiaM !== null) {
-    if (data.distEnergiaM < 1000) energia = 25;
-    else if (data.distEnergiaM < 5000) energia = 15;
-    else energia = 5;
-  } else if (data.temEnergia) energia = 25;
-
-  let altitude = 5;
-  if (data.altMedia !== null) {
-    if (data.altMedia >= 200 && data.altMedia <= 800) altitude = 20;
-    else if (data.altMedia > 800 && data.altMedia <= 1200) altitude = 15;
-  }
-
-  let decliv = 0;
-  if (data.declivMed != null && data.declivMed < 8) decliv = 10;
-  else if (data.declivMed != null && data.declivMed < 15) decliv = 5;
-
-  let area = 5;
-  if (data.areaHa !== null) {
-    if (data.areaHa > 1000) area = 15;
-    else if (data.areaHa > 500) area = 12;
-    else if (data.areaHa > 100) area = 8;
-  }
-
-  const score = Math.min(agua + energia + altitude + decliv + area, 100);
-  return { score, breakdown: { agua, energia, altitude, decliv, area } };
-}
-
-function classifyEnergia(distM: number | null, hasEnergia: boolean): string {
-  if (distM === null) return hasEnergia ? "ALTA" : "BAIXA";
-  if (distM < 1000) return "ALTA";
-  if (distM < 5000) return "MEDIA";
-  return "BAIXA";
+function atributosGeo(geo: ReturnType<typeof resumirGeo>, extra: Record<string, unknown> = {}) {
+  return {
+    geoTemRio: geo.temRio, geoTemLago: geo.temLago, geoTemEnergia: geo.temEnergia,
+    geoAltMedia: geo.altMedia, geoAltMin: geo.altMin, geoAltMax: geo.altMax,
+    geoDeclivMed: geo.declivMed, geoDistAguaM: geo.distAguaM,
+    geoDistEnergiaM: geo.distEnergiaM, geoScoreEnergia: geo.scoreEnergia, geoScore: geo.score,
+    geoScoreConfianca: geo.confianca, geoSemDado: geo.semDado, geoMetodo: GEO_METODO_ATUAL,
+    ...extra,
+  };
 }
 
 let _geoDb: NodePgDatabase<any> | null = null;
@@ -711,7 +628,7 @@ async function runGeoAnalysisInBackground(assetId: number, geometry: any, areaHa
 
     const bbox = bboxFromGeometry(geometry);
     const [centLat, centLng] = centroidFromGeometry(geometry);
-    const samplePoints = samplePointsFromGeometry(geometry, 30);
+    const samplePoints = amostrarInterior(geometry, 100);
 
     const bboxExpanded = (() => {
       const [minLng, minLat, maxLng, maxLat] = bbox.split(",").map(Number);
@@ -723,7 +640,7 @@ async function runGeoAnalysisInBackground(assetId: number, geometry: any, areaHa
       const params = new URLSearchParams({
         service: "WFS", version: "2.0.0", request: "GetFeature",
         typeName, outputFormat: "application/json",
-        srsName: "EPSG:4326", count: "200",
+        srsName: "EPSG:4326", count: "1000",
         bbox: `${bboxExpanded},EPSG:4326`,
       });
       try {
@@ -765,52 +682,37 @@ async function runGeoAnalysisInBackground(assetId: number, geometry: any, areaHa
       if (osmPower && osmPower.features?.length > 0) { energiaData = osmPower; }
     }
 
-    const temRio = (riosData?.features?.length || 0) > 0;
-    const temLago = (massasDataIBGE?.features?.length || 0) > 0 || (riosData?.features || []).some((f: any) => f.properties?.natural === "water" || f.properties?.natural === "lake");
-    const temEnergia = (energiaData?.features?.length || 0) > 0;
-
-    const elevations = elevData?.results?.map((r: any) => r.elevation).filter((e: any) => typeof e === "number") || [];
-    const altMedia = elevations.length > 0 ? Math.round(elevations.reduce((a: number, b: number) => a + b, 0) / elevations.length) : null;
-    const altMin = elevations.length > 0 ? Math.min(...elevations) : null;
-    const altMax = elevations.length > 0 ? Math.max(...elevations) : null;
-
-    const declivMed = estimateDeclivity(samplePoints, elevations);
-
-    const allWater = { type: "FeatureCollection", features: [...(riosData?.features || []), ...(massasData?.features || [])] };
-    const distAguaM = nearestFeatureDistance(centLat, centLng, allWater);
-    const distEnergiaM = nearestFeatureDistance(centLat, centLng, energiaData);
-
-    const scoreEn = classifyEnergia(distEnergiaM, temEnergia);
-    const { score: geoScoreVal } = computeGeoScore({
-      temRio, temLago, distAguaM, temEnergia, distEnergiaM,
-      altMedia, declivMed, areaHa,
+    const aguaFinal = riosData === riosDataIBGE
+      ? { rios: riosDataIBGE, lagos: massasDataIBGE }
+      : separarAguaOsm(riosData);
+    const elevacoes = samplePoints.map((_, idx) => {
+      const e = elevData?.results?.[idx]?.elevation;
+      return typeof e === "number" ? e : null;
+    });
+    const geo = resumirGeo({
+      geometry, areaHa, pontos: samplePoints, elevacoes,
+      rios: aguaFinal.rios, lagos: aguaFinal.lagos, energia: energiaData,
     });
 
     await db.execute(sql`
       UPDATE assets SET
-        geo_alt_med = ${altMedia},
-        geo_alt_min = ${altMin},
-        geo_alt_max = ${altMax},
-        geo_decliv_med = ${declivMed},
-        geo_tem_rio = ${temRio},
-        geo_tem_lago = ${temLago},
-        geo_dist_agua_m = ${distAguaM},
-        geo_tem_energia = ${temEnergia},
-        geo_dist_energia_m = ${distEnergiaM},
-        geo_score_energia = ${scoreEn},
-        geo_score = ${geoScoreVal},
+        geo_alt_med = ${geo.altMedia},
+        geo_alt_min = ${geo.altMin},
+        geo_alt_max = ${geo.altMax},
+        geo_decliv_med = ${geo.declivMed},
+        geo_tem_rio = ${geo.temRio},
+        geo_tem_lago = ${geo.temLago},
+        geo_dist_agua_m = ${geo.distAguaM},
+        geo_tem_energia = ${geo.temEnergia},
+        geo_dist_energia_m = ${geo.distEnergiaM},
+        geo_score_energia = ${geo.scoreEnergia},
+        geo_score = ${geo.score},
         geo_analyzed_at = NOW(),
-        attributes_json = COALESCE(attributes_json, '{}'::jsonb) || ${JSON.stringify({
-          geoTemRio: temRio, geoTemLago: temLago, geoTemEnergia: temEnergia,
-          geoAltMedia: altMedia, geoAltMin: altMin, geoAltMax: altMax,
-          geoDeclivMed: declivMed, geoDistAguaM: distAguaM,
-          geoDistEnergiaM: distEnergiaM, geoScoreEnergia: scoreEn, geoScore: geoScoreVal,
-          autoAnalyzed: true,
-        })}::jsonb
+        attributes_json = COALESCE(attributes_json, '{}'::jsonb) || ${JSON.stringify(atributosGeo(geo, { autoAnalyzed: true }))}::jsonb
       WHERE id = ${assetId} AND org_id = ${orgId}
     `);
 
-    console.log(`[Geo Auto-Analysis] Ativo ${assetId}: geoScore=${geoScoreVal}, altMedia=${altMedia}, temRio=${temRio}, temEnergia=${temEnergia}`);
+    console.log(`[Geo Auto-Analysis] Ativo ${assetId}: geoScore=${geo.score} (confiança ${geo.confianca}), altMedia=${geo.altMedia}, distAgua=${geo.distAguaM}, distEnergia=${geo.distEnergiaM}`);
   } catch (err: any) {
     console.error(`[Geo Auto-Analysis] Erro no ativo ${assetId}:`, err.message);
   }
@@ -1772,13 +1674,13 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
                 classificacao, textura, aptidao,
                 ph: s.phh2o, argila: s.clay, areia: s.sand,
                 carbonoOrganico: s.soc, nitrogenio: s.nitrogen, cec: s.cec,
-                fonte: 'SoilGrids/ISRIC',
+                fonte: `SoilGrids/ISRIC — ${s.profundidade || 'profundidade não informada'}, ponto central, estimativa de modelo 250 m`,
               };
             }
             if (resultado.zarc.length > 0) {
               embrapaCompat.zoneamento = {
-                culturas: resultado.zarc.map((z: any) => ({
-                  nome: z.cultura, risco: z.aptidao === 'Apto' ? 'baixo' : z.aptidao === 'Inapto' ? 'alto' : 'medio',
+                culturas: resultado.zarc.filter((z: any) => z.aptidao).map((z: any) => ({
+                  nome: z.cultura, risco: z.aptidao === 'Apto' ? 'baixo' : z.aptidao === 'Inapto' ? 'alto' : '',
                   epocaPlantio: z.datasPlantio?.join(', ') || '', aptidao: z.aptidao,
                 })),
               };
@@ -1792,9 +1694,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
               };
             }
             if (resultado.clima) {
-              const tempMedia = resultado.clima.temperaturaMinMedia && resultado.clima.temperaturaMaxMedia
-                ? parseFloat(((resultado.clima.temperaturaMinMedia + resultado.clima.temperaturaMaxMedia) / 2).toFixed(1))
-                : 0;
+              const tempMedia = temperaturaMediaAnual(resultado.clima);
               embrapaCompat.clima = {
                 precipitacaoMedia: resultado.clima.precipitacaoMedia, temperaturaMedia: tempMedia,
                 temperaturaMax: resultado.clima.temperaturaMaxMedia, temperaturaMin: resultado.clima.temperaturaMinMedia,
@@ -1996,7 +1896,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
 
       const bbox = bboxFromGeometry(geometry);
       const [centLat, centLng] = centroidFromGeometry(geometry);
-      const samplePoints = samplePointsFromGeometry(geometry, 30);
+      const samplePoints = amostrarInterior(geometry, 100);
       const rawArea = parseFloat(req.body.areaHa);
       const areaHa = !isNaN(rawArea) && rawArea > 0 ? rawArea : null;
 
@@ -2010,7 +1910,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         const params = new URLSearchParams({
           service: "WFS", version: "2.0.0", request: "GetFeature",
           typeName, outputFormat: "application/json",
-          srsName: "EPSG:4326", count: "200",
+          srsName: "EPSG:4326", count: "1000",
           bbox: `${bboxExpanded},EPSG:4326`,
         });
         try {
@@ -2063,59 +1963,32 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         }
       }
 
-      const temRio = fonteHidro === "OSM"
-        ? (riosData?.features?.length || 0) > 0
-        : (riosDataIBGE?.features?.length || 0) > 0;
-      const temLago = fonteHidro === "OSM"
-        ? (riosData?.features || []).some((f: any) => f.properties?.natural === "water" || f.properties?.natural === "lake" || f.properties?.natural === "reservoir")
-        : (massasDataIBGE?.features?.length || 0) > 0;
-      const temEnergia = (energiaData?.features?.length || 0) > 0;
-      const qtdRios = fonteHidro === "OSM"
-        ? (riosData?.features || []).filter((f: any) => f.properties?.waterway).length
-        : (riosDataIBGE?.features?.length || 0);
-      const qtdLagos = fonteHidro === "OSM"
-        ? (riosData?.features || []).filter((f: any) => f.properties?.natural).length
-        : (massasDataIBGE?.features?.length || 0);
+      const aguaFinal = fonteHidro === "OSM"
+        ? separarAguaOsm(riosData)
+        : { rios: riosDataIBGE, lagos: massasDataIBGE };
+      const qtdRios = aguaFinal.rios?.features?.length || 0;
+      const qtdLagos = aguaFinal.lagos?.features?.length || 0;
       const qtdEnergia = energiaData?.features?.length || 0;
 
-      const allWaterData = fonteHidro === "OSM"
-        ? riosData
-        : {
-            type: "FeatureCollection",
-            features: [...(riosData?.features || []), ...(massasData?.features || [])],
-          };
-      const distAguaM = nearestFeatureDistance(centLat, centLng, allWaterData);
-      const distEnergiaM = nearestFeatureDistance(centLat, centLng, energiaData);
-      const scoreEnergia = classifyEnergia(distEnergiaM, temEnergia);
-
-      let altMin: number | null = null, altMax: number | null = null, altMedia: number | null = null;
-      let declivMed: number | null = null;
-      const elevs: number[] = [];
-      if (elevData?.results) {
-        for (const r of elevData.results) {
-          if (r.elevation != null) elevs.push(r.elevation);
-        }
-        if (elevs.length > 0) {
-          altMin = Math.min(...elevs);
-          altMax = Math.max(...elevs);
-          altMedia = Math.round(elevs.reduce((a, b) => a + b, 0) / elevs.length);
-          declivMed = estimateDeclivity(samplePoints, elevs);
-        }
-      }
-
-      const { score, breakdown } = computeGeoScore({
-        temRio, temLago, distAguaM,
-        temEnergia, distEnergiaM,
-        altMedia, declivMed,
-        areaHa,
+      const elevacoes = samplePoints.map((_, idx) => {
+        const e = elevData?.results?.[idx]?.elevation;
+        return typeof e === "number" ? e : null;
       });
+      const geo = resumirGeo({
+        geometry, areaHa, pontos: samplePoints, elevacoes,
+        rios: aguaFinal.rios, lagos: aguaFinal.lagos, energia: energiaData,
+      });
+      const {
+        temRio, temLago, temEnergia, distAguaM, distEnergiaM, scoreEnergia,
+        altMin, altMax, altMedia, declivMed, score, breakdown,
+      } = geo;
 
       const analysis = {
         temRio, temLago, temEnergia,
         qtdRios, qtdLagos, qtdEnergia,
         distAguaM, distEnergiaM, scoreEnergia,
         altMin, altMax, altMedia, declivMed,
-        score, breakdown,
+        score, breakdown, confianca: geo.confianca, semDado: geo.semDado,
         fonteHidro, fonteEnergia,
         centroid: { lat: centLat, lng: centLng },
         bbox,
@@ -2322,13 +2195,13 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
                 classificacao, textura, aptidao,
                 ph: s.phh2o, argila: s.clay, areia: s.sand,
                 carbonoOrganico: s.soc, nitrogenio: s.nitrogen, cec: s.cec,
-                fonte: 'SoilGrids/ISRIC',
+                fonte: `SoilGrids/ISRIC — ${s.profundidade || 'profundidade não informada'}, ponto central, estimativa de modelo 250 m`,
               };
             }
             if (resultado.zarc.length > 0) {
               embrapaCompat.zoneamento = {
-                culturas: resultado.zarc.map(z => ({
-                  nome: z.cultura, risco: z.aptidao === 'Apto' ? 'baixo' : z.aptidao === 'Inapto' ? 'alto' : 'medio',
+                culturas: resultado.zarc.filter(z => z.aptidao).map(z => ({
+                  nome: z.cultura, risco: z.aptidao === 'Apto' ? 'baixo' : z.aptidao === 'Inapto' ? 'alto' : '',
                   epocaPlantio: z.datasPlantio?.join(', ') || '', aptidao: z.aptidao,
                 })),
               };
@@ -2342,9 +2215,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
               };
             }
             if (resultado.clima) {
-              const tempMedia = resultado.clima.temperaturaMinMedia && resultado.clima.temperaturaMaxMedia
-                ? parseFloat(((resultado.clima.temperaturaMinMedia + resultado.clima.temperaturaMaxMedia) / 2).toFixed(1))
-                : 0;
+              const tempMedia = temperaturaMediaAnual(resultado.clima);
               embrapaCompat.clima = {
                 precipitacaoMedia: resultado.clima.precipitacaoMedia, temperaturaMedia: tempMedia,
                 temperaturaMax: resultado.clima.temperaturaMaxMedia, temperaturaMin: resultado.clima.temperaturaMinMedia,
@@ -2510,13 +2381,13 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
                 classificacao: s.soilClass || 'Não classificado', textura, aptidao,
                 ph: s.phh2o, argila: s.clay, areia: s.sand,
                 carbonoOrganico: s.soc, nitrogenio: s.nitrogen, cec: s.cec,
-                fonte: 'SoilGrids/ISRIC',
+                fonte: `SoilGrids/ISRIC — ${s.profundidade || 'profundidade não informada'}, ponto central, estimativa de modelo 250 m`,
               };
             }
             if (resultado.zarc?.length > 0) {
               embrapaCompat.zoneamento = {
-                culturas: resultado.zarc.map((z: any) => ({
-                  nome: z.cultura, risco: z.aptidao === 'Apto' ? 'baixo' : z.aptidao === 'Inapto' ? 'alto' : 'medio',
+                culturas: resultado.zarc.filter((z: any) => z.aptidao).map((z: any) => ({
+                  nome: z.cultura, risco: z.aptidao === 'Apto' ? 'baixo' : z.aptidao === 'Inapto' ? 'alto' : '',
                   epocaPlantio: z.datasPlantio?.join(', ') || '', aptidao: z.aptidao,
                 })),
               };
@@ -2637,6 +2508,9 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
             geoDistEnergiaM: analysis.distEnergiaM ?? null,
             geoScoreEnergia: scoreEn,
             geoScore: geoScoreVal,
+            geoScoreConfianca: analysis.confianca ?? null,
+            geoSemDado: analysis.semDado ?? null,
+            geoMetodo: GEO_METODO_ATUAL,
           })}::jsonb
           ${Object.keys(ceUpdate).length > 0 ? sql`, campos_especificos = campos_especificos || ${JSON.stringify(ceUpdate)}::jsonb` : sql``}
           ${resolvedMunicipio && !existing.municipio ? sql`, municipio = ${resolvedMunicipio}, location = ${resolvedMunicipio + '/' + (existing.estado || '')}` : sql``}
@@ -2676,7 +2550,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
 
       const whereClause = sql.join(conditions, sql` AND `);
 
-      let orderClause = sql`geo_score DESC`;
+      let orderClause = sql`geo_score DESC NULLS LAST`;
       if (orderBy === "area") orderClause = sql`area_ha DESC NULLS LAST`;
       else if (orderBy === "altitude") orderClause = sql`geo_alt_med ASC NULLS LAST`;
       else if (orderBy === "declivity") orderClause = sql`geo_decliv_med ASC NULLS LAST`;
@@ -2743,7 +2617,11 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
         WHERE org_id = ${orgId}
           AND type = 'TERRA'
           AND geom IS NOT NULL
-          AND (geo_analyzed_at IS NULL OR geo_analyzed_at < ${thirtyDaysAgo}::timestamp)
+          AND (
+            geo_analyzed_at IS NULL
+            OR geo_analyzed_at < ${thirtyDaysAgo}::timestamp
+            OR COALESCE(attributes_json->>'geoMetodo', '') <> ${GEO_METODO_ATUAL}
+          )
         LIMIT 50
       `);
 
@@ -2766,7 +2644,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
           const geometry = row.geometry;
           const bbox = bboxFromGeometry(geometry);
           const [centLat, centLng] = centroidFromGeometry(geometry);
-          const samplePts = samplePointsFromGeometry(geometry, 30);
+          const samplePts = amostrarInterior(geometry, 100);
 
           const bboxExp = (() => {
             const [minLng, minLat, maxLng, maxLat] = bbox.split(",").map(Number);
@@ -2778,7 +2656,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
             const params = new URLSearchParams({
               service: "WFS", version: "2.0.0", request: "GetFeature",
               typeName, outputFormat: "application/json",
-              srsName: "EPSG:4326", count: "200",
+              srsName: "EPSG:4326", count: "1000",
               bbox: `${bboxExp},EPSG:4326`,
             });
             try {
@@ -2821,47 +2699,30 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
             if (osmP && osmP.features?.length > 0) { energiaDataB = osmP; }
           }
 
-          const temRio = (riosDataB?.features?.length || 0) > 0;
-          const temLago = (massasDataB?.features?.length || 0) > 0;
-          const temEnergia = (energiaDataB?.features?.length || 0) > 0;
-
-          const allWater = { type: "FeatureCollection", features: [...(riosDataB?.features || []), ...(massasDataB?.features || [])] };
-          const distAguaM = nearestFeatureDistance(centLat, centLng, allWater);
-          const distEnergiaM = nearestFeatureDistance(centLat, centLng, energiaDataB);
-          const scoreEn = classifyEnergia(distEnergiaM, temEnergia);
-
-          let altMin: number | null = null, altMax: number | null = null, altMedia: number | null = null;
-          let declivMed: number | null = null;
-          if (elevData?.results) {
-            const elevs = elevData.results.map((r: any) => r.elevation).filter((e: any) => e != null);
-            if (elevs.length > 0) {
-              altMin = Math.min(...elevs);
-              altMax = Math.max(...elevs);
-              altMedia = Math.round(elevs.reduce((a: number, b: number) => a + b, 0) / elevs.length);
-              declivMed = estimateDeclivity(samplePts, elevs);
-            }
-          }
-
           const areaHa = row.area_ha ? parseFloat(row.area_ha) : null;
-          const { score: geoScoreVal } = computeGeoScore({
-            temRio, temLago, distAguaM,
-            temEnergia, distEnergiaM,
-            altMedia, declivMed, areaHa,
+          const elevacoes = samplePts.map((_, idx) => {
+            const e = elevData?.results?.[idx]?.elevation;
+            return typeof e === "number" ? e : null;
+          });
+          const geo = resumirGeo({
+            geometry, areaHa, pontos: samplePts, elevacoes,
+            rios: riosDataB, lagos: massasDataB, energia: energiaDataB,
           });
 
           await db.execute(sql`
             UPDATE assets SET
-              geo_alt_med = ${altMedia}, geo_alt_min = ${altMin}, geo_alt_max = ${altMax},
-              geo_decliv_med = ${declivMed},
-              geo_tem_rio = ${temRio}, geo_tem_lago = ${temLago}, geo_dist_agua_m = ${distAguaM},
-              geo_tem_energia = ${temEnergia}, geo_dist_energia_m = ${distEnergiaM},
-              geo_score_energia = ${scoreEn}, geo_score = ${geoScoreVal},
-              geo_analyzed_at = NOW()
+              geo_alt_med = ${geo.altMedia}, geo_alt_min = ${geo.altMin}, geo_alt_max = ${geo.altMax},
+              geo_decliv_med = ${geo.declivMed},
+              geo_tem_rio = ${geo.temRio}, geo_tem_lago = ${geo.temLago}, geo_dist_agua_m = ${geo.distAguaM},
+              geo_tem_energia = ${geo.temEnergia}, geo_dist_energia_m = ${geo.distEnergiaM},
+              geo_score_energia = ${geo.scoreEnergia}, geo_score = ${geo.score},
+              geo_analyzed_at = NOW(),
+              attributes_json = COALESCE(attributes_json, '{}'::jsonb) || ${JSON.stringify(atributosGeo(geo))}::jsonb
             WHERE id = ${row.id}
           `);
 
           analyzed++;
-          sendEvent({ type: "analyzed", assetId: row.id, score: geoScoreVal });
+          sendEvent({ type: "analyzed", assetId: row.id, score: geo.score });
         } catch (e: any) {
           errors++;
           sendEvent({ type: "error", assetId: row.id, message: e.message });
@@ -2916,13 +2777,13 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
               classificacao: s.soilClass || 'Não classificado', textura, aptidao,
               ph: s.phh2o, argila: s.clay, areia: s.sand,
               carbonoOrganico: s.soc, nitrogenio: s.nitrogen, cec: s.cec,
-              fonte: 'SoilGrids/ISRIC',
+              fonte: `SoilGrids/ISRIC — ${s.profundidade || 'profundidade não informada'}, ponto central, estimativa de modelo 250 m`,
             };
           }
           if (resultado.zarc?.length > 0) {
             embrapaCompat.zoneamento = {
-              culturas: resultado.zarc.map((z: any) => ({
-                nome: z.cultura, risco: z.aptidao === 'Apto' ? 'baixo' : z.aptidao === 'Inapto' ? 'alto' : 'medio',
+              culturas: resultado.zarc.filter((z: any) => z.aptidao).map((z: any) => ({
+                nome: z.cultura, risco: z.aptidao === 'Apto' ? 'baixo' : z.aptidao === 'Inapto' ? 'alto' : '',
                 epocaPlantio: z.datasPlantio?.join(', ') || '', aptidao: z.aptidao,
               })),
             };
@@ -2936,8 +2797,7 @@ export function registerGeoRoutes(app: Express, storage: IStorage, db: NodePgDat
             };
           }
           if (resultado.clima) {
-            const tempMedia = resultado.clima.temperaturaMinMedia && resultado.clima.temperaturaMaxMedia
-              ? parseFloat(((resultado.clima.temperaturaMinMedia + resultado.clima.temperaturaMaxMedia) / 2).toFixed(1)) : 0;
+            const tempMedia = temperaturaMediaAnual(resultado.clima);
             embrapaCompat.clima = {
               precipitacaoMedia: resultado.clima.precipitacaoMedia, temperaturaMedia: tempMedia,
               temperaturaMax: resultado.clima.temperaturaMaxMedia, temperaturaMin: resultado.clima.temperaturaMinMedia,

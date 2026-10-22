@@ -551,10 +551,10 @@ function secGeo(a: any): string {
     ["Score geográfico", a.geoScore != null ? `${fmtNum(a.geoScore)} / 100` : "—"],
     ["Altitude (média / mín / máx)", a.geoAltMed != null ? `${fmtNum(a.geoAltMed)} m / ${fmtNum(a.geoAltMin)} m / ${fmtNum(a.geoAltMax)} m` : "—"],
     ["Declividade média", a.geoDeclivityMed != null ? `${fmtNum(a.geoDeclivityMed)}%` : "—"],
-    ["Rio na propriedade", a.geoTemRio == null ? "—" : a.geoTemRio ? "Sim" : "Não"],
-    ["Lago/açude", a.geoTemLago == null ? "—" : a.geoTemLago ? "Sim" : "Não"],
+    ["Rio na propriedade", a.geoTemRio == null ? "—" : a.geoTemRio ? "Sim" : "Não detectado"],
+    ["Lago/açude", a.geoTemLago == null ? "—" : a.geoTemLago ? "Sim" : "Não detectado"],
     ["Distância até água", a.geoDistAguaM != null ? `${fmtNum(a.geoDistAguaM)} m` : "—"],
-    ["Energia elétrica", a.geoTemEnergia == null ? "—" : a.geoTemEnergia ? "Sim" : "Não"],
+    ["Energia elétrica", a.geoTemEnergia == null ? "—" : a.geoTemEnergia ? "Sim (rede mapeada até 1 km)" : "Não detectada"],
     ["Distância até energia", a.geoDistEnergiaM != null ? `${fmtNum(a.geoDistEnergiaM)} m` : "—"],
     ["Analisado em", fmtDate(a.geoAnalyzedAt)],
   ]));

@@ -9,7 +9,7 @@ import { eq, and } from "drizzle-orm";
 import { fetchAnmProcessoGeometryFallback } from "../lib/anm-fallback";
 import { resolveAssetUfs } from "../lib/uf";
 import { getOrgId } from "../lib/tenant";
-import { enriquecerFazenda, consultarNDVIGrid, consultarSIGEFPublicoPorCoordenadas, consultarCCIRViaSICAR, consultarSIGEFPorDocumento, isSicarDisponivel, logSicarWarningOnce } from "../enrichment/agro";
+import { enriquecerFazenda, consultarNDVIGrid, consultarSIGEFPublicoPorCoordenadas, consultarCCIRViaSICAR, consultarSIGEFPorDocumento, isSicarDisponivel, logSicarWarningOnce, temperaturaMediaAnual } from "../enrichment/agro";
 import { sql } from "drizzle-orm";
 import { consultarEmbargoIbama, consultarEmbargoIbamaCoordenadas, consultarEmbargoIbamaMunicipio } from "../lib/ibama";
 import { getUsoTerraMapBiomas } from "../lib/mapbiomas";
@@ -1098,15 +1098,18 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
           carbonoOrganico: s.soc,
           nitrogenio: s.nitrogen,
           cec: s.cec,
-          fonte: 'SoilGrids/ISRIC',
+          fonte: `SoilGrids/ISRIC — ${s.profundidade || 'profundidade não informada'}, ponto central, estimativa de modelo 250 m`,
         };
       }
 
-      if (resultado.zarc.length > 0) {
+      // Só entram culturas com janela de plantio no ZARC do município. Antes, sem aptidão definida, o
+      // risco virava "medio" — um valor inventado para quem simplesmente não tinha dado.
+      const zarcComJanela = resultado.zarc.filter(z => z.aptidao);
+      if (zarcComJanela.length > 0) {
         embrapaCompat.zoneamento = {
-          culturas: resultado.zarc.map(z => ({
+          culturas: zarcComJanela.map(z => ({
             nome: z.cultura,
-            risco: z.aptidao === 'Apto' ? 'baixo' : z.aptidao === 'Inapto' ? 'alto' : 'medio',
+            risco: z.aptidao === 'Apto' ? 'baixo' : z.aptidao === 'Inapto' ? 'alto' : '',
             epocaPlantio: z.datasPlantio?.join(', ') || '',
             aptidao: z.aptidao,
           })),
@@ -1121,21 +1124,13 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
           fonte: resultado.ndviSatveg.fonte,
           periodo: `${resultado.ndviSatveg.dataInicio} a ${resultado.ndviSatveg.dataFim}`,
         };
-      } else if (resultado.solo?.phh2o !== null || resultado.solo?.clay !== null) {
-        const ndviEstimado = Math.min(1, Math.max(0,
-          0.5 + (resultado.solo?.soc ? resultado.solo.soc / 100 : 0) + (resultado.solo?.clay ? (resultado.solo.clay > 15 && resultado.solo.clay < 60 ? 0.1 : -0.05) : 0)
-        ));
-        embrapaCompat.ndvi = {
-          ndvi: parseFloat(ndviEstimado.toFixed(2)),
-          classificacao: ndviEstimado >= 0.7 ? 'Vegetação densa e saudável' : ndviEstimado >= 0.4 ? 'Vegetação moderada' : 'Vegetação escassa',
-          fonte: 'Estimado (SoilGrids)',
-        };
       }
+      // Sem NDVI de satélite (SATVeg) NÃO se inventa índice: a fórmula antiga derivava um "NDVI"
+      // do carbono do solo (0.5 + carbono/100 ± 0.1) e o classificava como "vegetação densa/moderada".
+      // Isso não é medição de vegetação. Sem dado real, o campo fica ausente.
 
       if (resultado.clima) {
-        const tempMedia = resultado.clima.temperaturaMinMedia && resultado.clima.temperaturaMaxMedia
-          ? parseFloat(((resultado.clima.temperaturaMinMedia + resultado.clima.temperaturaMaxMedia) / 2).toFixed(1))
-          : 0;
+        const tempMedia = temperaturaMediaAnual(resultado.clima);
         embrapaCompat.clima = {
           precipitacaoMedia: resultado.clima.precipitacaoMedia,
           temperaturaMedia: tempMedia,
@@ -1150,13 +1145,9 @@ export function registerAssetRoutes(app: Express, storage: IStorage, db: NodePgD
           mesesChuvosos: resultado.clima.mesesChuvosos,
           anoReferencia: resultado.clima.anoReferencia,
         };
-      } else {
-        embrapaCompat.clima = {
-          precipitacaoMedia: 0,
-          temperaturaMedia: 0,
-          indiceSeca: resultado.resumo || '',
-        };
       }
+      // Consulta de clima falhou: o campo fica ausente. Antes gravava precipitação 0 / temperatura 0,
+      // que a tela exibia como "sem chuva" em vez de "sem dado".
 
       embrapaCompat.scoreAgro = resultado.scoreAgro;
       embrapaCompat.resumo = resultado.resumo;

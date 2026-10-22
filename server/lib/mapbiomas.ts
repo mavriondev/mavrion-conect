@@ -13,7 +13,12 @@ export interface MapBiomasResult {
     para: string;
     ano: number;
   }>;
+  /** Contagem de alertas. Só vale quando `alertasConsultados` é true; caso contrário é 0 por falta de resposta, não por ausência. */
   alertasDesmatamento: number;
+  /** false = a consulta de alertas falhou/não respondeu — NÃO significa "sem alertas". */
+  alertasConsultados: boolean;
+  /** "propriedade" = alertas do CAR informado; "regiao" = alertas numa caixa de ~4 km (podem ser de vizinhos). */
+  alertasEscopo: "propriedade" | "regiao";
   areaDesmatadaHa: number;
   bioma: string;
   bacia: string;
@@ -200,6 +205,7 @@ export async function getUsoTerraMapBiomas(
     let classeAtual = 0;
     let usoAtual = "Não identificado";
     let embargoMapbiomas = 0;
+    let alertasConsultados = false;
     let propriedade: MapBiomasResult["propriedade"] = null;
 
     if (token) {
@@ -283,12 +289,14 @@ export async function getUsoTerraMapBiomas(
       }
 
       if (alertsData?.alerts?.collection) {
+        alertasConsultados = true;
         const collection = alertsData.alerts.collection;
         alertCount = collection.length;
         totalArea = collection.reduce((s: number, a: any) => s + (a.areaHa || 0), 0);
       }
 
       if (ruralData?.ruralProperty) {
+        alertasConsultados = true;
         const rp = ruralData.ruralProperty;
         const rpAlerts = rp.alerts || [];
         propriedade = {
@@ -317,6 +325,8 @@ export async function getUsoTerraMapBiomas(
       historico,
       transicoes,
       alertasDesmatamento: alertCount,
+      alertasConsultados,
+      alertasEscopo: carCode && propriedade ? "propriedade" : "regiao",
       areaDesmatadaHa: Math.round(totalArea * 100) / 100,
       bioma,
       bacia,
@@ -331,4 +341,36 @@ export async function getUsoTerraMapBiomas(
     console.error("[MapBiomas] Erro na consulta:", (err as Error).message);
     return null;
   }
+}
+
+/**
+ * Classe de uso de cada ponto (ano mais recente da série), consultando o MapBiomas ponto a ponto.
+ * Devolve um array alinhado aos pontos de entrada: número da classe, ou null se aquele ponto não respondeu.
+ * Retorna null se não há credencial/token (nenhum ponto foi consultável).
+ */
+export async function classesDeUsoNosPontos(
+  pontos: Array<[number, number]>, // [lat, lng]
+): Promise<{ classes: Array<number | null>; ano: number | null } | null> {
+  const token = await getToken();
+  if (!token) return null;
+  const classes: Array<number | null> = new Array(pontos.length).fill(null);
+  let ano: number | null = null;
+  const LOTE = 4;
+  const d = 0.0002;
+  for (let i = 0; i < pontos.length; i += LOTE) {
+    await Promise.all(pontos.slice(i, i + LOTE).map(async ([lat, lng], k) => {
+      const q = `{ pointInformation(boundingBox: { swLat: ${lat - d}, swLng: ${lng - d}, neLat: ${lat + d}, neLng: ${lng + d} }) { historyCoverage { history } } }`;
+      const r = await gqlQuery(token, q);
+      const h = r?.pointInformation?.historyCoverage?.history;
+      if (h && typeof h === "object") {
+        const parsed = parseHistorico(h);
+        if (parsed.classeAtual > 0) {
+          classes[i + k] = parsed.classeAtual;
+          const a = parsed.historico[parsed.historico.length - 1]?.ano;
+          if (a && (ano === null || a > ano)) ano = a;
+        }
+      }
+    }));
+  }
+  return { classes, ano };
 }
