@@ -12,15 +12,11 @@ import type { SobreposicaoArea } from "./due-diligence-fundiaria";
 import { getUsoTerraMapBiomas, classesDeUsoNosPontos } from "./mapbiomas";
 import { amostrarInterior } from "./geo-medicao";
 import { resumirUsoSolo, descreverUsoSolo } from "./uso-solo-amostragem";
-import { descobrirCamadaWfs } from "./wfs-descoberta";
+import { extensaoCamadaWfs, caixaDentroDaExtensao } from "./wfs-descoberta";
 import { descreverFonteWfs } from "./restricoes-wfs";
 import { getNDVISentinel } from "./sentinel";
-import { distanciaAtePoligonoM } from "./geo-medicao";
 import { verificacaoAutomatica, type Verificacao } from "./confianca-dados";
-
-const IBGE_WFS = "https://geoservicos.ibge.gov.br/geoserver/wfs";
-const LIMITE_FEICOES_WFS = 1000;
-const MARGEM_LOGISTICA_GRAUS = 0.3; // ~33 km
+import { IBGE_WFS, consultarWfsIbge, verificarMalha } from "./logistica-ibge";
 
 export interface AtivoGeo {
   id: number;
@@ -50,24 +46,6 @@ export async function carregarAtivoGeo(assetId: number, orgId: number): Promise<
     lon: Number(r.lon),
     carCodImovel: r.car_cod_imovel || null,
   };
-}
-
-/** Consulta WFS do IBGE distinguindo FALHA (ok:false) de "nenhuma feição" (ok:true, features vazio). */
-async function wfsIbge(typeName: string, bbox: string): Promise<{ ok: boolean; features: any[]; truncado: boolean }> {
-  try {
-    const params = new URLSearchParams({
-      service: "WFS", version: "2.0.0", request: "GetFeature", typeName,
-      outputFormat: "application/json", srsName: "EPSG:4326", count: String(LIMITE_FEICOES_WFS),
-      bbox: `${bbox},EPSG:4326`,
-    });
-    const r = await fetch(`${IBGE_WFS}?${params}`, { signal: AbortSignal.timeout(25000) });
-    if (!r.ok) return { ok: false, features: [], truncado: false };
-    const j: any = await r.json();
-    if (!Array.isArray(j?.features)) return { ok: false, features: [], truncado: false };
-    return { ok: true, features: j.features, truncado: j.features.length >= LIMITE_FEICOES_WFS };
-  } catch {
-    return { ok: false, features: [], truncado: false };
-  }
 }
 
 function indeterminada(chave: string, fonte: string, observacao?: string): Verificacao {
@@ -209,35 +187,12 @@ async function verificarNdvi(a: AtivoGeo): Promise<Verificacao> {
 }
 
 // ---------- logística ----------
+// Rodovia/ferrovia pela BC250 2025 nacional, com controle positivo e checagem de cobertura (logistica-ibge.ts).
 async function verificarLogistica(a: AtivoGeo): Promise<Verificacao[]> {
-  const bbox = `${a.bbox.minLon - MARGEM_LOGISTICA_GRAUS},${a.bbox.minLat - MARGEM_LOGISTICA_GRAUS},${a.bbox.maxLon + MARGEM_LOGISTICA_GRAUS},${a.bbox.maxLat + MARGEM_LOGISTICA_GRAUS}`;
-  const defs: Array<{ chave: string; layer: string; nome: string }> = [
-    { chave: "logistica_rodovia", layer: "CCAR:BC100_Trecho_Rodoviario_L", nome: "Rodovia" },
-    { chave: "logistica_ferrovia", layer: "CCAR:BC100_Trecho_Ferroviario_L", nome: "Ferrovia" },
-  ];
   const out: Verificacao[] = [];
-  for (const d of defs) {
-    let layerUsada = d.layer;
-    let w = await wfsIbge(layerUsada, bbox);
-    if (!w.ok) {
-      // O nome da camada pode ter mudado: procura no GetCapabilities e tenta uma vez.
-      const achada = await descobrirCamadaWfs(IBGE_WFS, d.chave === "logistica_rodovia" ? /rodovi/i : /ferrovi/i, { preferir: /BC100.*_L$/i, evitar: /ponto|_P$|_A$/i });
-      if (achada && achada !== layerUsada) { layerUsada = achada; w = await wfsIbge(layerUsada, bbox); }
-    }
-    if (!w.ok) { out.push(indeterminada(d.chave, `IBGE BC100 (${layerUsada})`, "Camada não respondeu.")); continue; }
-    const dist = distanciaAtePoligonoM(a.geojson, { type: "FeatureCollection", features: w.features });
-    if (dist === null) {
-      out.push(verificacaoAutomatica({
-        chave: d.chave, achado: "nao_detectado", fonte: `IBGE BC100 (${layerUsada})`,
-        observacao: `Nenhuma ${d.nome.toLowerCase()} mapeada num raio de ~33 km.`,
-      }));
-      continue;
-    }
-    out.push(verificacaoAutomatica({
-      chave: d.chave, achado: "detectado", valor: Math.round(dist), unidade: "m", fonte: `IBGE BC100 (${layerUsada})`,
-      observacao: `Distância da divisa até a feição mais próxima. A camada inclui vias não pavimentadas e escala 1:100.000; não indica qualidade de acesso.` +
-        (w.truncado ? " Limite de feições da consulta atingido — a distância pode estar superestimada." : ""),
-    }));
+  for (const malha of ["rodovia", "ferrovia"] as const) {
+    try { out.push(await verificarMalha(a, malha)); }
+    catch (err) { out.push(indeterminada(`logistica_${malha}`, "IBGE BC250 2025", `Consulta falhou: ${(err as Error).message}`)); }
   }
   return out;
 }
@@ -245,13 +200,19 @@ async function verificarLogistica(a: AtivoGeo): Promise<Verificacao[]> {
 // ---------- APP mínima estimada ----------
 async function verificarApp(a: AtivoGeo): Promise<Verificacao> {
   const FONTE = "IBGE BC100 (drenagem) + PostGIS";
-  const bbox = `${a.bbox.minLon},${a.bbox.minLat},${a.bbox.maxLon},${a.bbox.maxLat}`;
-  const w = await wfsIbge("CCAR:BC100_Trecho_Drenagem_L", bbox);
+  const CAMADA = "CCAR:BC100_Trecho_Drenagem_L";
+  const w = await consultarWfsIbge(CAMADA, a.bbox);
   if (!w.ok) return indeterminada("app_estimada", FONTE, "Camada de drenagem não respondeu.");
   const geoms = w.features.map((f: any) => f?.geometry).filter((g: any) => g && (g.type === "LineString" || g.type === "MultiLineString"));
   const aviso = "Mínimo: faixa de 30 m de cada lado dos cursos d'água mapeados (escala 1:100.000). Não inclui nascentes, rios largos, lagos, topo de morro nem declives; a APP real vem do CAR/levantamento.";
   if (geoms.length === 0) {
-    return verificacaoAutomatica({ chave: "app_estimada", achado: "nao_detectado", fonte: FONTE, observacao: "Nenhum curso d'água mapeado na propriedade." });
+    // A camada BC100 genérica de drenagem só cobre o Centro-Oeste; fora da extensão publicada, vazio = sem cobertura.
+    const extensao = await extensaoCamadaWfs(IBGE_WFS, CAMADA);
+    if (!extensao) return indeterminada("app_estimada", FONTE, "Nenhum curso d'água devolvido e extensão da camada desconhecida — não dá para distinguir ausência de falta de cobertura.");
+    if (!caixaDentroDaExtensao(a.bbox, extensao)) {
+      return indeterminada("app_estimada", FONTE, `Imóvel fora da extensão publicada da camada de drenagem BC100 (lon ${extensao.minLon.toFixed(1)}..${extensao.maxLon.toFixed(1)}, lat ${extensao.minLat.toFixed(1)}..${extensao.maxLat.toFixed(1)}) — sem cobertura, não ausência de cursos d'água.`);
+    }
+    return verificacaoAutomatica({ chave: "app_estimada", achado: "nao_detectado", fonte: FONTE, observacao: "Nenhum curso d'água mapeado na propriedade (camada cobre a área)." });
   }
   try {
     const rows = await db.execute(sql`

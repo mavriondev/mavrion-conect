@@ -1,0 +1,803 @@
+{
+  "geradoEm": "2026-10-22T04:11:33.493Z",
+  "fonteHub": "/var/www/mavrion-api/fonte/src/index.cjs",
+  "tilesDir": "/var/www/mavrion-api/srtm_tiles",
+  "imoveis": [
+    {
+      "id": "529775",
+      "uf": "SP",
+      "municipio": "Arco-íris",
+      "relevo": "plana",
+      "area_ha": 60.3252,
+      "declividade_producao": 4.51,
+      "antigo_pct": 4.56,
+      "antigo_pontos": 9,
+      "horn_pct": 5.65,
+      "horn_pixels": 75,
+      "horn_dentro": 75,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 7.24,
+      "topodata_pixels": 683,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "21S51_"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_26_17"
+      ],
+      "erro_antigo": -2.68,
+      "erro_horn": -1.59
+    },
+    {
+      "id": "854189",
+      "uf": "SP",
+      "municipio": "Roseira",
+      "relevo": "plana",
+      "area_ha": 86.7747,
+      "declividade_producao": 1.38,
+      "antigo_pct": 0.61,
+      "antigo_pontos": 7,
+      "horn_pct": 1.25,
+      "horn_pixels": 108,
+      "horn_dentro": 108,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 2.74,
+      "topodata_pixels": 988,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "22S465"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_17"
+      ],
+      "erro_antigo": -2.13,
+      "erro_horn": -1.49
+    },
+    {
+      "id": "725403",
+      "uf": "SP",
+      "municipio": "Macaubal",
+      "relevo": "plana",
+      "area_ha": 89.7474,
+      "declividade_producao": 0.98,
+      "antigo_pct": 3.43,
+      "antigo_pontos": 9,
+      "horn_pct": 5.73,
+      "horn_pixels": 115,
+      "horn_dentro": 115,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 6.79,
+      "topodata_pixels": 1018,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "20S51_"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_17"
+      ],
+      "erro_antigo": -3.36,
+      "erro_horn": -1.06
+    },
+    {
+      "id": "700465",
+      "uf": "SP",
+      "municipio": "Jardinópolis",
+      "relevo": "ondulada",
+      "area_ha": 132.8706,
+      "declividade_producao": 3.06,
+      "antigo_pct": 1.67,
+      "antigo_pontos": 7,
+      "horn_pct": 3.58,
+      "horn_pixels": 162,
+      "horn_dentro": 162,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 4.35,
+      "topodata_pixels": 1495,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "20S48_"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_17"
+      ],
+      "erro_antigo": -2.68,
+      "erro_horn": -0.77
+    },
+    {
+      "id": "555768",
+      "uf": "SP",
+      "municipio": "Bofete",
+      "relevo": "ondulada",
+      "area_ha": 192.9271,
+      "declividade_producao": 8.87,
+      "antigo_pct": 8.08,
+      "antigo_pontos": 9,
+      "horn_pct": 13.36,
+      "horn_pixels": 241,
+      "horn_dentro": 241,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 17.62,
+      "topodata_pixels": 2198,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "23S495"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_17"
+      ],
+      "erro_antigo": -9.54,
+      "erro_horn": -4.26
+    },
+    {
+      "id": "780437",
+      "uf": "SP",
+      "municipio": "Palmital",
+      "relevo": "ondulada",
+      "area_ha": 54.4804,
+      "declividade_producao": 3.62,
+      "antigo_pct": 2.19,
+      "antigo_pontos": 9,
+      "horn_pct": 3.24,
+      "horn_pixels": 70,
+      "horn_dentro": 70,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 4.14,
+      "topodata_pixels": 619,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "22S51_"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_26_17"
+      ],
+      "erro_antigo": -1.95,
+      "erro_horn": -0.9
+    },
+    {
+      "id": "597987",
+      "uf": "SP",
+      "municipio": "Corumbataí",
+      "relevo": "montanhosa",
+      "area_ha": 68.3611,
+      "declividade_producao": 32.15,
+      "antigo_pct": 16.2,
+      "antigo_pontos": 12,
+      "horn_pct": 23.11,
+      "horn_pixels": 90,
+      "horn_dentro": 90,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 28.61,
+      "topodata_pixels": 776,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "22S48_"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_17"
+      ],
+      "erro_antigo": -12.41,
+      "erro_horn": -5.5
+    },
+    {
+      "id": "874317",
+      "uf": "SP",
+      "municipio": "Santo Antônio da Alegria",
+      "relevo": "montanhosa",
+      "area_ha": 57.9285,
+      "declividade_producao": 40.33,
+      "antigo_pct": 7.25,
+      "antigo_pontos": 9,
+      "horn_pct": 12.97,
+      "horn_pixels": 74,
+      "horn_dentro": 74,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 14.33,
+      "topodata_pixels": 653,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "20S48_"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_17"
+      ],
+      "erro_antigo": -7.08,
+      "erro_horn": -1.36
+    },
+    {
+      "id": "135128214",
+      "uf": "SP",
+      "municipio": "Pedregulho",
+      "relevo": "montanhosa",
+      "area_ha": 56.9996,
+      "declividade_producao": 18.09,
+      "antigo_pct": 4.26,
+      "antigo_pontos": 8,
+      "horn_pct": 8.95,
+      "horn_pixels": 71,
+      "horn_dentro": 71,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 11.9,
+      "topodata_pixels": 642,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "20S48_"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_17"
+      ],
+      "erro_antigo": -7.64,
+      "erro_horn": -2.95
+    },
+    {
+      "id": "2174402",
+      "uf": "MG",
+      "municipio": "Verdelândia",
+      "relevo": "plana",
+      "area_ha": 109.8353,
+      "declividade_producao": 1.73,
+      "antigo_pct": 1.07,
+      "antigo_pontos": 16,
+      "horn_pct": 1.36,
+      "horn_pixels": 127,
+      "horn_dentro": 127,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 2.36,
+      "topodata_pixels": 1194,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "15S45_"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_28_16"
+      ],
+      "erro_antigo": -1.29,
+      "erro_horn": -1
+    },
+    {
+      "id": "1152667",
+      "uf": "MG",
+      "municipio": "Bonito de Minas",
+      "relevo": "plana",
+      "area_ha": 56.0572,
+      "declividade_producao": 0.78,
+      "antigo_pct": 0.46,
+      "antigo_pontos": 5,
+      "horn_pct": 0.86,
+      "horn_pixels": 66,
+      "horn_dentro": 66,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 2.33,
+      "topodata_pixels": 603,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "15S465",
+        "14S465"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_16",
+        "srtm_27_15"
+      ],
+      "erro_antigo": -1.87,
+      "erro_horn": -1.47
+    },
+    {
+      "id": "1293060",
+      "uf": "MG",
+      "municipio": "Comendador Gomes",
+      "relevo": "plana",
+      "area_ha": 70.1355,
+      "declividade_producao": 2.47,
+      "antigo_pct": 3.85,
+      "antigo_pontos": 8,
+      "horn_pct": 5.81,
+      "horn_pixels": 87,
+      "horn_dentro": 87,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 7.82,
+      "topodata_pixels": 783,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "19S495"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_16"
+      ],
+      "erro_antigo": -3.97,
+      "erro_horn": -2.01
+    },
+    {
+      "id": "1898460",
+      "uf": "MG",
+      "municipio": "Poço Fundo",
+      "relevo": "ondulada",
+      "area_ha": 50.4293,
+      "declividade_producao": 5.2,
+      "antigo_pct": 6.44,
+      "antigo_pontos": 12,
+      "horn_pct": 11.05,
+      "horn_pixels": 63,
+      "horn_dentro": 63,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 13.31,
+      "topodata_pixels": 574,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "21S465"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_17"
+      ],
+      "erro_antigo": -6.87,
+      "erro_horn": -2.26
+    },
+    {
+      "id": "2145406",
+      "uf": "MG",
+      "municipio": "Ubaí",
+      "relevo": "ondulada",
+      "area_ha": 96.5342,
+      "declividade_producao": 2.05,
+      "antigo_pct": 1.92,
+      "antigo_pontos": 5,
+      "horn_pct": 2.53,
+      "horn_pixels": 119,
+      "horn_dentro": 119,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 3.72,
+      "topodata_pixels": 1059,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "16S45_"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_28_16"
+      ],
+      "erro_antigo": -1.8,
+      "erro_horn": -1.19
+    },
+    {
+      "id": "1398591",
+      "uf": "MG",
+      "municipio": "Espírito Santo do Dourado",
+      "relevo": "ondulada",
+      "area_ha": 93.1668,
+      "declividade_producao": 5.36,
+      "antigo_pct": 6.14,
+      "antigo_pontos": 12,
+      "horn_pct": 9.68,
+      "horn_pixels": 117,
+      "horn_dentro": 117,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 12.84,
+      "topodata_pixels": 1058,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "21S465"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_17"
+      ],
+      "erro_antigo": -6.7,
+      "erro_horn": -3.16
+    },
+    {
+      "id": "1590733",
+      "uf": "MG",
+      "municipio": "Jequitinhonha",
+      "relevo": "montanhosa",
+      "area_ha": 58.3439,
+      "declividade_producao": 34.62,
+      "antigo_pct": 14.93,
+      "antigo_pontos": 7,
+      "horn_pct": 21.57,
+      "horn_pixels": 71,
+      "horn_dentro": 71,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 24.8,
+      "topodata_pixels": 638,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "16S42_"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_28_16"
+      ],
+      "erro_antigo": -9.87,
+      "erro_horn": -3.23
+    },
+    {
+      "id": "1586572",
+      "uf": "MG",
+      "municipio": "Jequeri",
+      "relevo": "montanhosa",
+      "area_ha": 52.3003,
+      "declividade_producao": 25.39,
+      "antigo_pct": 20.92,
+      "antigo_pontos": 11,
+      "horn_pct": 28.87,
+      "horn_pixels": 65,
+      "horn_dentro": 65,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 33.4,
+      "topodata_pixels": 586,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "20S435"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_28_17"
+      ],
+      "erro_antigo": -12.48,
+      "erro_horn": -4.53
+    },
+    {
+      "id": "1564131",
+      "uf": "MG",
+      "municipio": "Januária",
+      "relevo": "montanhosa",
+      "area_ha": 105.7299,
+      "declividade_producao": 19,
+      "antigo_pct": 10.93,
+      "antigo_pontos": 6,
+      "horn_pct": 12.48,
+      "horn_pixels": 129,
+      "horn_dentro": 129,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 13.89,
+      "topodata_pixels": 1153,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "15S45_"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_28_16"
+      ],
+      "erro_antigo": -2.96,
+      "erro_horn": -1.41
+    },
+    {
+      "id": "9677315",
+      "uf": "SC",
+      "municipio": "Laguna",
+      "relevo": "plana",
+      "area_ha": 63.2229,
+      "declividade_producao": 0.43,
+      "antigo_pct": 0.57,
+      "antigo_pontos": 9,
+      "horn_pct": 1.04,
+      "horn_pixels": 85,
+      "horn_dentro": 85,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 2,
+      "topodata_pixels": 751,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "28S495"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_18"
+      ],
+      "erro_antigo": -1.43,
+      "erro_horn": -0.96
+    },
+    {
+      "id": "9866163",
+      "uf": "SC",
+      "municipio": "Turvo",
+      "relevo": "plana",
+      "area_ha": 68.0997,
+      "declividade_producao": 0.59,
+      "antigo_pct": 0.68,
+      "antigo_pontos": 9,
+      "horn_pct": 1.68,
+      "horn_pixels": 90,
+      "horn_dentro": 90,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 2.63,
+      "topodata_pixels": 812,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "28S51_"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_18"
+      ],
+      "erro_antigo": -1.95,
+      "erro_horn": -0.95
+    },
+    {
+      "id": "9744405",
+      "uf": "SC",
+      "municipio": "Paulo Lopes",
+      "relevo": "plana",
+      "area_ha": 72.4261,
+      "declividade_producao": 0.61,
+      "antigo_pct": 1.59,
+      "antigo_pontos": 7,
+      "horn_pct": 2.37,
+      "horn_pixels": 95,
+      "horn_dentro": 95,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 3.62,
+      "topodata_pixels": 863,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "27S495"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_18"
+      ],
+      "erro_antigo": -2.03,
+      "erro_horn": -1.25
+    },
+    {
+      "id": "9828581",
+      "uf": "SC",
+      "municipio": "São José do Cerrito",
+      "relevo": "ondulada",
+      "area_ha": 148.4291,
+      "declividade_producao": 4.84,
+      "antigo_pct": 4.32,
+      "antigo_pontos": 9,
+      "horn_pct": 7.75,
+      "horn_pixels": 196,
+      "horn_dentro": 196,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 10.66,
+      "topodata_pixels": 1763,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "27S51_"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_26_18"
+      ],
+      "erro_antigo": -6.34,
+      "erro_horn": -2.91
+    },
+    {
+      "id": "9880473",
+      "uf": "SC",
+      "municipio": "Videira",
+      "relevo": "ondulada",
+      "area_ha": 72.4657,
+      "declividade_producao": 5.58,
+      "antigo_pct": 11.5,
+      "antigo_pontos": 10,
+      "horn_pct": 15.07,
+      "horn_pixels": 94,
+      "horn_dentro": 94,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 21.11,
+      "topodata_pixels": 856,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "27S525"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_26_18"
+      ],
+      "erro_antigo": -9.61,
+      "erro_horn": -6.04
+    },
+    {
+      "id": "9733049",
+      "uf": "SC",
+      "municipio": "Palma Sola",
+      "relevo": "ondulada",
+      "area_ha": 315.861,
+      "declividade_producao": 2.42,
+      "antigo_pct": 3.45,
+      "antigo_pontos": 5,
+      "horn_pct": 7.44,
+      "horn_pixels": 410,
+      "horn_dentro": 410,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 10.71,
+      "topodata_pixels": 3705,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "26S54_"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_26_18"
+      ],
+      "erro_antigo": -7.26,
+      "erro_horn": -3.27
+    },
+    {
+      "id": "9821686",
+      "uf": "SC",
+      "municipio": "São Joaquim",
+      "relevo": "montanhosa",
+      "area_ha": 85.4662,
+      "declividade_producao": 12.24,
+      "antigo_pct": 14.28,
+      "antigo_pontos": 11,
+      "horn_pct": 18.18,
+      "horn_pixels": 114,
+      "horn_dentro": 114,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 20.06,
+      "topodata_pixels": 1013,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "28S51_"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_18"
+      ],
+      "erro_antigo": -5.78,
+      "erro_horn": -1.88
+    },
+    {
+      "id": "9879181",
+      "uf": "SC",
+      "municipio": "Vidal Ramos",
+      "relevo": "montanhosa",
+      "area_ha": 87.3372,
+      "declividade_producao": 19.98,
+      "antigo_pct": 4.21,
+      "antigo_pontos": 13,
+      "horn_pct": 7.64,
+      "horn_pixels": 117,
+      "horn_dentro": 117,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 11.19,
+      "topodata_pixels": 1035,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "27S495"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_18"
+      ],
+      "erro_antigo": -6.98,
+      "erro_horn": -3.55
+    },
+    {
+      "id": "9488810",
+      "uf": "SC",
+      "municipio": "Anitápolis",
+      "relevo": "montanhosa",
+      "area_ha": 226.0863,
+      "declividade_producao": 11.18,
+      "antigo_pct": 5.19,
+      "antigo_pontos": 10,
+      "horn_pct": 12.44,
+      "horn_pixels": 303,
+      "horn_dentro": 303,
+      "horn_sem_dado": 0,
+      "horn_fora_janela": 0,
+      "topodata_pct": 16.12,
+      "topodata_pixels": 2674,
+      "topodata_sem_dado": 0,
+      "topodata_folhas": [
+        "27S495"
+      ],
+      "topodata_erros": [],
+      "tiles_srtm": [
+        "srtm_27_18"
+      ],
+      "erro_antigo": -10.93,
+      "erro_horn": -3.68
+    }
+  ],
+  "resumo": {
+    "comparaveis": 27,
+    "media_antigo": 5.95,
+    "media_horn": 9.1,
+    "media_topodata": 11.49,
+    "erro_antigo_vs_topodata": {
+      "n": 27,
+      "vies": -5.54,
+      "mae": 5.54,
+      "rmse": 6.56
+    },
+    "erro_horn_vs_topodata": {
+      "n": 27,
+      "vies": -2.39,
+      "mae": 2.39,
+      "rmse": 2.8
+    },
+    "por_relevo": {
+      "plana": {
+        "n": 9,
+        "erro_antigo": {
+          "n": 9,
+          "vies": -2.3,
+          "mae": 2.3,
+          "rmse": 2.45
+        },
+        "erro_horn": {
+          "n": 9,
+          "vies": -1.31,
+          "mae": 1.31,
+          "rmse": 1.35
+        }
+      },
+      "ondulada": {
+        "n": 9,
+        "erro_antigo": {
+          "n": 9,
+          "vies": -5.86,
+          "mae": 5.86,
+          "rmse": 6.52
+        },
+        "erro_horn": {
+          "n": 9,
+          "vies": -2.75,
+          "mae": 2.75,
+          "rmse": 3.19
+        }
+      },
+      "montanhosa": {
+        "n": 9,
+        "erro_antigo": {
+          "n": 9,
+          "vies": -8.46,
+          "mae": 8.46,
+          "rmse": 8.98
+        },
+        "erro_horn": {
+          "n": 9,
+          "vies": -3.12,
+          "mae": 3.12,
+          "rmse": 3.39
+        }
+      }
+    }
+  }
+}

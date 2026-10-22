@@ -107226,20 +107226,15 @@ function J9e(a) {
         i.status(500).json({ message: s.message });
       }
     }));
+  // Proxy interno: as rotas /api/vps/* reexpõem rotas autenticadas da própria Hub. Antes isso saía por
+  // SSH (sshpass + senha) para a própria máquina; agora é uma chamada HTTP local direta com a API key.
   async function e(r) {
-    let { exec: i } = await import("child_process"),
-      { promisify: s } = await import("util"),
-      l = s(i),
-      A = process.env.VPS_HOST,
-      g = process.env.VPS_USER,
-      p = process.env.VPS_PASSWORD;
-    if (!A || !g || !p) throw new Error("VPS n\xE3o configurado");
-    let { stdout: d } = await l(
-      `sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 ${g}@${A} "curl -s http://localhost:5002${r} -H 'x-api-key: ${(process.env.API_KEYS || "").split(",")[0].trim()}'"`,
-      // Senha só pelo ambiente do processo filho (SSHPASS): fora da linha de comando (ps) e sem interpolar no shell.
-      { timeout: 15e3, env: { ...process.env, SSHPASS: p } },
-    );
-    return JSON.parse(d);
+    let i = (process.env.API_KEYS || "").split(",")[0].trim();
+    if (!i) throw new Error("API_KEYS n\xE3o configurada");
+    let s = `http://127.0.0.1:${process.env.PORT || "5000"}${r}`, // mesma porta/default do listen desta Hub
+      l = await fetch(s, { headers: { "x-api-key": i }, signal: AbortSignal.timeout(15e3) });
+    if (!l.ok) throw new Error(`Hub local respondeu ${l.status} em ${r}`);
+    return await l.json();
   }
   (a.get("/api/vps/altitude/status", we, async (r, i) => {
     try {
