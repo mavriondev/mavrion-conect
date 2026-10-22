@@ -118944,11 +118944,34 @@ Uu.use((a, e, t) => {
 (async () => {
   await nre();
   let { initScheduler: a } = await Promise.resolve().then(() => (pc(), fc));
-  await a();
   let { autoResumeInterruptedImports: e } = await Promise.resolve().then(
     () => (HI(), FK),
   );
-  await e();
+  // Agendadores so sao lidos do banco no boot. Se o banco nao responder nesse
+  // instante (restart do Postgres, senha antiga no env), tentamos de novo em
+  // segundo plano ate carregar, sem impedir o servidor de subir.
+  let bancoPronto = () => D.query("SELECT 1").then(() => !0, () => !1),
+    iniciarTarefas = async () => {
+      (await a(), await e());
+    };
+  if (await bancoPronto()) await iniciarTarefas();
+  else {
+    console.error(
+      "[boot] Banco indisponivel; agendadores serao carregados quando ele responder (nova tentativa a cada 15 s)",
+    );
+    (async () => {
+      for (let n = 1; ; n++) {
+        await new Promise((r) => setTimeout(r, 15e3));
+        if (await bancoPronto()) {
+          console.log(
+            `[boot] Banco disponivel apos ${n} tentativa(s); carregando agendadores`,
+          );
+          await iniciarTarefas();
+          return;
+        }
+      }
+    })();
+  }
   let { scheduleStatsRefresh: t } = await Promise.resolve().then(
     () => (ax(), wJ),
   );
