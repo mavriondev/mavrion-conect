@@ -15,18 +15,24 @@ declare -A ENTRIES=(
   [altitude-watchdog.cjs]="20 */6 * * * flock -n /tmp/alt-watchdog.lock /usr/bin/node $ROT/altitude-watchdog.cjs >> $LOGS/altitude-watchdog.log 2>&1"
   [token-renew.cjs]="0 8 * * * flock -n /tmp/token-renew.lock /usr/bin/node $ROT/token-renew.cjs >> $LOGS/token-renew.log 2>&1"
   [freshness-check.cjs]="30 8 * * * flock -n /tmp/freshness-check.lock /usr/bin/node $ROT/freshness-check.cjs >> $LOGS/freshness-check.log 2>&1"
+  # backups do Postgres (peer auth como postgres; ver backup-postgres.sh) e rotação de logs
+  ["backup-postgres.sh daily"]="15 2 * * * flock -n /tmp/backup-pg-daily.lock $ROT/backup-postgres.sh daily >> /root/backups/postgres/cron.log 2>&1"
+  ["backup-postgres.sh weekly-hub"]="45 2 * * 0 flock -n /tmp/backup-pg-weekly.lock $ROT/backup-postgres.sh weekly-hub >> /root/backups/postgres/cron.log 2>&1"
+  [logrotate-mavrion.conf]="7 * * * * /usr/sbin/logrotate -s /var/lib/logrotate/status-mavrion /etc/logrotate-mavrion.conf"
 )
+mkdir -p /root/backups/postgres
 
 CUR=$(crontab -l 2>/dev/null || true)
 NEW="$CUR"
 for script in "${!ENTRIES[@]}"; do
-  if echo "$CUR" | grep -q "$script"; then
+  if echo "$CUR" | grep -qF "$script"; then
     echo "ok: $script já agendado"
   else
-    NEW="$NEW"$'\n'"${ENTRIES[$script]}"
+    # printf garante a quebra de linha mesmo que a crontab atual termine sem "\n"
+    NEW="$(printf '%s\n%s' "$NEW" "${ENTRIES[$script]}")"
     echo "ADICIONADO: $script"
   fi
 done
-[ "$NEW" != "$CUR" ] && echo "$NEW" | crontab -
-echo "--- crontab final (rotinas):"
-crontab -l | grep -E "rotinas" || true
+[ "$NEW" != "$CUR" ] && printf '%s\n' "$NEW" | crontab -
+echo "--- crontab final (rotinas/backups/logrotate):"
+crontab -l | grep -E "rotinas|logrotate-mavrion" || true
