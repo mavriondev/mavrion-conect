@@ -19,7 +19,7 @@ export function escolherCamada(capabilitiesXml: string, padrao: RegExp, preferir
 const cache = new Map<string, { nome: string | null; ate: number }>();
 
 export async function descobrirCamadaWfs(baseUrl: string, padrao: RegExp, opts: { preferir?: RegExp; evitar?: RegExp } = {}): Promise<string | null> {
-  const chave = `${baseUrl}|${padrao.source}`;
+  const chave = `${baseUrl}|${padrao.toString()}|${opts.preferir?.toString()}|${opts.evitar?.toString()}`;
   const c = cache.get(chave);
   if (c && c.ate > Date.now()) return c.nome;
   try {

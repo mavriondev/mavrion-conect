@@ -13,6 +13,7 @@ import { getUsoTerraMapBiomas, classesDeUsoNosPontos } from "./mapbiomas";
 import { amostrarInterior } from "./geo-medicao";
 import { resumirUsoSolo, descreverUsoSolo } from "./uso-solo-amostragem";
 import { descobrirCamadaWfs } from "./wfs-descoberta";
+import { descreverFonteWfs } from "./restricoes-wfs";
 import { getNDVISentinel } from "./sentinel";
 import { distanciaAtePoligonoM } from "./geo-medicao";
 import { verificacaoAutomatica, type Verificacao } from "./confianca-dados";
@@ -74,8 +75,8 @@ function indeterminada(chave: string, fonte: string, observacao?: string): Verif
 }
 
 // ---------- sobreposições ----------
-async function verificarSobreposicoes(a: AtivoGeo): Promise<Verificacao[]> {
-  const FONTE = "FUNAI / INCRA / ICMBio (WFS) + interseção PostGIS";
+export async function verificarSobreposicoes(a: AtivoGeo, opts: { usarCache?: boolean } = {}): Promise<Verificacao[]> {
+  const FONTE = "FUNAI/CMR, IBGE/INCRA e MMA/CNUC/INDE (WFS) + interseção PostGIS";
   const chaves = {
     terraIndigena: "sobreposicao_ti",
     quilombola: "sobreposicao_quilombola",
@@ -85,7 +86,7 @@ async function verificarSobreposicoes(a: AtivoGeo): Promise<Verificacao[]> {
 
   let res: Awaited<ReturnType<typeof consultarSobreposicoes>> = null;
   try {
-    res = await consultarSobreposicoes(a.lat, a.lon, null, 0.15, a.bbox);
+    res = await consultarSobreposicoes(a.lat, a.lon, null, 0.15, a.bbox, opts);
   } catch { res = null; }
   if (!res) return Object.values(chaves).map((c) => indeterminada(c, FONTE, "Consulta não respondeu."));
 
@@ -100,7 +101,13 @@ async function verificarSobreposicoes(a: AtivoGeo): Promise<Verificacao[]> {
 
   for (const k of Object.keys(chaves) as Array<keyof typeof chaves>) {
     const status = res.camadas?.[k];
-    if (status === "falhou") { out.push(indeterminada(chaves[k], FONTE, "Camada não respondeu — não é ausência de sobreposição.")); continue; }
+    const evidencia = k === "assentamento" ? undefined : res.evidencias?.[k];
+    const fonte = evidencia ? `${descreverFonteWfs(evidencia)} + interseção PostGIS` : FONTE;
+    const limite = evidencia ? `Consulta: ${evidencia.consultadoEm}. ${evidencia.limitacoes}` : "";
+    if (!status || status === "falhou") {
+      out.push(indeterminada(chaves[k], fonte, `Camada indisponível ou incompleta — não é ausência de sobreposição. ${evidencia?.erro || ""} ${limite}`.trim()));
+      continue;
+    }
     if (status === "nao_configurada") { out.push(indeterminada(chaves[k], FONTE, "Camada não configurada (INCRA_ASSENTAMENTOS_WFS_LAYER).")); continue; }
 
     const achadas: Array<{ nome: string; categoria?: string; pct: number; ha: number; aVerificar?: string }> = [];
@@ -121,18 +128,20 @@ async function verificarSobreposicoes(a: AtivoGeo): Promise<Verificacao[]> {
       chave: chaves[k],
       achado: achadas.length > 0 ? "detectado" : "nao_detectado",
       valor: achadas.length > 0 ? achadas : null,
-      fonte: FONTE,
-      observacao: proximas > 0 ? `${proximas} feição(ões) na vizinhança sem interseção com o polígono.` : undefined,
+      fonte,
+      observacao: [limite, proximas > 0 ? `${proximas} feição(ões) na vizinhança sem interseção com o polígono.` : ""].filter(Boolean).join(" ") || undefined,
     }));
   }
   return out;
 }
 
 // ---------- MapBiomas (uso do solo e alertas) ----------
-async function verificarMapBiomas(a: AtivoGeo): Promise<Verificacao[]> {
+export async function verificarMapBiomas(a: AtivoGeo, fontes = {
+  getUsoTerraMapBiomas, classesDeUsoNosPontos,
+}): Promise<Verificacao[]> {
   const FONTE = "MapBiomas (cobertura e alertas)";
   let mb: Awaited<ReturnType<typeof getUsoTerraMapBiomas>> = null;
-  try { mb = await getUsoTerraMapBiomas(a.lat, a.lon, a.carCodImovel || undefined); } catch { mb = null; }
+  try { mb = await fontes.getUsoTerraMapBiomas(a.lat, a.lon, a.carCodImovel || undefined); } catch { mb = null; }
   if (!mb) {
     return [
       indeterminada("uso_solo", FONTE, "Sem resposta do MapBiomas (credenciais ausentes ou serviço indisponível)."),
@@ -147,21 +156,21 @@ async function verificarMapBiomas(a: AtivoGeo): Promise<Verificacao[]> {
   let anoAmostra: number | null = null;
   try {
     const pts = amostrarInterior(a.geojson, 16);
-    const amostra = pts.length >= 4 ? await classesDeUsoNosPontos(pts) : null;
+    const amostra = pts.length >= 4 ? await fontes.classesDeUsoNosPontos(pts) : null;
     if (amostra) { usoAmostrado = resumirUsoSolo(amostra.classes); anoAmostra = amostra.ano; }
   } catch { usoAmostrado = null; }
   if (usoAmostrado) {
     out.push(verificacaoAutomatica({
       chave: "uso_solo", achado: "detectado",
-      valor: { grupos: usoAmostrado.grupos, amostras: usoAmostrado.amostrasValidas, ano: anoAmostra, descricao: descreverUsoSolo(usoAmostrado) },
+      valor: { ...usoAmostrado, amostras: usoAmostrado.amostrasValidas, ano: anoAmostra, descricao: descreverUsoSolo(usoAmostrado) },
       fonte: FONTE,
-      observacao: `Estimativa por amostragem de ${usoAmostrado.amostrasValidas} pontos dentro do polígono${anoAmostra ? ` (ano ${anoAmostra})` : ""}, arredondada a 5%. Não é medição por pixel; a margem é de alguns pontos percentuais.`,
+      observacao: `Estimativa por amostragem de ${usoAmostrado.amostrasTotal} pontos dentro do polígono${anoAmostra ? ` (ano ${anoAmostra})` : ""}: ${usoAmostrado.amostrasValidas} classificados e ${usoAmostrado.amostrasSemDado} sem dado. Proporções sobre todos os pontos, arredondadas em conjunto em faixas de 5 pontos percentuais (total 100%, incluindo sem dado). Não é área medida nem medição por pixel; a amostra não permite afirmar margem de erro estatística.`,
     }));
   } else out.push(
     mb.usoAtual && mb.usoAtual !== "Não identificado"
       ? verificacaoAutomatica({
           chave: "uso_solo", achado: "detectado", valor: mb.usoAtual, fonte: FONTE,
-          observacao: `Classe no ponto central (pixel de ~30 m)${ultimo ? `, ano ${ultimo.ano}` : ""} — não é a proporção de cada uso na área.`,
+          observacao: `Amostra insuficiente ou indisponível para estimar proporções. Classe no ponto central (pixel de ~30 m)${ultimo ? `, ano ${ultimo.ano}` : ""} — não é a proporção de cada uso na área.`,
         })
       : indeterminada("uso_solo", FONTE, "Classe de uso não identificada no ponto."),
   );

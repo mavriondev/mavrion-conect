@@ -14,6 +14,8 @@
 //
 // Chaves de verificação conhecidas ficam em CHAVES_VERIFICACAO para a UI e o site público.
 
+import { apresentarUsoSolo } from "../../shared/uso-solo-amostragem";
+
 export type EstadoConfianca = "confirmado" | "indicado" | "sem_dado";
 export type Achado = "detectado" | "nao_detectado" | "indeterminado";
 export type OrigemConfirmacao = "vendedor" | "documento" | "visita";
@@ -148,8 +150,10 @@ export function projecaoPublica(vs: Verificacao[]): Array<{ chave: string; rotul
       const n = typeof v.valor === "number" ? v.valor : null;
       if (n === null) continue;
       texto = n >= 0.6 ? "vegetação vigorosa" : n >= 0.4 ? "vegetação moderada" : n >= 0.2 ? "vegetação esparsa" : "pouca cobertura vegetal";
-    } else if (v.chave === "uso_solo" && v.valor && typeof v.valor === "object" && typeof (v.valor as any).descricao === "string") {
-      texto = (v.valor as any).descricao; // já em faixas de 5%
+    } else if (v.chave === "uso_solo" && v.valor && typeof v.valor === "object") {
+      const uso = apresentarUsoSolo(v.valor);
+      if (!uso.texto) continue;
+      texto = `${uso.texto} — ${uso.detalhe}`;
     } else if (typeof v.valor === "string") {
       texto = v.valor;
     } else continue;

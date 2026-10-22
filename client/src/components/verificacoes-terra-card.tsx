@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { apresentarUsoSolo } from "@shared/uso-solo-amostragem";
 
 type Verif = {
   chave: string; rotulo: string; estado: "confirmado" | "indicado" | "sem_dado";
@@ -16,6 +17,7 @@ type Verif = {
 
 function formatarValor(v: Verif): string {
   if (v.valor == null) return "";
+  if (v.chave === "uso_solo") return apresentarUsoSolo(v.valor).texto;
   if (typeof v.valor === "number") {
     if (v.unidade === "m") return v.valor >= 1000 ? `${(v.valor / 1000).toFixed(1).replace(".", ",")} km` : `${v.valor} m`;
     return String(v.valor);
@@ -85,6 +87,7 @@ export default function VerificacoesTerraCard({ assetId }: { assetId: number }) 
         {!isLoading && lista.length === 0 && <p className="text-xs text-muted-foreground">Nenhuma verificação feita ainda. Requer polígono cadastrado.</p>}
         {lista.map((v) => {
           const r = rotuloEstado(v);
+          const uso = v.chave === "uso_solo" ? apresentarUsoSolo(v.valor) : null;
           return (
             <div key={v.chave} className="rounded border p-2.5 space-y-1" data-testid={`row-verificacao-${v.chave}`}>
               <div className="flex items-center justify-between gap-2">
@@ -93,7 +96,8 @@ export default function VerificacoesTerraCard({ assetId }: { assetId: number }) 
               </div>
               {formatarValor(v) && <p className="text-sm font-semibold">{formatarValor(v)}</p>}
               {v.achado === "nao_detectado" && v.estado !== "confirmado" && <p className="text-xs text-muted-foreground">Não detectado</p>}
-              {v.observacao && <p className="text-[10px] text-muted-foreground">{v.observacao}</p>}
+              {uso?.detalhe && <p className="text-xs text-muted-foreground" data-testid="detalhe-uso-solo">{uso.detalhe}</p>}
+              {v.observacao && !uso?.legado && <p className="text-[10px] text-muted-foreground">{v.observacao}</p>}
               {v.divergencia && v.automaticaMaisRecente && (
                 <p className="text-[10px] text-red-600">
                   Divergência: a fonte automática mais recente indica "{v.automaticaMaisRecente.achado === "detectado" ? "detectado" : "não detectado"}", diferente da confirmação. Reavalie.

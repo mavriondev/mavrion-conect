@@ -5,10 +5,9 @@ import { sql } from 'drizzle-orm';
 import { utmSridSqlExpr } from './utm';
 import { sanearSobreposicao, checarPercentual } from './sanidade-numerica';
 import { descobrirCamadaWfs } from './wfs-descoberta';
+import { consultarRestricaoWfs, descreverFonteWfs, type EvidenciaWfs } from './restricoes-wfs';
 
 const TERRABRASILIS_WFS = 'https://terrabrasilis.dpi.inpe.br/geoserver/ows';
-const ICMBIO_WFS = 'https://geoservicos.icmbio.gov.br/geoserver/ows';
-const FUNAI_WFS = 'https://geoserver.funai.gov.br/geoserver/ows';
 
 export interface ProdesResult {
   totalAreaHa: number;
@@ -46,6 +45,7 @@ export interface SobreposicaoResult {
   riscoMaximo: 'alto' | 'medio' | 'baixo' | 'nenhum' | 'indeterminado';
   /** Resultado da consulta de cada camada: 'consultada' ou 'falhou'. */
   camadas?: Record<'terraIndigena' | 'quilombola' | 'unidadeConservacao' | 'assentamento', 'consultada' | 'falhou' | 'nao_configurada'>;
+  evidencias?: Partial<Record<'terraIndigena' | 'quilombola' | 'unidadeConservacao', EvidenciaWfs>>;
   fonte: string;
   consultadoEm: string;
   geoJsonFeatures?: any[];
@@ -333,17 +333,25 @@ export async function consultarSobreposicoes(
   lon: number,
   _areaPropertyHa: number | null,
   radiusDeg: number = 0.15,
-  overrideBbox?: { minLon: number; minLat: number; maxLon: number; maxLat: number }
+  overrideBbox?: { minLon: number; minLat: number; maxLon: number; maxLat: number },
+  opts: { usarCache?: boolean } = {},
 ): Promise<SobreposicaoResult | null> {
+  // Sem arredondamento: fazendas vizinhas não podem compartilhar resultados.
+  // Versão nova invalida resultados das fontes antigas.
   const cacheKey = overrideBbox
-    ? `sobreposicao:bbox:${overrideBbox.minLon.toFixed(3)},${overrideBbox.minLat.toFixed(3)},${overrideBbox.maxLon.toFixed(3)},${overrideBbox.maxLat.toFixed(3)}`
-    : `sobreposicao:${lat.toFixed(3)},${lon.toFixed(3)}`;
-  const cached = await getCached<SobreposicaoResult>('due_diligence', cacheKey);
+    ? `sobreposicao:wfs-v2:bbox:${overrideBbox.minLon},${overrideBbox.minLat},${overrideBbox.maxLon},${overrideBbox.maxLat}`
+    : `sobreposicao:wfs-v2:${lat},${lon}:${radiusDeg}`;
+  const cached = opts.usarCache === false ? null : await getCached<SobreposicaoResult>('due_diligence', cacheKey);
   if (cached) return cached;
 
   const bbox = overrideBbox
     ? `${overrideBbox.minLon},${overrideBbox.minLat},${overrideBbox.maxLon},${overrideBbox.maxLat}`
     : `${lon - radiusDeg},${lat - radiusDeg},${lon + radiusDeg},${lat + radiusDeg}`;
+  const bboxConsulta = overrideBbox ?? {
+    minLon: lon - radiusDeg, minLat: lat - radiusDeg,
+    maxLon: lon + radiusDeg, maxLat: lat + radiusDeg,
+  };
+  const evidencias: NonNullable<SobreposicaoResult['evidencias']> = {};
 
   const terrasIndigenas: SobreposicaoArea[] = [];
   const quilombolas: SobreposicaoArea[] = [];
@@ -357,33 +365,28 @@ export async function consultarSobreposicoes(
   const nextKey = (t: string) => `${t}:${featSeq++}`;
 
   try {
-    const tiParams = new URLSearchParams({
-      service: 'WFS',
-      version: '1.0.0',
-      request: 'GetFeature',
-      typeName: 'funai:tis_poligonais',
-      outputFormat: 'application/json',
-      maxFeatures: '50',
-      srsName: 'EPSG:4326',
-      CQL_FILTER: `BBOX(geom,${bbox})`,
-    });
+    const [tiConsulta, quilConsulta, ucConsulta] = await Promise.all([
+      consultarRestricaoWfs('terraIndigena', bboxConsulta),
+      consultarRestricaoWfs('quilombola', bboxConsulta),
+      consultarRestricaoWfs('unidadeConservacao', bboxConsulta),
+    ]);
+    evidencias.terraIndigena = tiConsulta.evidencia;
+    evidencias.quilombola = quilConsulta.evidencia;
+    evidencias.unidadeConservacao = ucConsulta.evidencia;
 
     try {
-      const tiRes = await fetch(`${FUNAI_WFS}?${tiParams}`, {
-        signal: AbortSignal.timeout(15000),
-      });
-      if (tiRes.ok) {
-        const tiData = await tiRes.json() as any;
+      if (tiConsulta.ok) {
+        const tiData = tiConsulta;
         if (Array.isArray(tiData?.features)) camadas.terraIndigena = 'consultada';
         for (const f of (tiData?.features || [])) {
           const p = f.properties || {};
-          const nome = p.terrai_nom || p.terra_indi || p.nome || 'TI sem nome';
+          const nome = p.no_ti;
           const featKey = nextKey('ti');
           terrasIndigenas.push({
             nome,
             featKey,
             tipo: 'TI',
-            categoria: p.fase_ti || p.situacao || 'Não informada',
+            categoria: p.ds_fase_ti || 'Não informada',
             percentualSobreposicao: 0,
             areaIntersecaoHa: 0,
             nivelRisco: 'alto',
@@ -402,34 +405,20 @@ export async function consultarSobreposicoes(
     }
 
     try {
-      const quilombolaParams = new URLSearchParams({
-        service: 'WFS',
-        version: '1.0.0',
-        request: 'GetFeature',
-        typeName: 'quilombolas:quilombolas',
-        outputFormat: 'application/json',
-        maxFeatures: '50',
-        srsName: 'EPSG:4326',
-        CQL_FILTER: `BBOX(geom,${bbox})`,
-      });
-
-      const quilRes = await fetch(`https://geoservicos.incra.gov.br/geoserver/ows?${quilombolaParams}`, {
-        signal: AbortSignal.timeout(15000),
-      });
-      if (quilRes.ok) {
-        const quilData = await quilRes.json() as any;
+      if (quilConsulta.ok) {
+        const quilData = quilConsulta;
         if (Array.isArray(quilData?.features)) camadas.quilombola = 'consultada';
         for (const f of (quilData?.features || [])) {
           const p = f.properties || {};
-          const nome = p.nm_comunid || p.nome || 'Comunidade quilombola';
+          const nome = p.nm_tq;
           const featKey = nextKey('quil');
           quilombolas.push({
             nome,
             featKey,
             tipo: 'Quilombola',
-            categoria: p.fase || p.cd_fase || 'Não informada',
+            categoria: p.status || 'Não informada',
             percentualSobreposicao: 0,
-            areaIntersecaoHa: p.area_ha || 0,
+            areaIntersecaoHa: 0,
             nivelRisco: 'alto',
           });
           if (f.geometry) {
@@ -446,28 +435,15 @@ export async function consultarSobreposicoes(
     }
 
     try {
-      const ucParams = new URLSearchParams({
-        service: 'WFS',
-        version: '1.0.0',
-        request: 'GetFeature',
-        typeName: 'unidades_conservacao:ucstodas',
-        outputFormat: 'application/json',
-        maxFeatures: '50',
-        srsName: 'EPSG:4326',
-        CQL_FILTER: `BBOX(geom,${bbox})`,
-      });
-
-      const ucRes = await fetch(`${ICMBIO_WFS}?${ucParams}`, {
-        signal: AbortSignal.timeout(15000),
-      });
-      if (ucRes.ok) {
-        const ucData = await ucRes.json() as any;
+      if (ucConsulta.ok) {
+        const ucData = ucConsulta;
         if (Array.isArray(ucData?.features)) camadas.unidadeConservacao = 'consultada';
         for (const f of (ucData?.features || [])) {
           const p = f.properties || {};
-          const categoriaUc = p.categori3 || p.categoria || p.grupo || '';
-          const nome = p.nome || p.nome_uc || 'UC sem nome';
-          const isProtecaoIntegral = categoriaUc.toLowerCase().includes('integral') ||
+          const categoriaUc = p.categoria || p.grupo || '';
+          const nome = p.nome_uc;
+          const isProtecaoIntegral = String(p.grupo).toLowerCase().includes('integral') ||
+            categoriaUc.toLowerCase().includes('integral') ||
             ['PARNA', 'ESEC', 'REBIO', 'REVIS', 'MONAT'].some(t => categoriaUc.toUpperCase().includes(t));
 
           const featKey = nextKey('uc');
@@ -477,7 +453,7 @@ export async function consultarSobreposicoes(
             tipo: 'UC',
             categoria: categoriaUc,
             percentualSobreposicao: 0,
-            areaIntersecaoHa: p.area_ha || 0,
+            areaIntersecaoHa: 0,
             nivelRisco: isProtecaoIntegral ? 'alto' : 'medio',
           });
           if (f.geometry) {
@@ -536,16 +512,17 @@ export async function consultarSobreposicoes(
       unidadesConservacao,
       assentamentos,
       camadas,
+      evidencias,
       totalSobreposicoes,
       riscoMaximo,
-      fonte: 'FUNAI + INCRA + ICMBio (WFS) — detecção por proximidade (BBOX), não por interseção geométrica',
+      fonte: `${Object.values(evidencias).map(descreverFonteWfs).join(' | ')} — detecção por BBOX, não por interseção geométrica`,
       consultadoEm: new Date().toISOString(),
       geoJsonFeatures: allOverlapFeatures,
     };
 
     // Não guarda em cache quando alguma camada falhou: senão a falha temporária ficaria "congelada".
     const algumaFalhou = Object.values(camadas).includes('falhou');
-    if (!algumaFalhou) await setCached('due_diligence', cacheKey, result);
+    if (!algumaFalhou && opts.usarCache !== false) await setCached('due_diligence', cacheKey, result);
     return result;
   } catch (err) {
     console.error('[Sobreposição] Erro:', (err as Error).message);
@@ -1158,7 +1135,7 @@ export async function executarDueDiligenceFundiaria(params: {
       sobreposicoes.terrasIndigenas.length + sobreposicoes.quilombolas.length +
       sobreposicoes.unidadesConservacao.length + sobreposicoes.assentamentos.length;
     sobreposicoes.riscoMaximo = calcularRiscoSobreposicao(sobreposicoes);
-    sobreposicoes.fonte = 'FUNAI + INCRA + ICMBio (WFS) — interseção calculada via PostGIS';
+    sobreposicoes.fonte = `${sobreposicoes.fonte} — interseção calculada via PostGIS`;
   }
 
   if ((assetId || refGeom) && prodes) {
