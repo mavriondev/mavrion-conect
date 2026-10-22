@@ -107235,8 +107235,9 @@ function J9e(a) {
       p = process.env.VPS_PASSWORD;
     if (!A || !g || !p) throw new Error("VPS n\xE3o configurado");
     let { stdout: d } = await l(
-      `sshpass -p '${p}' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 ${g}@${A} "curl -s http://localhost:5002${r} -H 'x-api-key: ${(process.env.API_KEYS || "").split(",")[0].trim()}'"`,
-      { timeout: 15e3 },
+      `sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 ${g}@${A} "curl -s http://localhost:5002${r} -H 'x-api-key: ${(process.env.API_KEYS || "").split(",")[0].trim()}'"`,
+      // Senha só pelo ambiente do processo filho (SSHPASS): fora da linha de comando (ps) e sem interpolar no shell.
+      { timeout: 15e3, env: { ...process.env, SSHPASS: p } },
     );
     return JSON.parse(d);
   }
