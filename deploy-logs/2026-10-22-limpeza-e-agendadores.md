@@ -95,7 +95,7 @@ Observação: logo após o restart da Etapa 1 a Hub executa a manutenção de ta
 
 Espaço antes: 86,8 GB livres (58%).
 
-Script: `vps-rotinas/backup-postgres.sh` (branch `ops/backups-e-logrotate`), instalado em `/var/www/mavrion-api/rotinas/backup-postgres.sh`. Roda como root e autentica como usuário de sistema `postgres` (peer) — **nenhuma senha** no script, no cron ou nos logs. Formato `pg_dump -Fc -Z 6` (compactado; restaura com `pg_restore`). Antes de gravar: exige livre ≥ 3× o tamanho estimado (tamanho das relações no banco, que superestima o dump); grava em `.part` e só renomeia após `pg_restore -l` validar o arquivo; registra tamanho e duração em `backup.log`; sai com 1 em qualquer falha (saída do cron em `cron.log`).
+Script: `vps-rotinas/backup-postgres.sh` (branch `ops/backups-e-logrotate` — ver correção no fim deste arquivo), instalado em `/var/www/mavrion-api/rotinas/backup-postgres.sh`. Roda como root e autentica como usuário de sistema `postgres` (peer) — **nenhuma senha** no script, no cron ou nos logs. Formato `pg_dump -Fc -Z 6` (compactado; restaura com `pg_restore`). Antes de gravar: exige livre ≥ 3× o tamanho estimado (tamanho das relações no banco, que superestima o dump); grava em `.part` e só renomeia após `pg_restore -l` validar o arquivo; registra tamanho e duração em `backup.log`; sai com 1 em qualquer falha (saída do cron em `cron.log`).
 
 ### 3a. Diário — `mavrion_conect` (usuários, insubstituível)
 - Cron: `15 2 * * *` UTC (23:15 BRT), retenção **7**.
@@ -173,5 +173,16 @@ Total: **48 GiB → 84 GiB livres** (142 GiB → 106 GiB usados). pm2: 4 process
 1. Configurar a cópia externa de `/root/backups/postgres/` (caminho e sugestão de `rsync` na Etapa 3d).
 2. Decidir quando apagar `/root/backups/logs-20261022/` (116 KB, evidência do incidente dos agendadores) e `/root/backups/sicar_imoveis_old_schema_20261022.sql`.
 3. Conferir amanhã a importação SICAR das 9 UFs (sexta 03:00 UTC): `sicar_import_log` e, depois dela, se as colunas calculadas continuam preenchidas em uma amostra (ex.: `SELECT count(*) FILTER (WHERE alt_media IS NULL) FROM sicar_imoveis_ba WHERE fetched_at > now() - interval '1 day'`).
-4. Revisar/mesclar a branch `ops/backups-e-logrotate` (script de backup, config do logrotate, `install-cron.sh`, README).
+4. Revisar/mesclar a branch `ops/backups-e-logrotate` (script de backup, config do logrotate, `install-cron.sh`, README) — PR aberto após a correção abaixo.
 5. Pré-existente e fora do escopo: timeouts do `anm-enrich-guard` (14:03/14:33/15:03 UTC) e as 3 "mortes silenciosas" do boot da Hub (investigação em `docs/investigacao-scheduler-hub-2026-10-22.md`).
+
+---
+
+## Correção (22/10, 19:5x UTC) — arquivos que faltavam na branch
+
+O relatório acima dizia que `backup-postgres.sh` e `logrotate-mavrion.conf` estavam na branch `ops/backups-e-logrotate`. **Não estavam.** O commit `50b5006` subiu só `README.md` e `install-cron.sh`, e ambos na versão **antiga** (sem as entradas de backup/logrotate e sem o `printf`). Causa: a publicação via API leu os arquivos da árvore de trabalho quando ela estava na `main` local (os dois arquivos novos não existiam ali e as edições estavam só na branch), e o código não checou o resultado da leitura. Detectado pelo usuário ao conferir o GitHub.
+
+Correção aplicada:
+- Conferido byte a byte que o instalado na VPS é igual ao da branch local: `backup-postgres.sh` md5 `da6db488…`, `/etc/logrotate-mavrion.conf` md5 `b35f3ae6…`.
+- `install-cron.sh` na VPS ainda era o de 13/08 (nunca tinha sido atualizado lá); substituído pela versão com as entradas de backup/logrotate e `printf` (md5 `b86ca9bd…`), executado em seguida: 10× "já agendado", crontab inalterada (mesmo md5 antes/depois, 14 linhas).
+- Commit **`7126c2e9274df3466242043820e175ccef23c4b6`** na `ops/backups-e-logrotate` (4 arquivos: +121/−5). Prova via `git fetch` do GitHub e `git ls-tree -r --name-only github/ops/backups-e-logrotate | grep -E "backup-postgres|logrotate|install-cron"` → `vps-rotinas/backup-postgres.sh`, `vps-rotinas/install-cron.sh`, `vps-rotinas/logrotate-mavrion.conf`; md5 dos três no GitHub idênticos aos da VPS; `bash -n` OK nos dois `.sh`.
